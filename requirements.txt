@@ -1,0 +1,8 @@
+fastapi~=0.115.4
+SQLAlchemy~=2.0.36
+pydantic~=2.9.2
+uvicorn~=0.31.1
+python-dotenv~=1.0.1
+asyncpg
+kubernetes~=31.0.0
+PyYAML~=6.0.2
