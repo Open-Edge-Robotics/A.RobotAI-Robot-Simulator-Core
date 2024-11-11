@@ -162,6 +162,8 @@ Thumbs.db
 
 # test
 test/
-/docker-compose.yaml
 /test_main.http
-/data/
+
+# Docker
+/docker-compose.yaml
+
