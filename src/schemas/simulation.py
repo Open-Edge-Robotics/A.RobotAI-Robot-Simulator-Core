@@ -13,14 +13,14 @@ class SimulationResponseModel(Instance):
 
 
 class SimulationCreateModel(BaseModel):
-    name: str
-    description: str
+    simulationName: str
+    simulationDescription: str
 
     model_config = {
         "json_schema_extra": {
             "example": {
-                "name": "simulation1",
-                "description": "시뮬레이션1 입니다~~"
+                "simulationName": "simulation1",
+                "simulationDescription": "시뮬레이션1 입니다~~"
             }
         }
     }
