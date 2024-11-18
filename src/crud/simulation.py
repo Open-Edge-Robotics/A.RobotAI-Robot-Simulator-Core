@@ -1,4 +1,6 @@
-from sqlalchemy import select
+from http.client import responses
+
+from sqlalchemy import select, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.simulation import Simulation
@@ -13,6 +15,22 @@ class SimulationService:
 
     async def create_simulation(self, simulation_create_data: SimulationCreateModel):
         try:
+            # 시뮬레이션 이름 중복 검사
+            statement = select(
+                exists().
+                where(Simulation.name == simulation_create_data.simulationName)
+            )
+            is_existed = await self.session.scalar(statement)
+
+            if is_existed:
+                response = SimulationCreateResponseModel(
+                    statusCode="400",
+                    data=None,
+                    message="시뮬레이션 이름이 이미 존재합니다.",
+                )
+
+                return response
+
             new_simulation = Simulation(
                 name=simulation_create_data.simulationName,
                 description=simulation_create_data.simulationDescription
