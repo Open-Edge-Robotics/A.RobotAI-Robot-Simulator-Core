@@ -1,15 +1,6 @@
-from datetime import datetime
-from typing import Dict
-
-from src.models.instance import Instance
 from pydantic import BaseModel
 
-
-class SimulationResponseModel(Instance):
-    """
-        This class is used to validate the response when getting Simulation objects
-    """
-    pass
+from src.schemas.format import GlobalResponseModel
 
 
 class SimulationCreateModel(BaseModel):
@@ -25,6 +16,7 @@ class SimulationCreateModel(BaseModel):
         }
     }
 
+
 class SimulationListModel(BaseModel):
     simulationId : str
     simulationName: str
@@ -32,14 +24,39 @@ class SimulationListModel(BaseModel):
     simulationCreatedAt : str
     simulationStatus : str
 
+
+class SimulationCreateResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "simulationId": "1",
-                "simulationName": "simulation1",
-                "simulationDescription": "시뮬레이션1 입니다~~",
-                "simulationCreatedAt": "2024-11-18 09:41:31.405853",
-                "simulationStatus": "RUNNING"
+                "statusCode": "201",
+                "data": "null",
+                "message": "시뮬레이션 생성 성공"
             }
         }
     }
+
+    pass
+
+
+class SimulationListResponseModel(GlobalResponseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "statusCode": "200",
+                "data": [
+                    {
+                    "simulationId": "1",
+                    "simulationName": "simulation1",
+                    "simulationDescription": "시뮬레이션1 입니다~~",
+                    "simulationCreatedAt": "2024-11-18 09:41:31.405853",
+                    "simulationStatus": "RUNNING"
+                    }
+                ],
+                "message": "시뮬레이션 목록 조회 성공"
+            }
+        }
+    }
+
+    pass
+
