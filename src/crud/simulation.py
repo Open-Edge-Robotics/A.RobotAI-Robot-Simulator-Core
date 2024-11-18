@@ -13,8 +13,8 @@ class SimulationService:
     async def create_simulation(self, simulation_create_data: SimulationCreateModel):
         try:
             new_simulation = Simulation(
-                name=simulation_create_data.name,
-                description=simulation_create_data.description
+                name=simulation_create_data.simulationName,
+                description=simulation_create_data.simulationDescription
             )
 
             self.session.add(new_simulation)
