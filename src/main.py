@@ -4,8 +4,12 @@ from fastapi import FastAPI
 from kubernetes import config
 
 from src.database.connection import init_db, close_db
+
 from src.routes import template, rosbag
 from src.settings import settings
+
+from src.routes.instance import instance_router
+from src.routes.simulation import simulation_router
 
 
 @asynccontextmanager
