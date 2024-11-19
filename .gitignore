@@ -164,6 +164,6 @@ Thumbs.db
 test/
 /test_main.http
 
-# ops
+# Docker
 /docker-compose.yaml
 /k8s/
