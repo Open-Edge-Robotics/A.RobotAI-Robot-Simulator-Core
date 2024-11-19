@@ -5,11 +5,8 @@ from kubernetes import config
 
 from src.database.connection import init_db, close_db
 
-from src.routes import template, rosbag
+from src.routes import template, rosbag, instance, simulation
 from src.settings import settings
-
-from src.routes.instance import instance_router
-from src.routes.simulation import simulation_router
 
 
 @asynccontextmanager
@@ -21,7 +18,7 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 app = FastAPI(lifespan=lifespan)
-routers = [template.router, rosbag.router]
+routers = [template.router, rosbag.router, instance.router, simulation.router]
 for router in routers:
     app.include_router(router, prefix=settings.API_STR)
 
