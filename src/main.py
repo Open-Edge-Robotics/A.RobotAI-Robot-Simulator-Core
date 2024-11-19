@@ -17,9 +17,9 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 app = FastAPI(lifespan=lifespan)
-
-app.include_router(template.router, prefix=settings.API_STR)
-app.include_router(rosbag.router, prefix=settings.API_STR)
+routers = [template.router, rosbag.router]
+for router in routers:
+    app.include_router(router, prefix=settings.API_STR)
 
 @app.get("/")
 async def root():
