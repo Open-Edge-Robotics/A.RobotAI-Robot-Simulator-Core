@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from kubernetes import config
 
 from src.database.connection import init_db, close_db
-from src.routes import template
+from src.routes import template, rosbag
 from src.settings import settings
 
 
@@ -19,6 +19,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 app.include_router(template.router, prefix=settings.API_STR)
+app.include_router(rosbag.router, prefix=settings.API_STR)
 
 @app.get("/")
 async def root():
