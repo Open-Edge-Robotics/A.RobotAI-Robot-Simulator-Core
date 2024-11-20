@@ -23,7 +23,7 @@ class SimulationService:
 
             if is_existed:
                 response = SimulationCreateResponseModel(
-                    statusCode=status.HTTP_400_BAD_REQUEST,
+                    statusCode=status.HTTP_409_CONFLICT,
                     data=None,
                     message="시뮬레이션 이름이 이미 존재합니다.",
                 )
