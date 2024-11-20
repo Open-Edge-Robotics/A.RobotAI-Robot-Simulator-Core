@@ -8,7 +8,7 @@ from src.crud.instance import InstanceService
 from src.database.connection import get_db
 from src.schemas.instance import InstanceCreateModel, InstanceGetModel
 
-router = APIRouter(prefix="/instance", tags=["instance"])
+router = APIRouter(prefix="/instance", tags=["Instance"])
 
 @router.post("/")
 async def create_instance(
