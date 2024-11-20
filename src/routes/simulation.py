@@ -6,7 +6,7 @@ from src.crud.simulation import SimulationService
 from src.database.connection import get_db
 from src.schemas.simulation import SimulationCreateModel, SimulationListResponseModel, SimulationCreateResponseModel
 
-router = APIRouter(prefix="/simulation", tags=["simulation"])
+router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 @router.post("/", response_model= SimulationCreateResponseModel, status_code=status.HTTP_201_CREATED)
 async def create_simulation(
