@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import List, Union
 
 class GlobalResponseModel(BaseModel):
-    statusCode: str
+    statusCode: int
     data: Union[List, dict, None]
     message: str
 
