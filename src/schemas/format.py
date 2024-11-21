@@ -8,6 +8,7 @@ class GlobalResponseModel(BaseSchema):
     data: List | dict | None
     message: str | dict
 
+
     model_config = {
         "json_schema_extra": {
             "example": {

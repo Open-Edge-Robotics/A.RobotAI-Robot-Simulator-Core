@@ -1,7 +1,6 @@
-from http.client import responses
-
 from sqlalchemy import select, exists
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette import status
 
 from src.models.simulation import Simulation
 from src.schemas.simulation import SimulationCreateModel, SimulationListModel, SimulationListResponseModel, \
@@ -24,7 +23,7 @@ class SimulationService:
 
             if is_existed:
                 response = SimulationCreateResponseModel(
-                    statusCode="400",
+                    statusCode=status.HTTP_409_CONFLICT,
                     data=None,
                     message="시뮬레이션 이름이 이미 존재합니다.",
                 )
@@ -41,7 +40,7 @@ class SimulationService:
             await self.session.refresh(new_simulation)
 
             response = SimulationCreateResponseModel(
-                statusCode="201",
+                statusCode=status.HTTP_201_CREATED,
                 data=None,
                 message="시뮬레이션 생성 성공"
             )
@@ -50,7 +49,7 @@ class SimulationService:
             await self.session.rollback()
 
             response = SimulationCreateResponseModel(
-                statusCode="500",
+                statusCode=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 data=None,
                 message="시뮬레이션 생성 실패: " + str(e)
             )
