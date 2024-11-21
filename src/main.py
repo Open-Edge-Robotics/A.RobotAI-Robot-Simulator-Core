@@ -5,8 +5,12 @@ from fastapi import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
 
 from src.database.connection import init_db, close_db
+
 from src.exception.exception_handler import http_exception_handler, validation_exception_handler
-from src.routes import template, rosbag
+
+
+from src.routes import template, rosbag, instance, simulation
+
 from src.settings import settings
 
 
@@ -19,11 +23,12 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 app = FastAPI(lifespan=lifespan)
+
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 
-routers = [template.router, rosbag.router]
+routers = [template.router, rosbag.router, instance.router, simulation.router]
 for router in routers:
     app.include_router(router, prefix=settings.API_STR)
 
