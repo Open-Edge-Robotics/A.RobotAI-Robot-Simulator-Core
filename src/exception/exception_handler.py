@@ -8,7 +8,7 @@ from src.schemas.format import GlobalResponseModel
 app = FastAPI()
 
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(exception: StarletteHTTPException):
+async def http_exception_handler(request: Request, exception: StarletteHTTPException):
     """HTTPException 처리 핸들러"""
 
     response = GlobalResponseModel(
