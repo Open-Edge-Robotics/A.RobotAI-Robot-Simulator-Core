@@ -1,4 +1,6 @@
+from fastapi import HTTPException
 from sqlalchemy import select, exists
+from sqlalchemy.exc import DatabaseError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
@@ -22,13 +24,7 @@ class SimulationService:
             is_existed = await self.session.scalar(statement)
 
             if is_existed:
-                response = SimulationCreateResponseModel(
-                    status_code=status.HTTP_409_CONFLICT,
-                    data=None,
-                    message="시뮬레이션 이름이 이미 존재합니다.",
-                )
-
-                return response
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="시뮬레이션 이름이 이미 존재합니다.")
 
             new_simulation = Simulation(
                 name=simulation_create_data.simulation_name,
@@ -45,14 +41,9 @@ class SimulationService:
                 message="시뮬레이션 생성 성공"
             )
 
-        except Exception as e:
+        except DatabaseError as e:
             await self.session.rollback()
-
-            response = SimulationCreateResponseModel(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                data=None,
-                message="시뮬레이션 생성 실패: " + str(e)
-            )
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='데이터 저장 중 오류가 발생했습니다.: ' + str(e))
 
         return response
 
@@ -83,11 +74,6 @@ class SimulationService:
             )
 
         except Exception as e:
-
-            response = SimulationListResponseModel(
-                status_code="500",
-                data=None,
-                message="시뮬레이션 목록 조회 실패: " + str(e)
-            )
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='시뮬레이션 목록 조회 실패: ' + str(e))
 
         return response
