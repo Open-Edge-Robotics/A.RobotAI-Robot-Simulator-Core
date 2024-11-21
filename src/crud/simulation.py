@@ -5,8 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from src.models.simulation import Simulation
-from src.schemas.simulation import SimulationCreateModel, SimulationListModel, SimulationListResponseModel, \
-    SimulationCreateResponseModel
+from src.schemas.simulation import SimulationCreateModel, SimulationListModel, SimulationCreateResponse
 
 
 class SimulationService:
@@ -35,17 +34,15 @@ class SimulationService:
             await self.session.commit()
             await self.session.refresh(new_simulation)
 
-            response = SimulationCreateResponseModel(
-                status_code=status.HTTP_201_CREATED,
-                data=None,
-                message="시뮬레이션 생성 성공"
-            )
-
         except DatabaseError as e:
             await self.session.rollback()
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='데이터 저장 중 오류가 발생했습니다.: ' + str(e))
 
-        return response
+        return SimulationCreateResponse(
+            simulation_id=new_simulation.id,
+            simulation_name=new_simulation.name,
+            simulation_description=new_simulation.description
+        ).model_dump()
 
 
     async def get_all_simulations(self):
@@ -58,7 +55,7 @@ class SimulationService:
 
             simulation_list = [
                 SimulationListModel(
-                    simulation_id=str(simulation.id),
+                    simulation_id=simulation.id,
                     simulation_name=simulation.name,
                     simulation_description=simulation.description,
                     simulation_created_at=str(simulation.created_at),
@@ -67,13 +64,7 @@ class SimulationService:
                 for simulation in results.all()
             ]
 
-            response = SimulationListResponseModel(
-                status_code="200",
-                data=simulation_list,
-                message="시뮬레이션 목록 조회 성공"
-            )
-
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='시뮬레이션 목록 조회 실패: ' + str(e))
 
-        return response
+        return simulation_list

@@ -47,9 +47,6 @@ class InstanceCreateResponse(BaseSchema):
     instance_name : str
     instance_description : str
 
-    def model_dump(self):
-        return super().model_dump(by_alias=True)
-
 class InstanceCreateResponseModel(GlobalResponseModel):
     #TODO: 예시 작성하기
     pass

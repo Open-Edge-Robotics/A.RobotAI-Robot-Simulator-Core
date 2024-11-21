@@ -15,7 +15,11 @@ async def create_simulation(
     """새로운 시뮬레이션 생성"""
     new_simulation = await SimulationService(session).create_simulation(simulation_create_data)
 
-    return new_simulation
+    return SimulationCreateResponseModel(
+        status_code=status.HTTP_201_CREATED,
+        data=new_simulation,
+        message="시뮬레이션 생성 성공"
+    )
 
 
 @router.get("/", response_model= SimulationListResponseModel, status_code=status.HTTP_200_OK)
@@ -25,4 +29,8 @@ async def get_all_simulations(
     """시뮬레이션 목록 조회"""
     simulation_list = await SimulationService(session).get_all_simulations()
 
-    return simulation_list
+    return SimulationListResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=simulation_list,
+        message="시뮬레이션 목록 조회 성공"
+    )
