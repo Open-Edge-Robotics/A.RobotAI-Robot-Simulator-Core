@@ -1,7 +1,6 @@
-from typing import Dict
-
 from src.settings import BaseSchema
 
+from src.schemas.format import GlobalResponseModel
 
 # 상세 조회용
 class InstanceDetailResponse(BaseSchema):
@@ -21,27 +20,36 @@ class InstanceBriefResponse(BaseSchema):
     instance_description: str
     instance_created_at: str
 
-# 인스턴스 생성에 대한 response
-class InstanceCreationResponse(BaseSchema):
+# 인스턴스 생성
+class InstanceCreateModel(BaseSchema):
     instance_name : str
     instance_description : str
-    simulation_id: str
-    template_id: str
-    instance_count: str
-
-class InstanceCreateModel(BaseSchema):
-    name: str
-    description: str
-    templateSet: Dict[int, int] # 템플릿 이름, 개수
+    simulation_id: int
+    template_id: int
+    instance_count: int
 
     model_config = {
         "json_schema_extra": {
             "example": {
-                "name": "instance1",
-                "description": "instance1 입니다~~",
-                "templateSet": {1: 20, 2: 30, 3: 10}
+                "instanceName": "instance1",
+                "instanceDescription": "instance1 입니다~~",
+                "simulationId": 1,
+                "templateId": 2,
+                "instanceCount": 10
             }
         }
     }
 
+# 인스턴스 생성 시 반환 필드
+# TODO: 이름 규칙 정하기
+class InstanceCreateResponse(BaseSchema):
+    instance_id: int
+    instance_name : str
+    instance_description : str
 
+    def model_dump(self):
+        return super().model_dump(by_alias=True)
+
+class InstanceCreateResponseModel(GlobalResponseModel):
+    #TODO: 예시 작성하기
+    pass
