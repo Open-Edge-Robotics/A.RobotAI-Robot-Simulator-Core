@@ -4,7 +4,7 @@ from src.settings import BaseSchema
 
 
 class GlobalResponseModel(BaseSchema):
-    statusCode: int
+    status_code: int
     data: List | dict | None
     message: str | dict
 
