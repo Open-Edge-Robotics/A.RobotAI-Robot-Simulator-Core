@@ -165,6 +165,7 @@ Thumbs.db
 test/
 /test_main.http
 
-# Docker
+# Ops
 /docker-compose.yaml
 /k8s/
+/src/routes/rosbag.py
