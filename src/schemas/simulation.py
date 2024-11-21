@@ -1,11 +1,11 @@
-from pydantic import BaseModel
+from src.settings import BaseSchema
 
 from src.schemas.format import GlobalResponseModel
 
 
-class SimulationCreateModel(BaseModel):
-    simulationName: str
-    simulationDescription: str
+class SimulationCreateModel(BaseSchema):
+    simulation_name: str
+    simulation_description: str
 
     model_config = {
         "json_schema_extra": {
@@ -17,12 +17,12 @@ class SimulationCreateModel(BaseModel):
     }
 
 
-class SimulationListModel(BaseModel):
-    simulationId : str
-    simulationName: str
-    simulationDescription: str
-    simulationCreatedAt : str
-    simulationStatus : str
+class SimulationListModel(BaseSchema):
+    simulation_id : str
+    simulation_name: str
+    simulation_description: str
+    simulation_created_at : str
+    simulation_status : str
 
 
 class SimulationCreateResponseModel(GlobalResponseModel):
