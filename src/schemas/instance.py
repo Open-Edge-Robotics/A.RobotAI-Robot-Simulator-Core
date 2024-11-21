@@ -1,17 +1,35 @@
 from typing import Dict
 
-from src.models.instance import Instance
-from pydantic import BaseModel
+from src.settings import BaseSchema
 
 
-class InstanceResponseModel(Instance):
-    """
-        This class is used to validate the response when getting Instance objects
-    """
-    pass
+# 상세 조회용
+class InstanceDetailResponse(BaseSchema):
+    instance_namespace: str
+    instance_port_number: str
+    instance_age: str
+    template_type: str
+    instance_volume: str
+    instance_log: str
+    instance_status: str
+    topics: str
 
+# 목록 조회용
+class InstanceBriefResponse(BaseSchema):
+    instance_id: str
+    instance_name: str
+    instance_description: str
+    instance_created_at: str
 
-class InstanceCreateModel(BaseModel):
+# 인스턴스 생성에 대한 response
+class InstanceCreationResponse(BaseSchema):
+    instance_name : str
+    instance_description : str
+    simulation_id: str
+    template_id: str
+    instance_count: str
+
+class InstanceCreateModel(BaseSchema):
     name: str
     description: str
     templateSet: Dict[int, int] # 템플릿 이름, 개수
@@ -26,13 +44,4 @@ class InstanceCreateModel(BaseModel):
         }
     }
 
-class InstanceGetModel(BaseModel):
-    id: str
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "id": "1"
-            }
-        }
-    }
