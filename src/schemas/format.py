@@ -1,10 +1,13 @@
-from pydantic import BaseModel
-from typing import List, Union
+from typing import List
 
-class GlobalResponseModel(BaseModel):
+from src.settings import BaseSchema
+
+
+class GlobalResponseModel(BaseSchema):
     statusCode: int
-    data: Union[List, dict, None]
-    message: str
+    data: List | dict | None
+    message: str | dict
+
 
     model_config = {
         "json_schema_extra": {
