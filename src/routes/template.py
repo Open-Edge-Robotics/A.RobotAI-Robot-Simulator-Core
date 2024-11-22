@@ -5,7 +5,7 @@ from starlette import status
 from src.crud.template import TemplateService
 from src.database.connection import get_db
 from src.schemas.format import GlobalResponseModel
-from src.schemas.template import TemplateDeleteResponse, TemplateCreate
+from src.schemas.template import TemplateDeleteResponse, TemplateCreateRequest
 
 router = APIRouter(prefix="/template", tags=["Template"])
 template_service = TemplateService()
@@ -22,7 +22,7 @@ async def read_template(db: AsyncSession = Depends(get_db)):
 
 # 템플릿 생성
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_template(template: TemplateCreate, db: AsyncSession = Depends(get_db)):
+async def create_template(template: TemplateCreateRequest, db: AsyncSession = Depends(get_db)):
     return await template_service.create(template, db)
 
 # 템플릿 삭제

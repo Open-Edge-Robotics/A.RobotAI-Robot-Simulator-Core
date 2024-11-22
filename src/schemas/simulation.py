@@ -3,7 +3,7 @@ from src.settings import BaseSchema
 from src.schemas.format import GlobalResponseModel
 
 
-class SimulationCreateModel(BaseSchema):
+class SimulationCreateRequest(BaseSchema):
     simulation_name: str
     simulation_description: str
 
@@ -22,7 +22,7 @@ class SimulationCreateResponse(BaseSchema):
     simulation_description: str
 
 
-class SimulationListModel(BaseSchema):
+class SimulationListResponse(BaseSchema):
     simulation_id : int
     simulation_name: str
     simulation_description: str

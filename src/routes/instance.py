@@ -4,13 +4,13 @@ from starlette import status
 
 from src.crud.instance import InstanceService
 from src.database.connection import get_db
-from src.schemas.instance import InstanceCreateModel, InstanceCreateResponseModel, InstanceListResponseModel
+from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponseModel, InstanceListResponseModel
 
 router = APIRouter(prefix="/instance", tags=["Instance"])
 
 @router.post("/", response_model=InstanceCreateResponseModel, status_code=status.HTTP_201_CREATED)
 async def create_instance(
-        instance_create_data: InstanceCreateModel, session: AsyncSession = Depends(get_db)
+        instance_create_data: InstanceCreateRequest, session: AsyncSession = Depends(get_db)
 ):
     """새로운 인스턴스 생성"""
     new_instance = await InstanceService(session).create(instance_create_data)

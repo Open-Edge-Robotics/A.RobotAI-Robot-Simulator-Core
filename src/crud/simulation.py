@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from src.models.simulation import Simulation
-from src.schemas.simulation import SimulationCreateModel, SimulationListModel, SimulationCreateResponse
+from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse
 
 
 class SimulationService:
@@ -13,7 +13,7 @@ class SimulationService:
         self.session = session
 
 
-    async def create_simulation(self, simulation_create_data: SimulationCreateModel):
+    async def create_simulation(self, simulation_create_data: SimulationCreateRequest):
         try:
             # 시뮬레이션 이름 중복 검사
             statement = select(
@@ -54,7 +54,7 @@ class SimulationService:
             results = await self.session.scalars(statement)
 
             simulation_list = [
-                SimulationListModel(
+                SimulationListResponse(
                     simulation_id=simulation.id,
                     simulation_name=simulation.name,
                     simulation_description=simulation.description,

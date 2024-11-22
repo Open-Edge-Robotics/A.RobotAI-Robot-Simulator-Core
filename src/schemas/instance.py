@@ -21,7 +21,7 @@ class InstanceListResponse(BaseSchema):
     instance_created_at: str
 
 # 인스턴스 생성
-class InstanceCreateModel(BaseSchema):
+class InstanceCreateRequest(BaseSchema):
     instance_name : str
     instance_description : str
     simulation_id: int
@@ -40,8 +40,6 @@ class InstanceCreateModel(BaseSchema):
         }
     }
 
-# 인스턴스 생성 시 반환 필드
-# TODO: 이름 규칙 정하기
 class InstanceCreateResponse(BaseSchema):
     instance_id: int
     instance_name : str
