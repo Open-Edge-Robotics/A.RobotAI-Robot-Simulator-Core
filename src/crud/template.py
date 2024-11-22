@@ -18,7 +18,7 @@ class TemplateService:
             ) for template in templates
         ]
 
-    async def create(self, template: TemplateCreateRequest, db: AsyncSession):
+    async def create_template(self, template: TemplateCreateRequest, db: AsyncSession):
         new_template = Template(
             type=template.type,
             description=template.description,

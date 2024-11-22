@@ -12,8 +12,8 @@ template_service = TemplateService()
 
 # 템플릿 목록 조회
 @router.get("", response_model=GlobalResponseModel)
-async def read_template(db: AsyncSession = Depends(get_db)):
-    template_responses = await template_service.read_all(db)
+async def get_templates(db: AsyncSession = Depends(get_db)):
+    template_responses = await template_service.get_all_templates(db)
     return GlobalResponseModel(
         status_code=status.HTTP_200_OK,
         data=template_responses,
@@ -23,9 +23,9 @@ async def read_template(db: AsyncSession = Depends(get_db)):
 # 템플릿 생성
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_template(template: TemplateCreateRequest, db: AsyncSession = Depends(get_db)):
-    return await template_service.create(template, db)
+    return await template_service.create_template(template, db)
 
 # 템플릿 삭제
 @router.delete("/{template_id}", response_model=TemplateDeleteResponse, status_code=status.HTTP_200_OK)
 async def delete_template(template_id: int, db: AsyncSession = Depends(get_db)):
-    return await template_service.delete(template_id, db)
+    return await template_service.delete_template(template_id, db)

@@ -23,7 +23,7 @@ async def create_simulation(
 
 
 @router.get("/", response_model= SimulationListResponseModel, status_code=status.HTTP_200_OK)
-async def get_all_simulations(
+async def get_simulations(
     session: AsyncSession = Depends(get_db)
 ):
     """시뮬레이션 목록 조회"""
@@ -34,3 +34,19 @@ async def get_all_simulations(
         data=simulation_list,
         message="시뮬레이션 목록 조회 성공"
     )
+
+@router.post("/{simulation_id}/action", response_model="")
+async def control_simulation(
+        session: AsyncSession = Depends(get_db)
+):
+    """시뮬레이션 실행/중지"""
+    data = await SimulationService(session).control_simulation()
+    return None
+
+@router.delete("/{simulation_id}", response_model="")
+async def delete_simulation(
+        simulation_id: int, session: AsyncSession = Depends(get_db)
+):
+    """시뮬레이션 삭제"""
+    data = await SimulationService(session).delete_simulation(simulation_id)
+    return None

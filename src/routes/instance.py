@@ -13,7 +13,7 @@ async def create_instance(
         instance_create_data: InstanceCreateRequest, session: AsyncSession = Depends(get_db)
 ):
     """새로운 인스턴스 생성"""
-    new_instance = await InstanceService(session).create(instance_create_data)
+    new_instance = await InstanceService(session).create_instance(instance_create_data)
 
     return InstanceCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
@@ -37,14 +37,24 @@ async def get_instances(
 
 @router.get("/{instance_id}", response_model="")
 async def get_instance(
-        session: AsyncSession = Depends(get_db)
+        instance_id: int, session: AsyncSession = Depends(get_db)
 ):
     """인스턴스 상세 조회"""
+    instance = await InstanceService(session).get_instance(instance_id)
+    return None
+
+@router.post("/{instance_id}/action", response_model="")
+async def control_instance(
+        session: AsyncSession = Depends(get_db)
+):
+    """인스턴스 실행/중지"""
+    data = await InstanceService(session).control_instance()
     return None
 
 @router.delete("/{instance_id}", response_model="")
 async def delete_instance(
-        session: AsyncSession = Depends(get_db)
+        instance_id: int, session: AsyncSession = Depends(get_db)
 ):
     """인스턴스 삭제"""
+    data = await InstanceService(session).delete_instance(instance_id)
     return None
