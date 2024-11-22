@@ -6,7 +6,7 @@ from src.schemas.template import TemplateListResponse, TemplateCreateRequest
 
 
 class TemplateService:
-    async def read_all(self, db: AsyncSession):
+    async def get_all_templates(self, db: AsyncSession):
         selected_template = await db.execute(select(Template))
         templates = selected_template.scalars().all()
 
