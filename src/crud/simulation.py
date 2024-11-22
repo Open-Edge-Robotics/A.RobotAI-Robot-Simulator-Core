@@ -6,7 +6,7 @@ from starlette import status
 
 from src.models.simulation import Simulation
 from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
-    SimulationControlRequest
+    SimulationControlRequest, SimulationDeleteResponse, SimulationControlResponse
 
 
 class SimulationService:
@@ -71,7 +71,17 @@ class SimulationService:
         return simulation_list
 
     async def control_simulation(self, simulation_control_data: SimulationControlRequest):
-        return None
+        # 추후 연동 시 로직 추가
+        simulation_id = simulation_control_data.simulation_id
+        action = simulation_control_data.action
+
+        return SimulationControlResponse(
+            simulation_id = simulation_id
+        ).model_dump(), action
 
     async def delete_simulation(self, simulation_id: int):
-        return None
+        # 추후 연동 시 수동 데이터 수정
+
+        return SimulationDeleteResponse(
+            simulation_id=simulation_id
+        ).model_dump()
