@@ -1,9 +1,11 @@
 from datetime import datetime
+from typing import List
 
 from sqlalchemy import String, DateTime
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.connection import Base
+from src.models.instance import Instance
 
 
 class Template(Base):
@@ -16,3 +18,5 @@ class Template(Base):
     topics: Mapped[str] = mapped_column()
 
     created_at: Mapped[DateTime] = mapped_column(DateTime, default=datetime.now)
+
+    instance: Mapped[List["Instance"]] = relationship(back_populates="template")
