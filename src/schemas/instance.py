@@ -13,12 +13,14 @@ class InstanceDetailResponse(BaseSchema):
     instance_status: str
     topics: str
 
+
 # 목록 조회용
 class InstanceListResponse(BaseSchema):
     instance_id: int
     instance_name: str
     instance_description: str
     instance_created_at: str
+
 
 # 인스턴스 생성
 class InstanceCreateRequest(BaseSchema):
@@ -40,10 +42,42 @@ class InstanceCreateRequest(BaseSchema):
         }
     }
 
+
 class InstanceCreateResponse(BaseSchema):
     instance_id: int
     instance_name : str
     instance_description : str
+
+
+class InstanceControlRequest(BaseSchema):
+    instance_id: int
+    action: str
+
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "instanceId": 1,
+                    "action": "start"
+                }
+        }
+    }
+
+class InstanceControlResponse(BaseSchema):
+    instance_id: int
+
+
+class InstanceControlResponseModel(GlobalResponseModel):
+    pass
+
+
+class InstanceDeleteResponse(BaseSchema):
+    instance_id: int
+
+
+class InstanceDeleteResponseModel(GlobalResponseModel):
+    pass
+
 
 class InstanceCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -62,6 +96,7 @@ class InstanceCreateResponseModel(GlobalResponseModel):
     }
 
     pass
+
 
 class InstanceListResponseModel(GlobalResponseModel):
     model_config = {

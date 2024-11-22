@@ -4,7 +4,8 @@ from starlette import status
 
 from src.crud.instance import InstanceService
 from src.database.connection import get_db
-from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponseModel, InstanceListResponseModel
+from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponseModel, InstanceListResponseModel, \
+    InstanceControlRequest, InstanceControlResponseModel, InstanceDeleteResponseModel
 
 router = APIRouter(prefix="/instance", tags=["Instance"])
 
@@ -20,7 +21,6 @@ async def create_instance(
         data=new_instance,
         message="인스턴스 생성 성공"
     )
-
 
 @router.get("/", response_model=InstanceListResponseModel, status_code=status.HTTP_200_OK)
 async def get_instances(
@@ -43,18 +43,28 @@ async def get_instance(
     instance = await InstanceService(session).get_instance(instance_id)
     return None
 
-@router.post("/{instance_id}/action", response_model="")
+@router.post("/action", response_model=InstanceControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_instance(
-        session: AsyncSession = Depends(get_db)
+        instance_control_data: InstanceControlRequest, session: AsyncSession = Depends(get_db)
 ):
     """인스턴스 실행/중지"""
-    data = await InstanceService(session).control_instance()
-    return None
+    data = await InstanceService(session).control_instance(instance_control_data)
 
-@router.delete("/{instance_id}", response_model="")
+    return InstanceControlResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=data,
+        message="인스턴스 ... 성공"
+    )
+
+@router.delete("/{instance_id}", response_model=InstanceDeleteResponseModel, status_code=status.HTTP_200_OK)
 async def delete_instance(
         instance_id: int, session: AsyncSession = Depends(get_db)
 ):
     """인스턴스 삭제"""
     data = await InstanceService(session).delete_instance(instance_id)
-    return None
+
+    return InstanceDeleteResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=data,
+        message="인스턴스 삭제 성공"
+    )
