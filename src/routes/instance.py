@@ -4,31 +4,36 @@ from starlette import status
 
 from src.crud.instance import InstanceService
 from src.database.connection import get_db
-from src.schemas.format import GlobalResponseModel
-from src.schemas.instance import InstanceCreateModel, InstanceCreateResponseModel
+from src.schemas.instance import InstanceCreateModel, InstanceCreateResponseModel, InstanceListResponseModel
 
 router = APIRouter(prefix="/instance", tags=["Instance"])
 
-@router.post("/", response_model=GlobalResponseModel, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=InstanceCreateResponseModel, status_code=status.HTTP_201_CREATED)
 async def create_instance(
         instance_create_data: InstanceCreateModel, session: AsyncSession = Depends(get_db)
 ):
     """새로운 인스턴스 생성"""
-    data = await InstanceService(session).create(instance_create_data)
+    new_instance = await InstanceService(session).create(instance_create_data)
 
-    return GlobalResponseModel(
+    return InstanceCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
-        data=data,
+        data=new_instance,
         message="인스턴스 생성 성공"
     )
 
 
-@router.get("/", response_model="")
+@router.get("/", response_model=InstanceListResponseModel, status_code=status.HTTP_200_OK)
 async def get_instances(
     session: AsyncSession = Depends(get_db)
 ):
     """인스턴스 목록 조회"""
-    return await InstanceService(session).get_all_instances()
+    instance_list= await InstanceService(session).get_all_instances()
+
+    return InstanceListResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=instance_list,
+        message="인스턴스 목록 조회 성공"
+    )
 
 @router.get("/{instance_id}", response_model="")
 async def get_instance(

@@ -7,7 +7,7 @@ from starlette import status
 from src.models.instance import Instance, InstanceSet
 from src.models.simulation import Simulation
 from src.models.template import Template
-from src.schemas.instance import InstanceCreateModel, InstanceCreateResponse
+from src.schemas.instance import InstanceCreateModel, InstanceCreateResponse, InstanceListResponse
 
 
 class InstanceService:
@@ -64,4 +64,24 @@ class InstanceService:
         ).model_dump()
 
     async def get_all_instances(self):
-        pass
+        try:
+            statement = (
+                select(Instance).
+                order_by(Instance.id.desc())
+            )
+            results = await self.session.scalars(statement)
+
+            instance_list = [
+                InstanceListResponse(
+                    instance_id=instance.id,
+                    instance_name= instance.name,
+                    instance_description= instance.description,
+                    instance_created_at=str(instance.created_at)
+                )
+                for instance in results.all()
+            ]
+
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='인스턴스 목록 조회 실패: ' + str(e))
+
+        return instance_list

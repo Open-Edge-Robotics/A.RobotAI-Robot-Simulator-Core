@@ -14,8 +14,8 @@ class InstanceDetailResponse(BaseSchema):
     topics: str
 
 # 목록 조회용
-class InstanceBriefResponse(BaseSchema):
-    instance_id: str
+class InstanceListResponse(BaseSchema):
+    instance_id: int
     instance_name: str
     instance_description: str
     instance_created_at: str
@@ -48,5 +48,40 @@ class InstanceCreateResponse(BaseSchema):
     instance_description : str
 
 class InstanceCreateResponseModel(GlobalResponseModel):
-    #TODO: 예시 작성하기
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "statusCode": 201,
+                    "data": {
+                        "instanceId": 1,
+                        "instanceName": "instance1",
+                        "instanceDescription": "instance1 입니다~~"
+                    },
+                    "message": "인스턴스 생성 성공"
+                }
+        }
+    }
+
+    pass
+
+class InstanceListResponseModel(GlobalResponseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "statusCode": 200,
+                    "data": [
+                        {
+                            "instanceId": 1,
+                            "instanceName": "instance1",
+                            "instanceDescription": "instance1 입니다~~",
+                            "instanceCreatedAt": "2024-11-22 08:22:16.315731"
+                        }
+                    ],
+                    "message": "인스턴스 목록 조회 성공"
+                }
+        }
+    }
+
     pass
