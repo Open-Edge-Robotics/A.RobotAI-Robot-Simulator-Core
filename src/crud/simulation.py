@@ -1,10 +1,12 @@
+from fastapi import HTTPException
 from sqlalchemy import select, exists
+from sqlalchemy.exc import DatabaseError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from src.models.simulation import Simulation
-from src.schemas.simulation import SimulationCreateModel, SimulationListModel, SimulationListResponseModel, \
-    SimulationCreateResponseModel
+from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
+    SimulationControlRequest, SimulationDeleteResponse, SimulationControlResponse
 
 
 class SimulationService:
@@ -12,7 +14,7 @@ class SimulationService:
         self.session = session
 
 
-    async def create_simulation(self, simulation_create_data: SimulationCreateModel):
+    async def create_simulation(self, simulation_create_data: SimulationCreateRequest):
         try:
             # 시뮬레이션 이름 중복 검사
             statement = select(
@@ -22,13 +24,7 @@ class SimulationService:
             is_existed = await self.session.scalar(statement)
 
             if is_existed:
-                response = SimulationCreateResponseModel(
-                    status_code=status.HTTP_409_CONFLICT,
-                    data=None,
-                    message="시뮬레이션 이름이 이미 존재합니다.",
-                )
-
-                return response
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="시뮬레이션 이름이 이미 존재합니다.")
 
             new_simulation = Simulation(
                 name=simulation_create_data.simulation_name,
@@ -39,22 +35,15 @@ class SimulationService:
             await self.session.commit()
             await self.session.refresh(new_simulation)
 
-            response = SimulationCreateResponseModel(
-                status_code=status.HTTP_201_CREATED,
-                data=None,
-                message="시뮬레이션 생성 성공"
-            )
-
-        except Exception as e:
+        except DatabaseError as e:
             await self.session.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='데이터 저장 중 오류가 발생했습니다.: ' + str(e))
 
-            response = SimulationCreateResponseModel(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                data=None,
-                message="시뮬레이션 생성 실패: " + str(e)
-            )
-
-        return response
+        return SimulationCreateResponse(
+            simulation_id=new_simulation.id,
+            simulation_name=new_simulation.name,
+            simulation_description=new_simulation.description
+        ).model_dump()
 
 
     async def get_all_simulations(self):
@@ -66,8 +55,8 @@ class SimulationService:
             results = await self.session.scalars(statement)
 
             simulation_list = [
-                SimulationListModel(
-                    simulation_id=str(simulation.id),
+                SimulationListResponse(
+                    simulation_id=simulation.id,
                     simulation_name=simulation.name,
                     simulation_description=simulation.description,
                     simulation_created_at=str(simulation.created_at),
@@ -76,18 +65,23 @@ class SimulationService:
                 for simulation in results.all()
             ]
 
-            response = SimulationListResponseModel(
-                status_code="200",
-                data=simulation_list,
-                message="시뮬레이션 목록 조회 성공"
-            )
-
         except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='시뮬레이션 목록 조회 실패: ' + str(e))
 
-            response = SimulationListResponseModel(
-                status_code="500",
-                data=None,
-                message="시뮬레이션 목록 조회 실패: " + str(e)
-            )
+        return simulation_list
 
-        return response
+    async def control_simulation(self, simulation_control_data: SimulationControlRequest):
+        # 추후 연동 시 로직 추가
+        simulation_id = simulation_control_data.simulation_id
+        action = simulation_control_data.action
+
+        return SimulationControlResponse(
+            simulation_id = simulation_id
+        ).model_dump(), action
+
+    async def delete_simulation(self, simulation_id: int):
+        # 추후 연동 시 수동 데이터 수정
+
+        return SimulationDeleteResponse(
+            simulation_id=simulation_id
+        ).model_dump()

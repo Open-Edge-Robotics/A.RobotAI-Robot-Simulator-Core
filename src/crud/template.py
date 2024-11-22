@@ -2,23 +2,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.template import Template
-from src.schemas.template import TemplateResponse, TemplateCreate
+from src.schemas.template import TemplateListResponse, TemplateCreateRequest
 
 
 class TemplateService:
-    async def read_all(self, db: AsyncSession):
+    async def get_all_templates(self, db: AsyncSession):
         selected_template = await db.execute(select(Template))
         templates = selected_template.scalars().all()
 
         return [
-            TemplateResponse(
+            TemplateListResponse(
                 template_id=str(template.template_id),
                 template_type=template.type,
                 template_description=template.description,
             ) for template in templates
         ]
 
-    async def create(self, template: TemplateCreate, db: AsyncSession):
+    async def create_template(self, template: TemplateCreateRequest, db: AsyncSession):
         new_template = Template(
             type=template.type,
             description=template.description,

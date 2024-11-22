@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import List
 
-from sqlalchemy import String, ForeignKey, DateTime
-from sqlalchemy.orm import Mapped, mapped_column, relationship, DeclarativeBase
+from sqlalchemy import String, DateTime
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.connection import Base
 
@@ -14,6 +14,8 @@ class Simulation(Base):
     description: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at : Mapped[DateTime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[DateTime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    instance_set: Mapped[List["InstanceSet"]] = relationship(back_populates="simulation")
 
     def __repr__(self) -> str:
         return f"Simulation => {self.name}"
