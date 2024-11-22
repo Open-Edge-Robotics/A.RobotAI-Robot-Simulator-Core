@@ -17,7 +17,7 @@ class Instance(Base):
     created_at : Mapped[DateTime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[DateTime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
-    instance_set: Mapped[List["InstanceSet"]] = relationship(back_populates="instance")
+    instance_set: Mapped["InstanceSet"] = relationship(back_populates="instance")
 
     template_id: Mapped[int] = mapped_column(ForeignKey("templates.template_id", ondelete="CASCADE"))
     template: Mapped["Template"] = relationship(back_populates="instance")
