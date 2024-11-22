@@ -14,7 +14,7 @@ class InstanceService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, instance_create_data: InstanceCreateRequest):
+    async def create_instance(self, instance_create_data: InstanceCreateRequest):
         # TODO: extract 할 수 있지 않을까? (시뮬id 검사, 템플릿id 검사)
         # 시뮬레이션 id 검사
         statement = select(Simulation).where(Simulation.id == instance_create_data.simulation_id)
@@ -85,3 +85,12 @@ class InstanceService:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='인스턴스 목록 조회 실패: ' + str(e))
 
         return instance_list
+
+    async def get_instance(self, instance_id: int):
+        return None
+
+    async def control_instance(self):
+        return None
+
+    async def delete_instance(self, instance_id: int):
+        return None

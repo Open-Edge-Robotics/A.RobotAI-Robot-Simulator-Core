@@ -68,3 +68,9 @@ class SimulationService:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='시뮬레이션 목록 조회 실패: ' + str(e))
 
         return simulation_list
+
+    async def control_simulation(self):
+        return None
+
+    async def delete_simulation(self, simulation_id: int):
+        return None
