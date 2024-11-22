@@ -4,13 +4,13 @@ from starlette import status
 
 from src.crud.simulation import SimulationService
 from src.database.connection import get_db
-from src.schemas.simulation import SimulationCreateModel, SimulationListResponseModel, SimulationCreateResponseModel
+from src.schemas.simulation import SimulationCreateRequest, SimulationListResponseModel, SimulationCreateResponseModel
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 @router.post("/", response_model= SimulationCreateResponseModel, status_code=status.HTTP_201_CREATED)
 async def create_simulation(
-        simulation_create_data: SimulationCreateModel, session: AsyncSession = Depends(get_db)
+        simulation_create_data: SimulationCreateRequest, session: AsyncSession = Depends(get_db)
 ):
     """새로운 시뮬레이션 생성"""
     new_simulation = await SimulationService(session).create_simulation(simulation_create_data)

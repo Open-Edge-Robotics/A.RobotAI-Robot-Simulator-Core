@@ -7,14 +7,14 @@ from starlette import status
 from src.models.instance import Instance, InstanceSet
 from src.models.simulation import Simulation
 from src.models.template import Template
-from src.schemas.instance import InstanceCreateModel, InstanceCreateResponse, InstanceListResponse
+from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponse, InstanceListResponse
 
 
 class InstanceService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, instance_create_data: InstanceCreateModel):
+    async def create(self, instance_create_data: InstanceCreateRequest):
         # TODO: extract 할 수 있지 않을까? (시뮬id 검사, 템플릿id 검사)
         # 시뮬레이션 id 검사
         statement = select(Simulation).where(Simulation.id == instance_create_data.simulation_id)
