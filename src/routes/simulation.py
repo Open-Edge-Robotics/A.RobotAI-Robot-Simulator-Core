@@ -41,12 +41,12 @@ async def control_simulation(
         simulation_control_data: SimulationControlRequest, session: AsyncSession = Depends(get_db)
 ):
     """시뮬레이션 실행/중지"""
-    data = await SimulationService(session).control_simulation(simulation_control_data)
+    data, action = await SimulationService(session).control_simulation(simulation_control_data)
 
     return SimulationControlResponseModel(
         status_code=status.HTTP_200_OK,
         data=data,
-        message="시뮬레이션 ... 성공"
+        message= f"시뮬레이션 {action} 성공"
     )
 
 @router.delete("/{simulation_id}", response_model=SimulationDeleteResponseModel, status_code=status.HTTP_200_OK)
