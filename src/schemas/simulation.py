@@ -30,6 +30,37 @@ class SimulationListResponse(BaseSchema):
     simulation_status : str
 
 
+class SimulationControlRequest(BaseSchema):
+    simulation_id : int
+    action: str
+
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "simulationId": 1,
+                    "action": "start"
+                }
+        }
+    }
+
+
+class SimulationControlResponse(BaseSchema):
+    simulation_id: int
+
+
+class SimulationControlResponseModel(GlobalResponseModel):
+    pass
+
+
+class SimulationDeleteResponse(BaseSchema):
+    simulation_id: int
+
+
+class SimulationDeleteResponseModel(GlobalResponseModel):
+    pass
+
+
 class SimulationCreateResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {

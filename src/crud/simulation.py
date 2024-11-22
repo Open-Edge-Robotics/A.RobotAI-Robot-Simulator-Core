@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from src.models.simulation import Simulation
-from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse
+from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
+    SimulationControlRequest
 
 
 class SimulationService:
@@ -69,7 +70,7 @@ class SimulationService:
 
         return simulation_list
 
-    async def control_simulation(self):
+    async def control_simulation(self, simulation_control_data: SimulationControlRequest):
         return None
 
     async def delete_simulation(self, simulation_id: int):

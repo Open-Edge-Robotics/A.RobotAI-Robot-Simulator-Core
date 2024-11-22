@@ -4,7 +4,8 @@ from starlette import status
 
 from src.crud.simulation import SimulationService
 from src.database.connection import get_db
-from src.schemas.simulation import SimulationCreateRequest, SimulationListResponseModel, SimulationCreateResponseModel
+from src.schemas.simulation import SimulationCreateRequest, SimulationListResponseModel, SimulationCreateResponseModel, \
+    SimulationControlRequest, SimulationControlResponseModel, SimulationDeleteResponseModel
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
@@ -35,18 +36,28 @@ async def get_simulations(
         message="시뮬레이션 목록 조회 성공"
     )
 
-@router.post("/{simulation_id}/action", response_model="")
+@router.post("/action", response_model=SimulationControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_simulation(
-        session: AsyncSession = Depends(get_db)
+        simulation_control_data: SimulationControlRequest, session: AsyncSession = Depends(get_db)
 ):
     """시뮬레이션 실행/중지"""
-    data = await SimulationService(session).control_simulation()
-    return None
+    data = await SimulationService(session).control_simulation(simulation_control_data)
 
-@router.delete("/{simulation_id}", response_model="")
+    return SimulationControlResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=data,
+        message="시뮬레이션 ... 성공"
+    )
+
+@router.delete("/{simulation_id}", response_model=SimulationDeleteResponseModel, status_code=status.HTTP_200_OK)
 async def delete_simulation(
         simulation_id: int, session: AsyncSession = Depends(get_db)
 ):
     """시뮬레이션 삭제"""
     data = await SimulationService(session).delete_simulation(simulation_id)
-    return None
+
+    return SimulationDeleteResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=data,
+        message="시뮬레이션 삭제 성공"
+    )

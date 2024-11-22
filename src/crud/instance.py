@@ -7,7 +7,8 @@ from starlette import status
 from src.models.instance import Instance, InstanceSet
 from src.models.simulation import Simulation
 from src.models.template import Template
-from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponse, InstanceListResponse
+from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponse, InstanceListResponse, \
+    InstanceControlRequest
 
 
 class InstanceService:
@@ -89,7 +90,7 @@ class InstanceService:
     async def get_instance(self, instance_id: int):
         return None
 
-    async def control_instance(self):
+    async def control_instance(self, instance_control_data: InstanceControlRequest):
         return None
 
     async def delete_instance(self, instance_id: int):
