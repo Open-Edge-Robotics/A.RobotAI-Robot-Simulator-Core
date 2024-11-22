@@ -8,7 +8,7 @@ from src.models.instance import Instance, InstanceSet
 from src.models.simulation import Simulation
 from src.models.template import Template
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponse, InstanceListResponse, \
-    InstanceControlRequest
+    InstanceControlRequest, InstanceDetailResponse, InstanceControlResponse, InstanceDeleteResponse
 
 
 class InstanceService:
@@ -88,10 +88,32 @@ class InstanceService:
         return instance_list
 
     async def get_instance(self, instance_id: int):
-        return None
+        # 추후 연동 시 수동 데이터 수정 및 로직 추가
+
+        return InstanceDetailResponse(
+            instance_id = instance_id,
+            instance_namespace= "instanceNamespace",
+            instance_port_number= 3000,
+            instance_age= "20d",
+            template_type= "templateType",
+            instance_volume= "instanceVolume",
+            instance_log= "instanceLog",
+            instance_status= "instanceStatus",
+            topics= "topics",
+        ).model_dump()
 
     async def control_instance(self, instance_control_data: InstanceControlRequest):
-        return None
+        # 추후 연동 시 로직 추가
+        instance_id = instance_control_data.instance_id
+        action = instance_control_data.action
+
+        return InstanceControlResponse(
+            instance_id = instance_control_data.instance_id
+        ).model_dump(), action
 
     async def delete_instance(self, instance_id: int):
-        return None
+        # 추후 연동 시 수동 데이터 수정
+
+        return InstanceDeleteResponse(
+            instance_id=instance_id
+        ).model_dump()

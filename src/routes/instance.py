@@ -5,7 +5,7 @@ from starlette import status
 from src.crud.instance import InstanceService
 from src.database.connection import get_db
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponseModel, InstanceListResponseModel, \
-    InstanceControlRequest, InstanceControlResponseModel, InstanceDeleteResponseModel
+    InstanceControlRequest, InstanceControlResponseModel, InstanceDeleteResponseModel, InstanceDetailResponseModel
 
 router = APIRouter(prefix="/instance", tags=["Instance"])
 
@@ -35,25 +35,30 @@ async def get_instances(
         message="인스턴스 목록 조회 성공"
     )
 
-@router.get("/{instance_id}", response_model="")
+@router.get("/{instance_id}", response_model=InstanceDetailResponseModel, status_code=status.HTTP_200_OK)
 async def get_instance(
         instance_id: int, session: AsyncSession = Depends(get_db)
 ):
     """인스턴스 상세 조회"""
-    instance = await InstanceService(session).get_instance(instance_id)
-    return None
+    instance_detail = await InstanceService(session).get_instance(instance_id)
+
+    return InstanceDetailResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=instance_detail,
+        message="인스턴스 상세 조회 성공"
+    )
 
 @router.post("/action", response_model=InstanceControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_instance(
         instance_control_data: InstanceControlRequest, session: AsyncSession = Depends(get_db)
 ):
     """인스턴스 실행/중지"""
-    data = await InstanceService(session).control_instance(instance_control_data)
+    data, action = await InstanceService(session).control_instance(instance_control_data)
 
     return InstanceControlResponseModel(
         status_code=status.HTTP_200_OK,
         data=data,
-        message="인스턴스 ... 성공"
+        message=f"인스턴스 {action} 성공"
     )
 
 @router.delete("/{instance_id}", response_model=InstanceDeleteResponseModel, status_code=status.HTTP_200_OK)

@@ -4,14 +4,18 @@ from src.schemas.format import GlobalResponseModel
 
 # 상세 조회용
 class InstanceDetailResponse(BaseSchema):
+    instance_id: int
     instance_namespace: str
-    instance_port_number: str
+    instance_port_number: int
     instance_age: str
     template_type: str
     instance_volume: str
     instance_log: str
     instance_status: str
     topics: str
+
+class InstanceDetailResponseModel(GlobalResponseModel):
+    pass
 
 
 # 목록 조회용
