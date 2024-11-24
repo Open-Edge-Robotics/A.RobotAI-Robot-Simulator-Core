@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.template import Template
-from src.schemas.template import TemplateListResponse, TemplateCreateRequest
+from src.schemas.template import TemplateListResponse, TemplateCreateRequest, TemplateCreateResponse
 
 
 class TemplateService:
@@ -28,7 +28,8 @@ class TemplateService:
         db.add(new_template)
         await db.commit()
         await db.refresh(new_template)
-        return new_template
+
+        return TemplateCreateResponse.model_validate(new_template).model_dump()
 
     # async def delete(self, template_id: int, db: AsyncSession):
     #     find_template = await self.read(template_id, db)
