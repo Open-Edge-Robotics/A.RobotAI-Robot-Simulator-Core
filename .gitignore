@@ -170,3 +170,6 @@ test/
 /docker-compose.yaml
 /k8s/
 /src/routes/rosbag.py
+
+# .tar
+*.tar
