@@ -2,31 +2,8 @@ from src.settings import BaseSchema
 
 from src.schemas.format import GlobalResponseModel
 
-# 상세 조회용
-class InstanceDetailResponse(BaseSchema):
-    instance_id: int
-    instance_namespace: str
-    instance_port_number: int
-    instance_age: str
-    template_type: str
-    instance_volume: str
-    instance_log: str
-    instance_status: str
-    topics: str
 
-class InstanceDetailResponseModel(GlobalResponseModel):
-    pass
-
-
-# 목록 조회용
-class InstanceListResponse(BaseSchema):
-    instance_id: int
-    instance_name: str
-    instance_description: str
-    instance_created_at: str
-
-
-# 인스턴스 생성
+###### 생성 #######
 class InstanceCreateRequest(BaseSchema):
     instance_name : str
     instance_description : str
@@ -46,42 +23,10 @@ class InstanceCreateRequest(BaseSchema):
         }
     }
 
-
 class InstanceCreateResponse(BaseSchema):
     instance_id: int
     instance_name : str
     instance_description : str
-
-
-class InstanceControlRequest(BaseSchema):
-    instance_id: int
-    action: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example":
-                {
-                    "instanceId": 1,
-                    "action": "start"
-                }
-        }
-    }
-
-class InstanceControlResponse(BaseSchema):
-    instance_id: int
-
-
-class InstanceControlResponseModel(GlobalResponseModel):
-    pass
-
-
-class InstanceDeleteResponse(BaseSchema):
-    instance_id: int
-
-
-class InstanceDeleteResponseModel(GlobalResponseModel):
-    pass
-
 
 class InstanceCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -102,6 +47,13 @@ class InstanceCreateResponseModel(GlobalResponseModel):
     pass
 
 
+###### 목록 조회 #######
+class InstanceListResponse(BaseSchema):
+    instance_id: int
+    instance_name: str
+    instance_description: str
+    instance_created_at: str
+
 class InstanceListResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
@@ -117,6 +69,91 @@ class InstanceListResponseModel(GlobalResponseModel):
                         }
                     ],
                     "message": "인스턴스 목록 조회 성공"
+                }
+        }
+    }
+
+    pass
+
+
+###### 상세 조회 #######
+class InstanceDetailResponse(BaseSchema):
+    instance_id: int
+    instance_namespace: str
+    instance_port_number: int
+    instance_age: str
+    template_type: str
+    instance_volume: str
+    instance_log: str
+    instance_status: str
+    topics: str
+
+class InstanceDetailResponseModel(GlobalResponseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "statusCode": 200,
+                    "data": {
+                        "instanceId": 1,
+                        "instanceNamespace": "robot",
+                        "instancePortNumber": 3000,
+                        "instanceAge": "20d",
+                        "templateType": "templateType",
+                        "instanceVolume": "instanceVolume",
+                        "instanceLog": "instanceLog",
+                        "instanceStatus": "instanceStatus",
+                        "topics": "topics"
+                    },
+                    "message": "인스턴스 상세 조회 성공"
+                }
+        }
+    }
+
+    pass
+
+
+###### 실행 #######
+class InstanceControlRequest(BaseSchema):
+    instance_id: int
+    action: str
+
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "instanceId": 1,
+                    "action": "start"
+                }
+        }
+    }
+
+class InstanceControlResponse(BaseSchema):
+    instance_id: int
+
+class InstanceControlResponseModel(GlobalResponseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "instanceId": 1
+                }
+        }
+    }
+
+    pass
+
+
+###### 삭제 #######
+class InstanceDeleteResponse(BaseSchema):
+    instance_id: int
+
+class InstanceDeleteResponseModel(GlobalResponseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "instanceId": 1
                 }
         }
     }

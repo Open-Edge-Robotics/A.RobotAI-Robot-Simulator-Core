@@ -2,7 +2,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.template import Template
-from src.schemas.template import TemplateListResponse, TemplateCreateRequest, TemplateCreateResponse
+from src.schemas.template import TemplateListResponse, TemplateCreateRequest, TemplateCreateResponse, \
+    TemplateDeleteResponse
 
 
 class TemplateService:
@@ -12,7 +13,7 @@ class TemplateService:
 
         return [
             TemplateListResponse(
-                template_id=str(template.template_id),
+                template_id=template.template_id,
                 template_type=template.type,
                 template_description=template.description,
             ) for template in templates
@@ -31,9 +32,13 @@ class TemplateService:
 
         return TemplateCreateResponse.model_validate(new_template).model_dump()
 
-    # async def delete(self, template_id: int, db: AsyncSession):
+    # async def delete_template(self, template_id: int, db: AsyncSession):
+    #     # TODO: 로직 수정 필요 (응답은 X)
     #     find_template = await self.read(template_id, db)
     #
     #     await db.delete(find_template)
     #     await db.commit()
-    #     return find_template
+    #
+    #     return TemplateDeleteResponse(
+    #         template_id=template_id
+    #     )
