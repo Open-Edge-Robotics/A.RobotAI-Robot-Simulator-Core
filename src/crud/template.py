@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,9 +31,18 @@ class TemplateService:
         await db.refresh(new_template)
         return new_template
 
-    # async def delete(self, template_id: int, db: AsyncSession):
-    #     find_template = await self.read(template_id, db)
-    #
-    #     await db.delete(find_template)
-    #     await db.commit()
-    #     return find_template
+    async def delete_template(self, template_id: int, db: AsyncSession):
+        find_template = await self.find(template_id, db)
+
+        await db.delete(find_template)
+        await db.commit()
+        return find_template
+
+    async def find_template(self, template_id, db):
+        query = select(Template).filter(Template.template_id == template_id)
+        template = await db.execute(query)
+        find_template = template.scalar_one_or_none()
+
+        if find_template is None:
+            raise HTTPException(status_code=404, detail="Template not found")
+        return find_template
