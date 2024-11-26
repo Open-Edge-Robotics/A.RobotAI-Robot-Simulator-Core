@@ -66,7 +66,11 @@ class SimulationCreateResponseModel(GlobalResponseModel):
         "json_schema_extra": {
             "example": {
                 "statusCode": 201,
-                "data": "null",
+                "data": {
+                    "simulationId": 1,
+                    "simulationName": "simulation1",
+                    "simulationDescription": "시뮬레이션1 입니다~~"
+                },
                 "message": "시뮬레이션 생성 성공"
             }
         }
