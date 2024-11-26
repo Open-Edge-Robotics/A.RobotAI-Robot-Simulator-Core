@@ -169,4 +169,3 @@ test/
 # Ops
 /docker-compose.yaml
 /k8s/
-/src/routes/rosbag.py
