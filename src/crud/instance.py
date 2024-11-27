@@ -5,33 +5,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from starlette import status
 
+from src.crud.template import TemplateService
+from src.crud.simulation import SimulationService
 from src.models.instance import Instance, Pod
-from src.models.simulation import Simulation
 from src.models.template import Template
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponse, InstanceListResponse, \
     InstanceControlRequest, InstanceDetailResponse, InstanceControlResponse, InstanceDeleteResponse
 
+template_service = TemplateService()
 
 class InstanceService:
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.simulation_service = SimulationService(session)
 
     async def create_instance(self, instance_create_data: InstanceCreateRequest):
         async with self.session.begin():
-            # TODO: extract 할 수 있지 않을까? (시뮬id 검사, 템플릿id 검사)
-            # 시뮬레이션 id 검사
-            statement = select(Simulation).where(Simulation.id == instance_create_data.simulation_id)
-            simulation = await self.session.scalar(statement)
-
-            if simulation is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='존재하지 않는 시뮬레이션id 입니다.')
-
-            # 템플릿 id 검사
-            statement = select(Template).where(Template.template_id == instance_create_data.template_id)
-            template = await self.session.scalar(statement)
-
-            if template is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='존재하지 않는 템플릿id 입니다.')
+            simulation = await self.simulation_service.find_simulation_by_id(instance_create_data.simulation_id)
+            template = await template_service.find_template_by_id(instance_create_data.template_id, self.session)
 
             count = instance_create_data.instance_count
             new_instances = [
