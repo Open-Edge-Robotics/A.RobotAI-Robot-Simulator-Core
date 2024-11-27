@@ -1,4 +1,5 @@
 from fastapi import HTTPException
+from kubernetes import client
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
@@ -24,7 +25,6 @@ class InstanceService:
             if simulation is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='존재하지 않는 시뮬레이션id 입니다.')
 
-
             # 템플릿 id 검사
             statement = select(Template).where(Template.template_id == instance_create_data.template_id)
             template = await self.session.scalar(statement)
@@ -41,7 +41,6 @@ class InstanceService:
                 template=template,
                 ) for i in range(count)
             ]
-
             self.session.add_all(new_instances)
 
             await self.session.flush()
@@ -76,6 +75,28 @@ class InstanceService:
                 for new_pod in pod_sets
             ]
 
+    async def create_pod(self, instance_id, instance_create_data):
+        statement = select(Template).where(Template.template_id == instance_create_data.template_id)
+        template = await self.session.scalar(statement)
+
+        pod_client = client.CoreV1Api()
+        for i in range(instance_create_data.instance_count):
+            pod_name = f"instance-{instance_id}-{i + 1}"
+            pod_metadata = client.V1ObjectMeta(name=pod_name)
+            pod_env = client.V1EnvVar(name="AGENT_TYPE", value=template.type)
+
+            container = client.V1Container(
+                name=pod_name,
+                image="shis1008/pod:latest",
+                env=pod_env,
+            )
+            pod = client.V1Pod(
+                metadata=pod_metadata,
+                spec=client.V1PodSpec(containers=[container]),
+            )
+
+            pod_client.create_namespaced_pod(namespace="robot", body=pod)
+
     async def get_all_instances(self):
         try:
             statement = (
@@ -87,8 +108,8 @@ class InstanceService:
             instance_list = [
                 InstanceListResponse(
                     instance_id=instance.id,
-                    instance_name= instance.name,
-                    instance_description= instance.description,
+                    instance_name=instance.name,
+                    instance_description=instance.description,
                     instance_created_at=str(instance.created_at)
                 )
                 for instance in results.all()
@@ -103,15 +124,15 @@ class InstanceService:
         # 추후 연동 시 수동 데이터 수정 및 로직 추가
 
         return InstanceDetailResponse(
-            instance_id = instance_id,
-            instance_namespace= "instanceNamespace",
-            instance_port_number= 3000,
-            instance_age= "20d",
-            template_type= "templateType",
-            instance_volume= "instanceVolume",
-            instance_log= "instanceLog",
-            instance_status= "instanceStatus",
-            topics= "topics",
+            instance_id=instance_id,
+            instance_namespace="instanceNamespace",
+            instance_port_number=3000,
+            instance_age="20d",
+            template_type="templateType",
+            instance_volume="instanceVolume",
+            instance_log="instanceLog",
+            instance_status="instanceStatus",
+            topics="topics",
         ).model_dump()
 
     async def control_instance(self, instance_control_data: InstanceControlRequest):
@@ -120,7 +141,7 @@ class InstanceService:
         action = instance_control_data.action
 
         return InstanceControlResponse(
-            instance_id = instance_control_data.instance_id
+            instance_id=instance_control_data.instance_id
         ).model_dump(), action
 
     async def delete_instance(self, instance_id: int):
