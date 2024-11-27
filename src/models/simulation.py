@@ -16,7 +16,7 @@ class Simulation(Base):
     created_at: Mapped[DateTime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[DateTime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
-    instance_set: Mapped[List["InstanceSet"]] = relationship(back_populates="simulation")
+    pod: Mapped[List["Pod"]] = relationship(back_populates="simulation")
 
     def __repr__(self) -> str:
         return f"Simulation => {self.name}"

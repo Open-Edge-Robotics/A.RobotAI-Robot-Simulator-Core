@@ -2,7 +2,7 @@ from src.settings import BaseSchema
 
 from src.schemas.format import GlobalResponseModel
 
-
+###### 생성 #######
 class SimulationCreateRequest(BaseSchema):
     simulation_name: str
     simulation_description: str
@@ -21,52 +21,16 @@ class SimulationCreateResponse(BaseSchema):
     simulation_name: str
     simulation_description: str
 
-
-class SimulationListResponse(BaseSchema):
-    simulation_id : int
-    simulation_name: str
-    simulation_description: str
-    simulation_created_at : str
-    simulation_status : str
-
-
-class SimulationControlRequest(BaseSchema):
-    simulation_id : int
-    action: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example":
-                {
-                    "simulationId": 1,
-                    "action": "start"
-                }
-        }
-    }
-
-
-class SimulationControlResponse(BaseSchema):
-    simulation_id: int
-
-
-class SimulationControlResponseModel(GlobalResponseModel):
-    pass
-
-
-class SimulationDeleteResponse(BaseSchema):
-    simulation_id: int
-
-
-class SimulationDeleteResponseModel(GlobalResponseModel):
-    pass
-
-
 class SimulationCreateResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
                 "statusCode": 201,
-                "data": "null",
+                "data": {
+                    "simulationId": 1,
+                    "simulationName": "simulation1",
+                    "simulationDescription": "시뮬레이션1 입니다~~"
+                },
                 "message": "시뮬레이션 생성 성공"
             }
         }
@@ -74,6 +38,14 @@ class SimulationCreateResponseModel(GlobalResponseModel):
 
     pass
 
+
+###### 목록 조회 #######
+class SimulationListResponse(BaseSchema):
+    simulation_id : int
+    simulation_name: str
+    simulation_description: str
+    simulation_created_at : str
+    simulation_status : str
 
 class SimulationListResponseModel(GlobalResponseModel):
     model_config = {
@@ -95,4 +67,55 @@ class SimulationListResponseModel(GlobalResponseModel):
     }
 
     pass
+
+
+###### 실행 #######
+class SimulationControlRequest(BaseSchema):
+    simulation_id : int
+    action: str
+
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "simulationId": 1,
+                    "action": "start"
+                }
+        }
+    }
+
+class SimulationControlResponse(BaseSchema):
+    simulation_id: int
+
+class SimulationControlResponseModel(GlobalResponseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "simulationId": 1
+                }
+        }
+    }
+
+    pass
+
+
+###### 삭제 #######
+class SimulationDeleteResponse(BaseSchema):
+    simulation_id: int
+
+class SimulationDeleteResponseModel(GlobalResponseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example":
+                {
+                    "simulationId": 1
+                }
+        }
+    }
+
+    pass
+
+
+
 
