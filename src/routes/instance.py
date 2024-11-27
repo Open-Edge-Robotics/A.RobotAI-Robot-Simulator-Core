@@ -18,7 +18,7 @@ async def create_instance(
 ):
     """새로운 인스턴스 생성"""
     new_instance = await InstanceService(session).create_instance(instance_create_data)
-    await InstanceService(session).create_pod(1, instance_create_data)
+    # await InstanceService(session).create_pod(1, instance_create_data)
 
     return InstanceCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
