@@ -61,6 +61,8 @@ class InstanceListResponse(BaseSchema):
     instance_name: str
     instance_description: str
     instance_created_at: str
+    pod_name: str
+    pod_status: str
 
 class InstanceListResponseModel(GlobalResponseModel):
     model_config = {
@@ -73,7 +75,9 @@ class InstanceListResponseModel(GlobalResponseModel):
                             "instanceId": 1,
                             "instanceName": "instance1",
                             "instanceDescription": "instance1 입니다~~",
-                            "instanceCreatedAt": "2024-11-22 08:22:16.315731"
+                            "instanceCreatedAt": "2024-11-22 08:22:16.315731",
+                            "podName": "instance-1-1",
+                            "podStatus": "RUNNING"
                         }
                     ],
                     "message": "인스턴스 목록 조회 성공"

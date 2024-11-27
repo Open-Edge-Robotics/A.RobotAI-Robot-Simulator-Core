@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from kubernetes import client
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 from starlette import status
 
 from src.models.instance import Instance, Pod
@@ -101,6 +102,7 @@ class InstanceService:
         try:
             statement = (
                 select(Instance).
+                options(joinedload(Instance.pod)).
                 order_by(Instance.id.desc())
             )
             results = await self.session.scalars(statement)
@@ -110,7 +112,9 @@ class InstanceService:
                     instance_id=instance.id,
                     instance_name=instance.name,
                     instance_description=instance.description,
-                    instance_created_at=str(instance.created_at)
+                    instance_created_at=str(instance.created_at),
+                    pod_name=instance.pod.name,
+                    pod_status="RUNNING" #TODO: 실제 상태 연동
                 )
                 for instance in results.all()
             ]
