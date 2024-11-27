@@ -27,6 +27,9 @@ class InstanceCreateResponse(BaseSchema):
     instance_id: int
     instance_name : str
     instance_description : str
+    simulation_id: int
+    template_id: int
+    pod_name : str
 
 class InstanceCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -34,11 +37,16 @@ class InstanceCreateResponseModel(GlobalResponseModel):
             "example":
                 {
                     "statusCode": 201,
-                    "data": {
-                        "instanceId": 1,
-                        "instanceName": "instance1",
-                        "instanceDescription": "instance1 입니다~~"
-                    },
+                    "data": [
+                        {
+                            "instanceId": 1,
+                            "instanceName": "instance1",
+                            "instanceDescription": "instance1 입니다~~",
+                            "templateId": 2,
+                            "simulationId": 1,
+                            "podName": "instance-1-1"
+                        }
+                    ],
                     "message": "인스턴스 생성 성공"
                 }
         }
@@ -84,7 +92,6 @@ class InstanceDetailResponse(BaseSchema):
     instance_age: str
     template_type: str
     instance_volume: str
-    instance_log: str
     instance_status: str
     topics: str
 
