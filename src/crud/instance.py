@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import HTTPException
 from kubernetes import client
 from sqlalchemy import select
@@ -89,25 +91,27 @@ class InstanceService:
 
             pod_client.create_namespaced_pod(namespace="robot", body=pod)
 
-    async def get_all_instances(self):
+    async def get_all_instances(self, simulation_id: Optional[int]):
         try:
             statement = (
-                select(Instance).
-                options(joinedload(Instance.pod)).
-                order_by(Instance.id.desc())
+                select(Pod).
+                options(joinedload(Pod.instance)).
+                order_by(Pod.id.desc())
             )
+            if simulation_id is not None:
+                statement = statement.where(Pod.simulation_id == simulation_id)
             results = await self.session.scalars(statement)
 
             instance_list = [
                 InstanceListResponse(
-                    instance_id=instance.id,
-                    instance_name=instance.name,
-                    instance_description=instance.description,
-                    instance_created_at=str(instance.created_at),
-                    pod_name=instance.pod.name,
+                    instance_id=pod.instance.id,
+                    instance_name=pod.instance.name,
+                    instance_description=pod.instance.description,
+                    instance_created_at=str(pod.instance.created_at),
+                    pod_name=pod.name,
                     pod_status="RUNNING" #TODO: 실제 상태 연동
                 )
-                for instance in results.all()
+                for pod in results.all()
             ]
 
         except Exception as e:
