@@ -5,20 +5,17 @@ from fastapi import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.database.connection import init_db, close_db
-
+from src.database.db_conn import init_db, close_db
 from src.exception.exception_handler import http_exception_handler, validation_exception_handler
-
-
 from src.routes import template, rosbag, instance, simulation
-
 from src.settings import settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    # config.load_kube_config('/root/.kube/config') # TODO K8s 배포 시 주석 해제
+    from kubernetes import config
+    config.load_kube_config('/root/.kube/config')  # TODO 로컬 실행 시 주석 처리
 
     yield
     await close_db()

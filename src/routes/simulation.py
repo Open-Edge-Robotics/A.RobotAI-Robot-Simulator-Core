@@ -3,13 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from src.crud.simulation import SimulationService
-from src.database.connection import get_db
+from src.database.db_conn import get_db
 from src.schemas.simulation import SimulationCreateRequest, SimulationListResponseModel, SimulationCreateResponseModel, \
     SimulationControlRequest, SimulationControlResponseModel, SimulationDeleteResponseModel
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
-@router.post("/", response_model= SimulationCreateResponseModel, status_code=status.HTTP_201_CREATED)
+
+@router.post("/", response_model=SimulationCreateResponseModel, status_code=status.HTTP_201_CREATED)
 async def create_simulation(
         simulation_create_data: SimulationCreateRequest, session: AsyncSession = Depends(get_db)
 ):
@@ -23,9 +24,9 @@ async def create_simulation(
     )
 
 
-@router.get("/", response_model= SimulationListResponseModel, status_code=status.HTTP_200_OK)
+@router.get("/", response_model=SimulationListResponseModel, status_code=status.HTTP_200_OK)
 async def get_simulations(
-    session: AsyncSession = Depends(get_db)
+        session: AsyncSession = Depends(get_db)
 ):
     """시뮬레이션 목록 조회"""
     simulation_list = await SimulationService(session).get_all_simulations()
@@ -35,6 +36,7 @@ async def get_simulations(
         data=simulation_list,
         message="시뮬레이션 목록 조회 성공"
     )
+
 
 @router.post("/action", response_model=SimulationControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_simulation(
@@ -46,8 +48,9 @@ async def control_simulation(
     return SimulationControlResponseModel(
         status_code=status.HTTP_200_OK,
         data=data,
-        message= f"시뮬레이션 {action} 성공"
+        message=f"시뮬레이션 {action} 성공"
     )
+
 
 @router.delete("/{simulation_id}", response_model=SimulationDeleteResponseModel, status_code=status.HTTP_200_OK)
 async def delete_simulation(
