@@ -35,7 +35,7 @@ class TemplateService:
         return TemplateCreateResponse.model_validate(new_template).model_dump()
 
     async def delete_template(self, template_id: int, db: AsyncSession):
-        find_template = await self.find_template_by_id(template_id, db)
+        find_template = await self.find_template_by_id(template_id, "템플릿 삭제", db)
 
         await db.delete(find_template)
         await db.commit()
@@ -43,7 +43,7 @@ class TemplateService:
             template_id=template_id #TODO: 필드 수정? 엑셀에는 template_id만 있어서 이렇게 적어둠. 반환 필드 추가 시 스키마까지 수정 필.
         ).model_dump()
 
-    async def find_template_by_id(self, template_id, api: str, db):
+    async def find_template_by_id(self, template_id, api: str, db: AsyncSession):
         try:
             query = select(Template).where(Template.template_id == template_id)
             result = await db.execute(query)
