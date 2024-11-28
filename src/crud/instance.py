@@ -33,7 +33,7 @@ class InstanceService:
                 description=instance_create_data.instance_description,
                 template_id=template.template_id,
                 template=template,
-                ) for i in range(count)
+                ) for _ in range(count)
             ]
             self.session.add_all(new_instances)
 
@@ -120,19 +120,21 @@ class InstanceService:
         return instance_list
 
     async def get_instance(self, instance_id: int):
-        # 추후 연동 시 수동 데이터 수정 및 로직 추가
+        #TODO: 실제 상태 연동 및 예외 처리
+        instance = await self.find_instance_by_id(instance_id, '인스턴스 상세 조회')
 
-        return InstanceDetailResponse(
-            instance_id=instance_id,
-            instance_namespace="instanceNamespace",
+        instance_detail_response = InstanceDetailResponse(
+            instance_id=instance.id,
+            instance_namespace="robot",
             instance_port_number=3000,
             instance_age="20d",
-            template_type="templateType",
+            template_type=instance.template.type,
             instance_volume="instanceVolume",
-            instance_log="instanceLog",
             instance_status="instanceStatus",
-            topics="topics",
+            topics=instance.template.topics,
         ).model_dump()
+
+        return instance_detail_response
 
     async def control_instance(self, instance_control_data: InstanceControlRequest):
         # 추후 연동 시 로직 추가
@@ -149,3 +151,20 @@ class InstanceService:
         return InstanceDeleteResponse(
             instance_id=instance_id
         ).model_dump()
+
+    async def find_instance_by_id(self, instance_id: int, message: str):
+        try:
+            query = (
+                select(Instance).
+                where(Instance.id == instance_id).
+                options(joinedload(Instance.template))
+            )
+            result = await self.session.execute(query)
+            instance = result.scalar_one_or_none()
+
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'{message} 실패 : 데이터베이스 조회 중 오류가 발생했습니다. : {str(e)}')
+
+        if instance is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{message} 실패 : 존재하지 않는 인스턴스id 입니다.') #TODO: 다른 find_by_id에도 message 적용
+        return instance
