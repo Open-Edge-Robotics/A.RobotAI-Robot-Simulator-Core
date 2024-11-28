@@ -1,78 +1,60 @@
+from typing import Optional
+
 from fastapi import HTTPException
 from kubernetes import client
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 from starlette import status
 
-from src.models.instance import Instance, Pod
-from src.models.simulation import Simulation
+from src.crud.template import TemplateService
+from src.crud.simulation import SimulationService
+from src.models.instance import Instance
 from src.models.template import Template
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponse, InstanceListResponse, \
     InstanceControlRequest, InstanceDetailResponse, InstanceControlResponse, InstanceDeleteResponse
 
+template_service = TemplateService()
 
 class InstanceService:
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.simulation_service = SimulationService(session)
 
     async def create_instance(self, instance_create_data: InstanceCreateRequest):
         async with self.session.begin():
-            # TODO: extract 할 수 있지 않을까? (시뮬id 검사, 템플릿id 검사)
-            # 시뮬레이션 id 검사
-            statement = select(Simulation).where(Simulation.id == instance_create_data.simulation_id)
-            simulation = await self.session.scalar(statement)
-
-            if simulation is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='존재하지 않는 시뮬레이션id 입니다.')
-
-            # 템플릿 id 검사
-            statement = select(Template).where(Template.template_id == instance_create_data.template_id)
-            template = await self.session.scalar(statement)
-
-            if template is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='존재하지 않는 템플릿id 입니다.')
+            simulation = await self.simulation_service.find_simulation_by_id(instance_create_data.simulation_id, "인스턴스 생성")
+            template = await template_service.find_template_by_id(instance_create_data.template_id, "인스턴스 생성", self.session)
 
             count = instance_create_data.instance_count
             new_instances = [
                 Instance(
-                name=instance_create_data.instance_name,
-                description=instance_create_data.instance_description,
-                template_id=template.template_id,
-                template=template,
-                ) for i in range(count)
+                    name=instance_create_data.instance_name,
+                    description=instance_create_data.instance_description,
+                    template_id=template.template_id,
+                    template=template,
+                    simulation_id=simulation.id,
+                    simulation=simulation
+                ) for _ in range(count)
             ]
             self.session.add_all(new_instances)
 
             await self.session.flush()
             for new_instance in new_instances:
                 await self.session.refresh(new_instance)
-
-            pod_sets = [
-                Pod(
-                    name = f"instance-{simulation.id}-{new_instance.id}",
-                    instance=new_instance,
-                    instance_id=new_instance.id,
-                    simulation_id=simulation.id,
-                    simulation= simulation
-                ) for new_instance in new_instances
-            ]
-
-            self.session.add_all(pod_sets)
-
-            await self.session.flush()
-            for new_pod in pod_sets:
-                await self.session.refresh(new_pod)
+                new_instance.pod_name = f"instance-{new_instance.simulation_id}-{new_instance.id}"
+                self.session.add(new_instance)
 
             return [
                 InstanceCreateResponse(
-                    instance_id=new_pod.instance_id,
-                    instance_name=new_pod.instance.name,
-                    instance_description=new_pod.instance.description,
-                    template_id=new_pod.instance.template_id,
-                    simulation_id=new_pod.simulation_id,
-                    pod_name=new_pod.name,
+                    instance_id=new_instance.id,
+                    instance_name=new_instance.name,
+                    instance_description=new_instance.description,
+                    template_id=new_instance.template_id,
+                    simulation_id=new_instance.simulation_id,
+                    pod_name=new_instance.pod_name,
                 )
-                for new_pod in pod_sets
+                for new_instance in new_instances
             ]
 
     async def create_pod(self, instance_id, instance_create_data):
@@ -97,12 +79,14 @@ class InstanceService:
 
             pod_client.create_namespaced_pod(namespace="robot", body=pod)
 
-    async def get_all_instances(self):
+    async def get_all_instances(self, simulation_id: Optional[int]):
         try:
             statement = (
                 select(Instance).
                 order_by(Instance.id.desc())
             )
+            if simulation_id is not None:
+                statement = statement.where(Instance.simulation_id == simulation_id)
             results = await self.session.scalars(statement)
 
             instance_list = [
@@ -110,7 +94,9 @@ class InstanceService:
                     instance_id=instance.id,
                     instance_name=instance.name,
                     instance_description=instance.description,
-                    instance_created_at=str(instance.created_at)
+                    instance_created_at=str(instance.created_at),
+                    pod_name=instance.pod_name,
+                    pod_status="RUNNING" #TODO: 실제 상태 연동
                 )
                 for instance in results.all()
             ]
@@ -121,19 +107,21 @@ class InstanceService:
         return instance_list
 
     async def get_instance(self, instance_id: int):
-        # 추후 연동 시 수동 데이터 수정 및 로직 추가
+        #TODO: 실제 상태 연동 및 예외 처리
+        instance = await self.find_instance_by_id(instance_id, '인스턴스 상세 조회')
 
-        return InstanceDetailResponse(
-            instance_id=instance_id,
-            instance_namespace="instanceNamespace",
+        instance_detail_response = InstanceDetailResponse(
+            instance_id=instance.id,
+            instance_namespace="robot",
             instance_port_number=3000,
             instance_age="20d",
-            template_type="templateType",
+            template_type=instance.template.type,
             instance_volume="instanceVolume",
-            instance_log="instanceLog",
             instance_status="instanceStatus",
-            topics="topics",
+            topics=instance.template.topics,
         ).model_dump()
+
+        return instance_detail_response
 
     async def control_instance(self, instance_control_data: InstanceControlRequest):
         # 추후 연동 시 로직 추가
@@ -150,3 +138,20 @@ class InstanceService:
         return InstanceDeleteResponse(
             instance_id=instance_id
         ).model_dump()
+
+    async def find_instance_by_id(self, instance_id: int, api: str):
+        try:
+            query = (
+                select(Instance).
+                where(Instance.id == instance_id).
+                options(joinedload(Instance.template))
+            )
+            result = await self.session.execute(query)
+            instance = result.scalar_one_or_none()
+
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'{api} 실패 : 데이터베이스 조회 중 오류가 발생했습니다. : {str(e)}')
+
+        if instance is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api} 실패 : 존재하지 않는 인스턴스id 입니다.')
+        return instance
