@@ -112,7 +112,6 @@ class InstanceDetailResponseModel(GlobalResponseModel):
                         "instanceAge": "20d",
                         "templateType": "templateType",
                         "instanceVolume": "instanceVolume",
-                        "instanceLog": "instanceLog",
                         "instanceStatus": "instanceStatus",
                         "topics": "topics"
                     },
