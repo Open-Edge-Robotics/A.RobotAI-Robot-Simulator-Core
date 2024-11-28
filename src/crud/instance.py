@@ -9,7 +9,7 @@ from starlette import status
 
 from src.crud.template import TemplateService
 from src.crud.simulation import SimulationService
-from src.models.instance import Instance, Pod
+from src.models.instance import Instance
 from src.models.template import Template
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponse, InstanceListResponse, \
     InstanceControlRequest, InstanceDetailResponse, InstanceControlResponse, InstanceDeleteResponse
@@ -29,10 +29,12 @@ class InstanceService:
             count = instance_create_data.instance_count
             new_instances = [
                 Instance(
-                name=instance_create_data.instance_name,
-                description=instance_create_data.instance_description,
-                template_id=template.template_id,
-                template=template,
+                    name=instance_create_data.instance_name,
+                    description=instance_create_data.instance_description,
+                    template_id=template.template_id,
+                    template=template,
+                    simulation_id=simulation.id,
+                    simulation=simulation
                 ) for _ in range(count)
             ]
             self.session.add_all(new_instances)
@@ -40,33 +42,19 @@ class InstanceService:
             await self.session.flush()
             for new_instance in new_instances:
                 await self.session.refresh(new_instance)
-
-            pod_sets = [
-                Pod(
-                    name = f"instance-{simulation.id}-{new_instance.id}",
-                    instance=new_instance,
-                    instance_id=new_instance.id,
-                    simulation_id=simulation.id,
-                    simulation= simulation
-                ) for new_instance in new_instances
-            ]
-
-            self.session.add_all(pod_sets)
-
-            await self.session.flush()
-            for new_pod in pod_sets:
-                await self.session.refresh(new_pod)
+                new_instance.pod_name = f"instance-{new_instance.simulation_id}-{new_instance.id}"
+                self.session.add(new_instance)
 
             return [
                 InstanceCreateResponse(
-                    instance_id=new_pod.instance_id,
-                    instance_name=new_pod.instance.name,
-                    instance_description=new_pod.instance.description,
-                    template_id=new_pod.instance.template_id,
-                    simulation_id=new_pod.simulation_id,
-                    pod_name=new_pod.name,
+                    instance_id=new_instance.id,
+                    instance_name=new_instance.name,
+                    instance_description=new_instance.description,
+                    template_id=new_instance.template_id,
+                    simulation_id=new_instance.simulation_id,
+                    pod_name=new_instance.pod_name,
                 )
-                for new_pod in pod_sets
+                for new_instance in new_instances
             ]
 
     async def create_pod(self, instance_id, instance_create_data):
@@ -94,24 +82,23 @@ class InstanceService:
     async def get_all_instances(self, simulation_id: Optional[int]):
         try:
             statement = (
-                select(Pod).
-                options(joinedload(Pod.instance)).
-                order_by(Pod.id.desc())
+                select(Instance).
+                order_by(Instance.id.desc())
             )
             if simulation_id is not None:
-                statement = statement.where(Pod.simulation_id == simulation_id)
+                statement = statement.where(Instance.simulation_id == simulation_id)
             results = await self.session.scalars(statement)
 
             instance_list = [
                 InstanceListResponse(
-                    instance_id=pod.instance.id,
-                    instance_name=pod.instance.name,
-                    instance_description=pod.instance.description,
-                    instance_created_at=str(pod.instance.created_at),
-                    pod_name=pod.name,
+                    instance_id=instance.id,
+                    instance_name=instance.name,
+                    instance_description=instance.description,
+                    instance_created_at=str(instance.created_at),
+                    pod_name=instance.pod_name,
                     pod_status="RUNNING" #TODO: 실제 상태 연동
                 )
-                for pod in results.all()
+                for instance in results.all()
             ]
 
         except Exception as e:
