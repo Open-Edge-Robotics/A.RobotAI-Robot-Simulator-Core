@@ -23,8 +23,8 @@ class InstanceService:
 
     async def create_instance(self, instance_create_data: InstanceCreateRequest):
         async with self.session.begin():
-            simulation = await self.simulation_service.find_simulation_by_id(instance_create_data.simulation_id)
-            template = await template_service.find_template_by_id(instance_create_data.template_id, self.session)
+            simulation = await self.simulation_service.find_simulation_by_id(instance_create_data.simulation_id, "인스턴스 생성")
+            template = await template_service.find_template_by_id(instance_create_data.template_id, "인스턴스 생성", self.session)
 
             count = instance_create_data.instance_count
             new_instances = [
@@ -152,7 +152,7 @@ class InstanceService:
             instance_id=instance_id
         ).model_dump()
 
-    async def find_instance_by_id(self, instance_id: int, message: str):
+    async def find_instance_by_id(self, instance_id: int, api: str):
         try:
             query = (
                 select(Instance).
@@ -163,8 +163,8 @@ class InstanceService:
             instance = result.scalar_one_or_none()
 
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'{message} 실패 : 데이터베이스 조회 중 오류가 발생했습니다. : {str(e)}')
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'{api} 실패 : 데이터베이스 조회 중 오류가 발생했습니다. : {str(e)}')
 
         if instance is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{message} 실패 : 존재하지 않는 인스턴스id 입니다.') #TODO: 다른 find_by_id에도 message 적용
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api} 실패 : 존재하지 않는 인스턴스id 입니다.')
         return instance

@@ -86,11 +86,15 @@ class SimulationService:
             simulation_id=simulation_id
         ).model_dump()
 
-    async def find_simulation_by_id(self, simulation_id: int):
-        query = select(Simulation).where(Simulation.id == simulation_id)
-        simulation = await self.session.execute(query)
-        find_simulation = simulation.scalar_one_or_none()
+    async def find_simulation_by_id(self, simulation_id: int, api: str):
+        try:
+            query = select(Simulation).where(Simulation.id == simulation_id)
+            result = await self.session.execute(query)
+            simulation = result.scalar_one_or_none()
 
-        if find_simulation is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='존재하지 않는 시뮬레이션id 입니다.')
-        return find_simulation
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'{api} 실패 : 데이터베이스 조회 중 오류가 발생했습니다. : {str(e)}')
+
+        if simulation is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api} 실패: 존재하지 않는 시뮬레이션id 입니다.')
+        return simulation
