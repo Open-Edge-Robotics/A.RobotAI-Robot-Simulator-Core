@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette import status
 
 from src.models.template import Template
 from src.schemas.template import TemplateListResponse, TemplateCreateRequest, TemplateCreateResponse, \
@@ -34,7 +35,7 @@ class TemplateService:
         return TemplateCreateResponse.model_validate(new_template).model_dump()
 
     async def delete_template(self, template_id: int, db: AsyncSession):
-        find_template = await self.find_template(template_id, db)
+        find_template = await self.find_template_by_id(template_id, "템플릿 삭제", db)
 
         await db.delete(find_template)
         await db.commit()
@@ -42,11 +43,15 @@ class TemplateService:
             template_id=template_id #TODO: 필드 수정? 엑셀에는 template_id만 있어서 이렇게 적어둠. 반환 필드 추가 시 스키마까지 수정 필.
         ).model_dump()
 
-    async def find_template(self, template_id, db):
-        query = select(Template).filter(Template.template_id == template_id)
-        template = await db.execute(query)
-        find_template = template.scalar_one_or_none()
+    async def find_template_by_id(self, template_id, api: str, db: AsyncSession):
+        try:
+            query = select(Template).where(Template.template_id == template_id)
+            result = await db.execute(query)
+            template = result.scalar_one_or_none()
 
-        if find_template is None:
-            raise HTTPException(status_code=404, detail="Template not found")
-        return find_template
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'{api} 실패 : 데이터베이스 조회 중 오류가 발생했습니다. : {str(e)}')
+
+        if template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api} 실패: 존재하지 않는 템플릿id 입니다.')
+        return template
