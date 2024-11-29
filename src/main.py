@@ -1,12 +1,9 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi import HTTPException as StarletteHTTPException
-from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.database.db_conn import init_db, close_db
-from src.exception.exception_handler import http_exception_handler, validation_exception_handler
+from src.exception.exception_handler import *
 from src.routes import template, rosbag, instance, simulation
 from src.settings import settings
 
@@ -14,16 +11,18 @@ from src.settings import settings
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    from kubernetes import config
-    config.load_kube_config('/root/.kube/config')  # TODO 로컬 실행 시 주석 처리
 
     yield
     await close_db()
 
+
 app = FastAPI(lifespan=lifespan)
 
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(S3Error, s3_exception_handler)
+app.add_exception_handler(ApiException, api_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
 
 origins = [
     "http://localhost:3000"
@@ -36,10 +35,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 routers = [template.router, rosbag.router, instance.router, simulation.router]
 for router in routers:
     app.include_router(router, prefix=settings.API_STR)
+
 
 @app.get("/")
 async def root():
