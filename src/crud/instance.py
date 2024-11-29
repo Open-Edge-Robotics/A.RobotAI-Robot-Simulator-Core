@@ -116,7 +116,7 @@ class InstanceService:
             instance_label=await pod_service.get_pod_label(pod_name, namespace),
             template_type=instance.template.type,
             topics=instance.template.topics,
-        )
+        ).model_dump()
 
     async def delete_instance(self, instance_id: int):
         find_instance = await self.find_instance_by_id(instance_id, "인스턴스 삭제")
