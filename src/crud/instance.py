@@ -114,6 +114,17 @@ class InstanceService:
             topics=instance.template.topics,
         )
 
+    async def delete_instance(self, instance_id: int):
+        find_instance = await self.find_instance_by_id(instance_id, "인스턴스 삭제")
+
+        await self.session.delete(find_instance)
+        await self.session.commit()
+
+        return InstanceDeleteResponse(
+            instance_id=find_instance.id
+        ).model_dump()
+
+
     async def find_instance_by_id(self, instance_id: int, api: str):
         try:
             query = (
