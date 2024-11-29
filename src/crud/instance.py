@@ -124,7 +124,6 @@ class InstanceService:
             instance_id=find_instance.id
         ).model_dump()
 
-
     async def find_instance_by_id(self, instance_id: int, api: str):
         try:
             query = (
@@ -142,3 +141,40 @@ class InstanceService:
         if instance is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api} 실패 : 존재하지 않는 인스턴스id 입니다.')
         return instance
+
+    # process = await asyncio.create_subprocess_exec(
+    #     *command,
+    #     stdout=asyncio.subprocess.PIPE,
+    #     stderr=asyncio.subprocess.PIPE# )
+    # stdout, stderr = await process.communicate()
+    # ## if process.returncode != 0:
+    #     raise HTTPException(status_code=500, detail=f"Error occurred: {stderr.decode()}")
+    #     ## return {"output": stdout.decode(), "error": stderr.decode()}
+
+    async def control_instance(self, instance_id: int):
+        file_path = await self.download_bag_file(instance_id)
+
+        command = ["kubectl", "exec", "robot-deploy-6b76b68965-wqqh8", "-n", "robot", "-c", "ros2-deploy", "--", "bash",
+                   "-c", f"ros2 bag play {str(file_path)}"]
+        process = subprocess.run(command, capture_output=True, text=True)
+
+        if process.returncode != 0:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail="ros2 에러")
+
+        return {"output": process.stdout, "error": process.stderr}
+
+    async def download_bag_file(self, instance_id: int):
+        minio_client = minio_conn.client
+
+        instance = await self.find_instance(instance_id)
+        template = instance.template
+        file_path = os.path.join("/data/bagfiles", template.bag_file_path)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        try:
+            minio_client.fget_object(bucket_name=minio_conn.bucket_name, object_name=template.bag_file_path,
+                                     file_path=file_path)
+            return file_path
+        except S3Error as e:
+            print(f"Error downloading bag file: {e}")
+        return None
