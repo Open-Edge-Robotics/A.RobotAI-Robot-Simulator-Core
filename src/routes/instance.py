@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
@@ -31,7 +31,8 @@ async def create_instance(
 
 @router.get("", response_model=InstanceListResponseModel, status_code=status.HTTP_200_OK)
 async def get_instances(
-        simulation_id: Optional[int] = None, session: AsyncSession = Depends(get_db)
+        simulation_id: Optional[int] = Query(None, alias="simulationId"),
+        session: AsyncSession = Depends(get_db)
 ):
     """
     인스턴스 전체 목록 조회
