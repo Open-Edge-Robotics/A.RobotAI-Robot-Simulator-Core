@@ -34,21 +34,20 @@ class InstanceCreateResponse(BaseSchema):
 class InstanceCreateResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
-            "example":
-                {
-                    "statusCode": 201,
-                    "data": [
-                        {
-                            "instanceId": 1,
-                            "instanceName": "instance1",
-                            "instanceDescription": "instance1 입니다~~",
-                            "templateId": 2,
-                            "simulationId": 1,
-                            "podName": "instance-1-1"
-                        }
-                    ],
-                    "message": "인스턴스 생성 성공"
-                }
+            "example": {
+                "statusCode": 201,
+                "data": [
+                    {
+                        "instanceId": 1,
+                        "instanceName": "instance1",
+                        "instanceDescription": "instance1 입니다~~",
+                        "templateId": 2,
+                        "simulationId": 3,
+                        "podName": "instance-3-1"
+                    }
+                ],
+                "message": "인스턴스 생성 성공"
+            }
         }
     }
 
@@ -67,21 +66,20 @@ class InstanceListResponse(BaseSchema):
 class InstanceListResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
-            "example":
-                {
-                    "statusCode": 200,
-                    "data": [
-                        {
-                            "instanceId": 1,
-                            "instanceName": "instance1",
-                            "instanceDescription": "instance1 입니다~~",
-                            "instanceCreatedAt": "2024-11-22 08:22:16.315731",
-                            "podName": "instance-1-1",
-                            "podStatus": "RUNNING"
-                        }
-                    ],
-                    "message": "인스턴스 목록 조회 성공"
-                }
+            "example": {
+                "statusCode": 200,
+                "data": [
+                    {
+                        "instanceId": 1,
+                        "instanceName": "instance1",
+                        "instanceDescription": "instance1 입니다~~",
+                        "instanceCreatedAt": "2024-11-22 08:22:16.315731",
+                        "podName": "instance-3-1",
+                        "podStatus": "RUNNING"
+                    }
+                ],
+                "message": "인스턴스 목록 조회 성공"
+            }
         }
     }
 
@@ -102,21 +100,20 @@ class InstanceDetailResponse(BaseSchema):
 class InstanceDetailResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
-            "example":
-                {
-                    "statusCode": 200,
-                    "data": {
-                        "instanceId": 1,
-                        "instanceNamespace": "robot",
-                        "instancePortNumber": 3000,
-                        "instanceAge": "20d",
-                        "templateType": "templateType",
-                        "instanceVolume": "instanceVolume",
-                        "instanceStatus": "instanceStatus",
-                        "topics": "topics"
-                    },
-                    "message": "인스턴스 상세 조회 성공"
-                }
+            "example":{
+                "statusCode": 200,
+                "data": {
+                    "instanceId": 1,
+                    "instanceNamespace": "robot",
+                    "instancePortNumber": 3000,
+                    "instanceAge": "20d",
+                    "templateType": "templateType",
+                    "instanceVolume": "instanceVolume",
+                    "instanceStatus": "instanceStatus",
+                    "topics": "topics"
+                },
+                "message": "인스턴스 상세 조회 성공"
+            }
         }
     }
 
@@ -131,10 +128,10 @@ class InstanceControlRequest(BaseSchema):
     model_config = {
         "json_schema_extra": {
             "example":
-                {
-                    "instanceId": 1,
-                    "action": "start"
-                }
+            {
+                "instanceId": 1,
+                "action": "start"
+            }
         }
     }
 
@@ -144,10 +141,13 @@ class InstanceControlResponse(BaseSchema):
 class InstanceControlResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
-            "example":
-                {
-                    "instanceId": 1
-                }
+            "example": {
+                "statusCode": 200,
+                "data": {
+                    "instanceId": 1,
+                },
+                "message": "인스턴스 {action} 성공"
+            }
         }
     }
 
@@ -161,10 +161,13 @@ class InstanceDeleteResponse(BaseSchema):
 class InstanceDeleteResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
-            "example":
-                {
-                    "instanceId": 1
-                }
+            "example": {
+                "statusCode": 200,
+                "data": {
+                    "instanceId": 1,
+                },
+                "message": "인스턴스 삭제 성공"
+            }
         }
     }
 
