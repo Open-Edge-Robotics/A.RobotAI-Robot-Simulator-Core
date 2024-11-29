@@ -80,8 +80,9 @@ class InstanceService:
             pod_client.create_namespaced_pod(namespace="robot", body=pod)
 
     async def get_all_instances(self, simulation_id: Optional[int]):
-        await self.simulation_service.find_simulation_by_id(simulation_id, "인스턴스 목록 조회")
-        # 시뮬레이션id가 존재해야 아래 코드 실행됨
+        if simulation_id is not None:
+            await self.simulation_service.find_simulation_by_id(simulation_id, "인스턴스 목록 조회")
+        # 시뮬레이션id를 입력한 경우, 해당 시뮬레이션이 존재해야 아래 코드 실행됨
 
         try:
             statement = (
