@@ -18,7 +18,8 @@ class InstanceCreateRequest(BaseSchema):
                 "instanceDescription": "instance1 입니다~~",
                 "simulationId": 1,
                 "templateId": 2,
-                "instanceCount": 10
+                "instanceCount": 10,
+                "podNamespace": "instance"
             }
         }
     }
@@ -56,10 +57,6 @@ class InstanceCreateResponseModel(GlobalResponseModel):
     pass
 
 
-class InstanceListRequest(BaseSchema):
-    simulation_id: int | None
-
-
 ###### 목록 조회 #######
 class InstanceListResponse(BaseSchema):
     instance_id: int
@@ -83,6 +80,7 @@ class InstanceListResponseModel(GlobalResponseModel):
                         "instanceDescription": "instance1 입니다~~",
                         "instanceCreatedAt": "2024-11-22 08:22:16.315731",
                         "podName": "instance-3-1",
+                        "podNamespace": "instance",
                         "podStatus": "RUNNING"
                     }
                 ],
@@ -114,13 +112,14 @@ class InstanceDetailResponseModel(GlobalResponseModel):
                 "statusCode": 200,
                 "data": {
                     "instanceId": 1,
-                    "instanceNamespace": "robot",
-                    "instancePortNumber": 3000,
-                    "instanceAge": "20d",
-                    "templateType": "templateType",
-                    "instanceVolume": "instanceVolume",
-                    "instanceStatus": "instanceStatus",
-                    "topics": "topics"
+                    "podName": "instance-3-1",
+                    "instanceNamespace": "instance",
+                    "instanceStatus": "Running",
+                    "instanceImage": "shis1008/pod:latest",
+                    "instanceAge": "239min",
+                    "instanceLabel": "robot-arm",
+                    "templateType": "robot-arm",
+                    "topics": "/navi_motion_traj, /nav_vel, /scan_unified"
                 },
                 "message": "인스턴스 상세 조회 성공"
             }
