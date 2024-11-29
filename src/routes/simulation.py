@@ -10,7 +10,7 @@ from src.schemas.simulation import SimulationCreateRequest, SimulationListRespon
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 
-@router.post("/", response_model=SimulationCreateResponseModel, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SimulationCreateResponseModel, status_code=status.HTTP_201_CREATED)
 async def create_simulation(
         simulation_create_data: SimulationCreateRequest, session: AsyncSession = Depends(get_db)
 ):
@@ -24,7 +24,7 @@ async def create_simulation(
     )
 
 
-@router.get("/", response_model=SimulationListResponseModel, status_code=status.HTTP_200_OK)
+@router.get("", response_model=SimulationListResponseModel, status_code=status.HTTP_200_OK)
 async def get_simulations(
         session: AsyncSession = Depends(get_db)
 ):

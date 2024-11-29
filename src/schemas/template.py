@@ -68,17 +68,17 @@ class TemplateListResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
             "example":
-                {
-                    "statusCode": 200,
-                    "data": [
-                        {
-                            "templateId": 1,
-                            "templateType": "A",
-                            "templateDescription": "템플릿A 입니다~~~"
-                        }
-                    ],
-                    "message": "템플릿 목록 조회"
-                }
+            {
+                "statusCode": 200,
+                "data": [
+                    {
+                        "templateId": 1,
+                        "templateType": "A",
+                        "templateDescription": "템플릿A 입니다~~~"
+                    }
+                ],
+                "message": "템플릿 목록 조회"
+            }
         }
     }
 
@@ -93,15 +93,13 @@ class TemplateDeleteResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
             "example":
-                {
-                    "statusCode": 200,
-                    "data": [
-                        {
-                            "templateId": 1
-                        }
-                    ],
-                    "message": "템플릿 삭제 성공"
-                }
+            {
+                "statusCode": 200,
+                "data": {
+                    "templateId": 1
+                },
+                "message": "템플릿 삭제 성공"
+            }
         }
     }
     pass

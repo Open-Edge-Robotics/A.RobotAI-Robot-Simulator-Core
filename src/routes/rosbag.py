@@ -5,7 +5,7 @@ from src.database import minio_conn
 router = APIRouter(prefix="/rosbag", tags=["Rosbag"])
 
 
-@router.get("/")
+@router.get("")
 def get_minio_bag_files():
     client = minio_conn.client
     bucket_name = minio_conn.bucket_name
