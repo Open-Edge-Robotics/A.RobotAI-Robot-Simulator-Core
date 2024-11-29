@@ -14,7 +14,7 @@ router = APIRouter(prefix="/instance", tags=["Instance"])
 
 # instance_service = InstanceService() TODO 변경 필요
 
-@router.post("/", response_model=InstanceCreateResponseModel, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=InstanceCreateResponseModel, status_code=status.HTTP_201_CREATED)
 async def create_instance(
         instance_create_data: InstanceCreateRequest, session: AsyncSession = Depends(get_db)
 ):
@@ -29,11 +29,15 @@ async def create_instance(
     )
 
 
-@router.get("/", response_model=InstanceListResponseModel, status_code=status.HTTP_200_OK)
+@router.get("", response_model=InstanceListResponseModel, status_code=status.HTTP_200_OK)
 async def get_instances(
         simulation_id: Optional[int] = None, session: AsyncSession = Depends(get_db)
 ):
-    """인스턴스 목록 조회"""
+    """
+    인스턴스 전체 목록 조회
+
+    시뮬레이션id별 목록 조회도 가능
+    """
     instance_list = await InstanceService(session).get_all_instances(simulation_id)
 
     return InstanceListResponseModel(
