@@ -6,13 +6,12 @@ from starlette import status
 
 from src.crud.instance import InstanceService
 from src.database.db_conn import get_db
+from src.schemas.format import GlobalResponseModel
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponseModel, InstanceListResponseModel, \
-    InstanceControlRequest, InstanceControlResponseModel, InstanceDeleteResponseModel, InstanceDetailResponseModel
+    InstanceControlRequest, InstanceDeleteResponseModel, InstanceDetailResponseModel
 
 router = APIRouter(prefix="/instance", tags=["Instance"])
 
-
-# instance_service = InstanceService() TODO 변경 필요
 
 @router.post("", response_model=InstanceCreateResponseModel, status_code=status.HTTP_201_CREATED)
 async def create_instance(
@@ -20,7 +19,6 @@ async def create_instance(
 ):
     """새로운 인스턴스 생성"""
     new_instance = await InstanceService(session).create_instance(instance_create_data)
-    # await InstanceService(session).create_pod(1, instance_create_data)
 
     return InstanceCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
@@ -62,20 +60,6 @@ async def get_instance(
     )
 
 
-@router.post("/action", response_model=InstanceControlResponseModel, status_code=status.HTTP_200_OK)
-async def control_instance(
-        instance_control_data: InstanceControlRequest, session: AsyncSession = Depends(get_db)
-):
-    """인스턴스 실행/중지"""
-    data, action = await InstanceService(session).control_instance(instance_control_data)
-
-    return InstanceControlResponseModel(
-        status_code=status.HTTP_200_OK,
-        data=data,
-        message=f"인스턴스 {action} 성공"
-    )
-
-
 @router.delete("/{instance_id}", response_model=InstanceDeleteResponseModel, status_code=status.HTTP_200_OK)
 async def delete_instance(
         instance_id: int, session: AsyncSession = Depends(get_db)
@@ -87,4 +71,22 @@ async def delete_instance(
         status_code=status.HTTP_200_OK,
         data=data,
         message="인스턴스 삭제 성공"
+    )
+
+
+# TODO 실행/중지 보류
+@router.post("/action", response_model=GlobalResponseModel)
+async def run_instance(request: InstanceControlRequest, session: AsyncSession = Depends(get_db)):
+    # if not await InstanceService(session).download_bag_file(instance_id):
+    #     raise S3Error(code=status.HTTP_500_INTERNAL_SERVER_ERROR, message="저장 실패")
+    result = ""
+    if request.action == "start":
+        result = await InstanceService(session).control_instance(request.instance_id)
+    else:
+        result = None
+
+    return GlobalResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=result,
+        message=f"인스턴스 {request.action} 성공"
     )
