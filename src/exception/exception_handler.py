@@ -1,11 +1,14 @@
 from fastapi import HTTPException as StarletteHTTPException
 from fastapi import Request, FastAPI
 from fastapi.exceptions import RequestValidationError
+from kubernetes.client import ApiException
+from minio import S3Error
 from starlette.responses import JSONResponse
 
 from src.schemas.format import GlobalResponseModel
 
 app = FastAPI()
+
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exception: StarletteHTTPException):
@@ -18,6 +21,39 @@ async def http_exception_handler(request: Request, exception: StarletteHTTPExcep
     )
     return JSONResponse(status_code=exception.status_code, content=response.model_dump())
 
+
+@app.exception_handler(S3Error)
+async def s3_exception_handler(request: Request, exception: S3Error):
+    error_details = {
+        "path": request.url.path,
+        "error_message": exception.message
+    }
+
+    response = GlobalResponseModel(
+        status_code=exception.code,
+        data=None,
+        message=error_details,
+    )
+    return JSONResponse(status_code=500, content=response.model_dump())
+
+
+# K8s 에러
+@app.exception_handler(ApiException)
+async def api_exception_handler(request: Request, exception: ApiException):
+    error_details = {
+        "type": "Kubernetes API Error",
+        "reason": exception.reason,
+    }
+
+    response = GlobalResponseModel(
+        status_code=exception.status,
+        data=error_details,
+        message=exception.body
+    )
+
+    return JSONResponse(status_code=500, content=response.model_dump())
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exception: RequestValidationError):
     """RequestValidationError 처리 핸들러"""
@@ -26,7 +62,7 @@ async def validation_exception_handler(request: Request, exception: RequestValid
         "path": request.url.path,
         "method": request.method,
         "headers": dict(request.headers),
-        "error_message": dict(exception.errors()),
+        "error_message": exception.errors(),
     }
 
     response = GlobalResponseModel(
@@ -36,3 +72,12 @@ async def validation_exception_handler(request: Request, exception: RequestValid
     )
     return JSONResponse(status_code=400, content=response.model_dump())
 
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exception: Exception):
+    response = GlobalResponseModel(
+        status_code=500,
+        data=None,
+        message=str(exception)
+    )
+    return JSONResponse(status_code=500, content=response.model_dump())
