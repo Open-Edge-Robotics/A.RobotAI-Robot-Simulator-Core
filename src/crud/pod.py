@@ -50,3 +50,7 @@ class PodService:
     async def get_pod_label(pod_name, namespace):
         pod = pod_client.read_namespaced_pod(namespace=namespace, name=pod_name)
         return pod.metadata.labels
+
+    @staticmethod
+    async def delete_pod(pod_name, namespace):
+        pod_client.delete_namespaced_pod(name=pod_name, namespace=namespace)
