@@ -117,6 +117,11 @@ class InstanceService:
     async def delete_instance(self, instance_id: int):
         find_instance = await self.find_instance_by_id(instance_id, "인스턴스 삭제")
 
+        await pod_service.delete_pod(
+            find_instance.pod_name,
+            find_instance.pod_namespace
+        )
+
         await self.session.delete(find_instance)
         await self.session.commit()
 
