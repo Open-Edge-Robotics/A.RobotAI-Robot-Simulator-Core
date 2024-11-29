@@ -54,11 +54,11 @@ class SimulationListResponseModel(GlobalResponseModel):
                 "statusCode": 200,
                 "data": [
                     {
-                    "simulationId": 1,
-                    "simulationName": "simulation1",
-                    "simulationDescription": "시뮬레이션1 입니다~~",
-                    "simulationCreatedAt": "2024-11-18 09:41:31.405853",
-                    "simulationStatus": "RUNNING" #TODO: 수정
+                        "simulationId": 1,
+                        "simulationName": "simulation1",
+                        "simulationDescription": "시뮬레이션1 입니다~~",
+                        "simulationCreatedAt": "2024-11-18 09:41:31.405853",
+                        "simulationStatus": "RUNNING" #TODO: 수정
                     }
                 ],
                 "message": "시뮬레이션 목록 조회 성공"
@@ -77,10 +77,10 @@ class SimulationControlRequest(BaseSchema):
     model_config = {
         "json_schema_extra": {
             "example":
-                {
-                    "simulationId": 1,
-                    "action": "start"
-                }
+            {
+                "simulationId": 1,
+                "action": "start"
+            }
         }
     }
 
