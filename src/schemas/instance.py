@@ -1,15 +1,15 @@
-from src.settings import BaseSchema
-
 from src.schemas.format import GlobalResponseModel
+from src.settings import BaseSchema
 
 
 ###### 생성 #######
 class InstanceCreateRequest(BaseSchema):
-    instance_name : str
-    instance_description : str
+    instance_name: str
+    instance_description: str
     simulation_id: int
     template_id: int
     instance_count: int
+    pod_namespace: str
 
     model_config = {
         "json_schema_extra": {
@@ -23,13 +23,15 @@ class InstanceCreateRequest(BaseSchema):
         }
     }
 
+
 class InstanceCreateResponse(BaseSchema):
     instance_id: int
-    instance_name : str
-    instance_description : str
+    instance_name: str
+    instance_description: str
     simulation_id: int
     template_id: int
-    pod_name : str
+    pod_name: str
+
 
 class InstanceCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -54,6 +56,10 @@ class InstanceCreateResponseModel(GlobalResponseModel):
     pass
 
 
+class InstanceListRequest(BaseSchema):
+    simulation_id: int | None
+
+
 ###### 목록 조회 #######
 class InstanceListResponse(BaseSchema):
     instance_id: int
@@ -61,7 +67,9 @@ class InstanceListResponse(BaseSchema):
     instance_description: str
     instance_created_at: str
     pod_name: str
+    pod_namespace: str
     pod_status: str
+
 
 class InstanceListResponseModel(GlobalResponseModel):
     model_config = {
@@ -89,13 +97,15 @@ class InstanceListResponseModel(GlobalResponseModel):
 ###### 상세 조회 #######
 class InstanceDetailResponse(BaseSchema):
     instance_id: int
+    pod_name: str
     instance_namespace: str
-    instance_port_number: int
-    instance_age: str
-    template_type: str
-    instance_volume: str
     instance_status: str
+    instance_image: str
+    instance_age: str
+    instance_label: str
+    template_type: str
     topics: str
+
 
 class InstanceDetailResponseModel(GlobalResponseModel):
     model_config = {
@@ -135,8 +145,10 @@ class InstanceControlRequest(BaseSchema):
         }
     }
 
+
 class InstanceControlResponse(BaseSchema):
     instance_id: int
+
 
 class InstanceControlResponseModel(GlobalResponseModel):
     model_config = {
@@ -157,6 +169,7 @@ class InstanceControlResponseModel(GlobalResponseModel):
 ###### 삭제 #######
 class InstanceDeleteResponse(BaseSchema):
     instance_id: int
+
 
 class InstanceDeleteResponseModel(GlobalResponseModel):
     model_config = {
