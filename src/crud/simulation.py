@@ -4,6 +4,7 @@ from sqlalchemy.exc import DatabaseError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from src.models.instance import Instance
 from src.models.simulation import Simulation
 from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
     SimulationControlRequest, SimulationDeleteResponse, SimulationControlResponse
@@ -24,7 +25,8 @@ class SimulationService:
             is_existed = await self.session.scalar(statement)
 
             if is_existed:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="시뮬레이션 이름이 이미 존재합니다.")
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                    detail="시뮬레이션 이름이 이미 존재합니다.")
 
             new_simulation = Simulation(
                 name=simulation_create_data.simulation_name,
@@ -37,7 +39,8 @@ class SimulationService:
 
         except DatabaseError as e:
             await self.session.rollback()
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='데이터 저장 중 오류가 발생했습니다.: ' + str(e))
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail='데이터 저장 중 오류가 발생했습니다.: ' + str(e))
 
         return SimulationCreateResponse(
             simulation_id=new_simulation.id,
@@ -66,7 +69,8 @@ class SimulationService:
             ]
 
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='시뮬레이션 목록 조회 실패: ' + str(e))
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail='시뮬레이션 목록 조회 실패: ' + str(e))
 
         return simulation_list
 
@@ -80,7 +84,26 @@ class SimulationService:
         ).model_dump(), action
 
     async def delete_simulation(self, simulation_id: int):
-        # 추후 연동 시 수동 데이터 수정
+        simulation = await self.find_simulation_by_id(simulation_id, "시뮬레이션 삭제")
+
+        # 시뮬레이션이 존재해야 아래 코드 실행됨
+        try:
+            statement = select(
+                exists().
+                where(Instance.simulation_id == simulation_id)
+            )
+            is_existed = await self.session.scalar(statement)
+
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f'시뮬레이션 삭제 실패 : 데이터베이스 오류가 발생했습니다. : {str(e)}')
+
+        if is_existed is False:
+            await self.session.delete(simulation)
+            await self.session.commit()
+        else:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail='시뮬레이션 삭제 실패: 삭제하려는 시뮬레이션에 속한 인스턴스가 있어 시뮬레이션 삭제가 불가합니다.')
 
         return SimulationDeleteResponse(
             simulation_id=simulation_id
@@ -93,8 +116,10 @@ class SimulationService:
             simulation = result.scalar_one_or_none()
 
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'{api} 실패 : 데이터베이스 조회 중 오류가 발생했습니다. : {str(e)}')
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=f'{api} 실패 : 데이터베이스 조회 중 오류가 발생했습니다. : {str(e)}')
 
         if simulation is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api} 실패: 존재하지 않는 시뮬레이션id 입니다.')
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f'{api} 실패: 존재하지 않는 시뮬레이션id 입니다.')
         return simulation

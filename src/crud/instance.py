@@ -1,5 +1,6 @@
 import os
 import subprocess
+from typing import Optional
 
 from fastapi import HTTPException
 from minio import S3Error
@@ -14,7 +15,7 @@ from src.crud.template import TemplateService
 from src.database import minio_conn
 from src.models.instance import Instance
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponse, InstanceListResponse, \
-    InstanceDetailResponse, InstanceDeleteResponse, InstanceListRequest
+    InstanceDetailResponse, InstanceDeleteResponse
 
 pod_service = PodService()
 
@@ -63,39 +64,42 @@ class InstanceService:
                 for new_instance in new_instances
             ]
 
-    async def get_all_instances(self, request: InstanceListRequest):
-        simulation_id = request.simulation_id
+    async def get_all_instances(self, simulation_id: Optional[int]):
+        try:
+            if simulation_id is None:
+                result = await self.session.execute(select(Instance).order_by(Instance.id.desc()))
+            else:
+                simulation = await self.simulation_service.find_simulation_by_id(simulation_id, "시뮬레이션의 인스턴스 목록 조회")
+                query = (
+                    select(Instance)
+                    .where(Instance.simulation_id == simulation.id)
+                    .order_by(Instance.id.desc())
+                )
+                result = await self.session.execute(query)
 
-        if simulation_id is None:
-            result = await self.session.execute(select(Instance))
-        else:
-            simulation = await self.simulation_service.find_simulation_by_id(simulation_id, "시뮬레이션의 인스턴스 목록 조회")
-            query = (
-                select(Instance)
-                .where(Instance.simulation_id == simulation.id)
-                .order_by(Instance.id.desc())
-            )
-            result = await self.session.execute(query)
+            instances = result.scalars().all()
+            instance_list = []
 
-        instances = result.scalars().all()
-        instance_list = []
+            for instance in instances:
+                pod_name = instance.pod_name
+                pod_namespace = instance.pod_namespace
 
-        for instance in instances:
-            pod_name = instance.pod_name
-            pod_namespace = instance.pod_namespace
+                response = InstanceListResponse(
+                    instance_id=instance.id,
+                    instance_name=instance.name,
+                    instance_description=instance.description,
+                    instance_created_at=str(instance.created_at),
+                    pod_name=pod_name,
+                    pod_namespace=pod_namespace,
+                    pod_status=await pod_service.get_pod_status(pod_name, pod_namespace),
+                )
+                instance_list.append(response)
 
-            response = InstanceListResponse(
-                instance_id=instance.id,
-                instance_name=instance.name,
-                instance_description=instance.description,
-                instance_created_at=str(instance.created_at),
-                pod_name=pod_name,
-                pod_namespace=pod_namespace,
-                pod_status=await pod_service.get_pod_status(pod_name, pod_namespace),
-            )
-            instance_list.append(response)
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='인스턴스 목록 조회 실패: ' + str(e))
 
         return instance_list
+
 
     async def get_instance(self, instance_id: int):
         instance = await self.find_instance_by_id(instance_id, '인스턴스 상세 조회')

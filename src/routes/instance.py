@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
@@ -6,7 +8,7 @@ from src.crud.instance import InstanceService
 from src.database.db_conn import get_db
 from src.schemas.format import GlobalResponseModel
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponseModel, InstanceListResponseModel, \
-    InstanceControlRequest, InstanceDeleteResponseModel, InstanceDetailResponseModel, InstanceListRequest
+    InstanceControlRequest, InstanceDeleteResponseModel, InstanceDetailResponseModel
 
 router = APIRouter(prefix="/instance", tags=["Instance"])
 
@@ -27,10 +29,15 @@ async def create_instance(
 
 @router.get("", response_model=InstanceListResponseModel, status_code=status.HTTP_200_OK)
 async def get_instances(
-        request: InstanceListRequest, session: AsyncSession = Depends(get_db)
+        simulation_id: Optional[int] = Query(None, alias="simulationId"),
+        session: AsyncSession = Depends(get_db)
 ):
-    """인스턴스 목록 조회"""
-    instance_list = await InstanceService(session).get_all_instances(request)
+    """
+    인스턴스 전체 목록 조회
+
+    시뮬레이션id별 목록 조회도 가능
+    """
+    instance_list = await InstanceService(session).get_all_instances(simulation_id)
 
     return InstanceListResponseModel(
         status_code=status.HTTP_200_OK,
