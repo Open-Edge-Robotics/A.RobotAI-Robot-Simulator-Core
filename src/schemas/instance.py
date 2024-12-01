@@ -81,7 +81,7 @@ class InstanceListResponseModel(GlobalResponseModel):
                         "instanceCreatedAt": "2024-11-22 08:22:16.315731",
                         "podName": "instance-3-1",
                         "podNamespace": "instance",
-                        "podStatus": "RUNNING"
+                        "podStatus": "Running"
                     }
                 ],
                 "message": "인스턴스 목록 조회 성공"
