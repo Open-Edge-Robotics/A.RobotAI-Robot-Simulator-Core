@@ -5,6 +5,7 @@ from kubernetes import client, config
 config.load_kube_config('/root/.kube/config')
 pod_client = client.CoreV1Api()
 
+
 class PodService:
     @staticmethod
     async def create_pod(instance, template):
@@ -36,7 +37,7 @@ class PodService:
     @staticmethod
     async def get_pod_image(pod_name, namespace):
         pod = pod_client.read_namespaced_pod(namespace=namespace, name=pod_name)
-        return [container.image for container in pod.spec.containers]
+        return pod.spec.containers[0].image if pod.spec.containers else ""
 
     @staticmethod
     async def get_pod_age(pod_name, namespace):
@@ -49,7 +50,10 @@ class PodService:
     @staticmethod
     async def get_pod_label(pod_name, namespace):
         pod = pod_client.read_namespaced_pod(namespace=namespace, name=pod_name)
-        return pod.metadata.labels
+        if pod.metadata.labels:
+            label = next(iter(pod.metadata.labels.items()))
+            return str(label[1])
+        return ""
 
     @staticmethod
     async def delete_pod(pod_name, namespace):
