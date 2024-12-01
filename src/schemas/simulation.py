@@ -58,7 +58,7 @@ class SimulationListResponseModel(GlobalResponseModel):
                         "simulationName": "simulation1",
                         "simulationDescription": "시뮬레이션1 입니다~~",
                         "simulationCreatedAt": "2024-11-18 09:41:31.405853",
-                        "simulationStatus": "RUNNING" #TODO: 수정
+                        "simulationStatus": "Running"
                     }
                 ],
                 "message": "시뮬레이션 목록 조회 성공"
