@@ -1,13 +1,17 @@
 from fastapi import HTTPException
 from sqlalchemy import select, exists
-from sqlalchemy.exc import DatabaseError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from starlette import status
 
+from src.crud.pod import PodService
 from src.models.instance import Instance
 from src.models.simulation import Simulation
 from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
     SimulationControlRequest, SimulationDeleteResponse, SimulationControlResponse
+from src.utils.my_enum import SimulationStatus, PodStatus
+
+pod_service = PodService()
 
 
 class SimulationService:
@@ -46,22 +50,27 @@ class SimulationService:
     async def get_all_simulations(self):
         statement = (
             select(Simulation).
+            options(selectinload(Simulation.instance)).
             order_by(Simulation.id.desc())
         )
-        results = await self.session.scalars(statement)
+        results = await self.session.execute(statement)
+        simulations = results.scalars().all()
+        simulation_list =[]
 
-        simulation_list = [
-            SimulationListResponse(
+        for simulation in simulations:
+            simulation_status = await self.get_simulation_status(simulation)
+
+            response = SimulationListResponse(
                 simulation_id=simulation.id,
                 simulation_name=simulation.name,
                 simulation_description=simulation.description,
                 simulation_created_at=str(simulation.created_at),
-                simulation_status="RUNNING" # TODO: status 데이터 가져오기
+                simulation_status=simulation_status
             )
-            for simulation in results.all()
-        ]
+            simulation_list.append(response)
 
         return simulation_list
+
 
     async def control_simulation(self, simulation_control_data: SimulationControlRequest):
         # 추후 연동 시 로직 추가
@@ -71,6 +80,7 @@ class SimulationService:
         return SimulationControlResponse(
             simulation_id = simulation_id
         ).model_dump(), action
+
 
     async def delete_simulation(self, simulation_id: int):
         simulation = await self.find_simulation_by_id(simulation_id, "시뮬레이션 삭제")
@@ -93,6 +103,7 @@ class SimulationService:
             simulation_id=simulation_id
         ).model_dump()
 
+
     async def find_simulation_by_id(self, simulation_id: int, api: str):
         query = select(Simulation).where(Simulation.id == simulation_id)
         result = await self.session.execute(query)
@@ -102,3 +113,17 @@ class SimulationService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail=f'{api} 실패: 존재하지 않는 시뮬레이션id 입니다.')
         return simulation
+
+
+    async def get_simulation_status(self, simulation):
+        instances = simulation.instance
+
+        if not instances:
+            return SimulationStatus.NOTHING.value
+
+        for instance in instances:
+            pod_status = await pod_service.get_pod_status(instance.pod_name, instance.pod_namespace)
+            if pod_status != PodStatus.RUNNING.value:
+                return pod_status
+
+        return SimulationStatus.RUNNING.value
