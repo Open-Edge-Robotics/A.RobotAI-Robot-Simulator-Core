@@ -65,38 +65,34 @@ class InstanceService:
             ]
 
     async def get_all_instances(self, simulation_id: Optional[int]):
-        try:
-            if simulation_id is None:
-                result = await self.session.execute(select(Instance).order_by(Instance.id.desc()))
-            else:
-                simulation = await self.simulation_service.find_simulation_by_id(simulation_id, "시뮬레이션의 인스턴스 목록 조회")
-                query = (
-                    select(Instance)
-                    .where(Instance.simulation_id == simulation.id)
-                    .order_by(Instance.id.desc())
-                )
-                result = await self.session.execute(query)
+        if simulation_id is None:
+            result = await self.session.execute(select(Instance).order_by(Instance.id.desc()))
+        else:
+            simulation = await self.simulation_service.find_simulation_by_id(simulation_id, "시뮬레이션의 인스턴스 목록 조회")
+            query = (
+                select(Instance)
+                .where(Instance.simulation_id == simulation.id)
+                .order_by(Instance.id.desc())
+            )
+            result = await self.session.execute(query)
 
-            instances = result.scalars().all()
-            instance_list = []
+        instances = result.scalars().all()
+        instance_list = []
 
-            for instance in instances:
-                pod_name = instance.pod_name
-                pod_namespace = instance.pod_namespace
+        for instance in instances:
+            pod_name = instance.pod_name
+            pod_namespace = instance.pod_namespace
 
-                response = InstanceListResponse(
-                    instance_id=instance.id,
-                    instance_name=instance.name,
-                    instance_description=instance.description,
-                    instance_created_at=str(instance.created_at),
-                    pod_name=pod_name,
-                    pod_namespace=pod_namespace,
-                    pod_status=await pod_service.get_pod_status(pod_name, pod_namespace),
-                )
-                instance_list.append(response)
-
-        except Exception as e:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='인스턴스 목록 조회 실패: ' + str(e))
+            response = InstanceListResponse(
+                instance_id=instance.id,
+                instance_name=instance.name,
+                instance_description=instance.description,
+                instance_created_at=str(instance.created_at),
+                pod_name=pod_name,
+                pod_namespace=pod_namespace,
+                pod_status=await pod_service.get_pod_status(pod_name, pod_namespace),
+            )
+            instance_list.append(response)
 
         return instance_list
 
@@ -134,18 +130,13 @@ class InstanceService:
         ).model_dump()
 
     async def find_instance_by_id(self, instance_id: int, api: str):
-        try:
-            query = (
-                select(Instance).
-                where(Instance.id == instance_id).
-                options(joinedload(Instance.template))
-            )
-            result = await self.session.execute(query)
-            instance = result.scalar_one_or_none()
-
-        except Exception as e:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail=f'{api} 실패 : 데이터베이스 조회 중 오류가 발생했습니다. : {str(e)}')
+        query = (
+            select(Instance).
+            where(Instance.id == instance_id).
+            options(joinedload(Instance.template))
+        )
+        result = await self.session.execute(query)
+        instance = result.scalar_one_or_none()
 
         if instance is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api} 실패 : 존재하지 않는 인스턴스id 입니다.')
