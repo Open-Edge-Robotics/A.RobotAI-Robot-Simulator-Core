@@ -1,29 +1,17 @@
+from pydantic import Field
+
 from src.schemas.format import GlobalResponseModel
 from src.settings import BaseSchema
 
 
 ###### 생성 #######
 class InstanceCreateRequest(BaseSchema):
-    instance_name: str
-    instance_description: str
-    simulation_id: int
-    template_id: int
-    instance_count: int
-    pod_namespace: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "instanceName": "instance1",
-                "instanceDescription": "instance1 입니다~~",
-                "simulationId": 1,
-                "templateId": 2,
-                "instanceCount": 10,
-                "podNamespace": "instance"
-            }
-        }
-    }
-
+    instance_name: str = Field(examples=["instance1"])
+    instance_description: str = Field(examples=["instance1 입니다~~"])
+    simulation_id: int = Field(examples=[1])
+    template_id: int = Field(examples=[2])
+    instance_count: int = Field(examples=[10])
+    pod_namespace: str = Field(examples=["instance"])
 
 class InstanceCreateResponse(BaseSchema):
     instance_id: int
@@ -32,7 +20,6 @@ class InstanceCreateResponse(BaseSchema):
     simulation_id: int
     template_id: int
     pod_name: str
-
 
 class InstanceCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -66,7 +53,6 @@ class InstanceListResponse(BaseSchema):
     pod_name: str
     pod_namespace: str
     pod_status: str
-
 
 class InstanceListResponseModel(GlobalResponseModel):
     model_config = {
@@ -104,7 +90,6 @@ class InstanceDetailResponse(BaseSchema):
     template_type: str
     topics: str
 
-
 class InstanceDetailResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
@@ -131,23 +116,11 @@ class InstanceDetailResponseModel(GlobalResponseModel):
 
 ###### 실행 #######
 class InstanceControlRequest(BaseSchema):
-    instance_id: int
-    action: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example":
-            {
-                "instanceId": 1,
-                "action": "start"
-            }
-        }
-    }
-
+    instance_id: int = Field(examples=[1])
+    action: str = Field(examples=["start"]) # TODO: openapi_examples로 start/stop 시나리오 표현 가능
 
 class InstanceControlResponse(BaseSchema):
     instance_id: int
-
 
 class InstanceControlResponseModel(GlobalResponseModel):
     model_config = {
@@ -168,7 +141,6 @@ class InstanceControlResponseModel(GlobalResponseModel):
 ###### 삭제 #######
 class InstanceDeleteResponse(BaseSchema):
     instance_id: int
-
 
 class InstanceDeleteResponseModel(GlobalResponseModel):
     model_config = {

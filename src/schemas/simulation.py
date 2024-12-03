@@ -1,20 +1,13 @@
+from pydantic import Field
+
 from src.settings import BaseSchema
 
 from src.schemas.format import GlobalResponseModel
 
 ###### 생성 #######
 class SimulationCreateRequest(BaseSchema):
-    simulation_name: str
-    simulation_description: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "simulationName": "simulation1",
-                "simulationDescription": "시뮬레이션1 입니다~~"
-            }
-        }
-    }
+    simulation_name: str = Field(examples=["simulation1"])
+    simulation_description: str = Field(examples=["시뮬레이션1 입니다~~"])
 
 class SimulationCreateResponse(BaseSchema):
     simulation_id : int
@@ -71,18 +64,8 @@ class SimulationListResponseModel(GlobalResponseModel):
 
 ###### 실행 #######
 class SimulationControlRequest(BaseSchema):
-    simulation_id : int
-    action: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example":
-            {
-                "simulationId": 1,
-                "action": "start"
-            }
-        }
-    }
+    simulation_id : int = Field(examples=[1])
+    action: str = Field(examples=["start"])
 
 class SimulationControlResponse(BaseSchema):
     simulation_id: int

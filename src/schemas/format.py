@@ -11,7 +11,7 @@ class GlobalResponseModel(BaseSchema):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "statusCode": "String",
+                "statusCode": int,
                 "data": {},
                 "message": "String"
             }
