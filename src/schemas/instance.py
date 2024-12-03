@@ -1,29 +1,18 @@
+from pydantic import Field
+
 from src.schemas.format import GlobalResponseModel
 from src.settings import BaseSchema
+from src.utils.my_enum import API
 
 
 ###### 생성 #######
 class InstanceCreateRequest(BaseSchema):
-    instance_name: str
-    instance_description: str
-    simulation_id: int
-    template_id: int
-    instance_count: int
-    pod_namespace: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "instanceName": "instance1",
-                "instanceDescription": "instance1 입니다~~",
-                "simulationId": 1,
-                "templateId": 2,
-                "instanceCount": 10,
-                "podNamespace": "instance"
-            }
-        }
-    }
-
+    instance_name: str = Field(examples=["instance1"])
+    instance_description: str = Field(examples=["instance1 입니다~~"])
+    simulation_id: int = Field(examples=[1])
+    template_id: int = Field(examples=[2])
+    instance_count: int = Field(examples=[10])
+    pod_namespace: str = Field(examples=["instance"])
 
 class InstanceCreateResponse(BaseSchema):
     instance_id: int
@@ -32,7 +21,6 @@ class InstanceCreateResponse(BaseSchema):
     simulation_id: int
     template_id: int
     pod_name: str
-
 
 class InstanceCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -49,7 +37,7 @@ class InstanceCreateResponseModel(GlobalResponseModel):
                         "podName": "instance-3-1"
                     }
                 ],
-                "message": "인스턴스 생성 성공"
+                "message": API.CREATE_INSTANCE.value
             }
         }
     }
@@ -67,7 +55,6 @@ class InstanceListResponse(BaseSchema):
     pod_namespace: str
     pod_status: str
 
-
 class InstanceListResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
@@ -84,7 +71,7 @@ class InstanceListResponseModel(GlobalResponseModel):
                         "podStatus": "Running"
                     }
                 ],
-                "message": "인스턴스 목록 조회 성공"
+                "message": API.GET_TEMPLATES.value
             }
         }
     }
@@ -104,7 +91,6 @@ class InstanceDetailResponse(BaseSchema):
     template_type: str
     topics: str
 
-
 class InstanceDetailResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
@@ -121,7 +107,7 @@ class InstanceDetailResponseModel(GlobalResponseModel):
                     "templateType": "robot-arm",
                     "topics": "/navi_motion_traj, /nav_vel, /scan_unified"
                 },
-                "message": "인스턴스 상세 조회 성공"
+                "message": API.GET_INSTANCE.value
             }
         }
     }
@@ -131,23 +117,11 @@ class InstanceDetailResponseModel(GlobalResponseModel):
 
 ###### 실행 #######
 class InstanceControlRequest(BaseSchema):
-    instance_id: int
-    action: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example":
-            {
-                "instanceId": 1,
-                "action": "start"
-            }
-        }
-    }
-
+    instance_id: int = Field(examples=[1])
+    action: str = Field(examples=["start"]) # TODO: openapi_examples로 start/stop 시나리오 표현 가능
 
 class InstanceControlResponse(BaseSchema):
     instance_id: int
-
 
 class InstanceControlResponseModel(GlobalResponseModel):
     model_config = {
@@ -157,7 +131,7 @@ class InstanceControlResponseModel(GlobalResponseModel):
                 "data": {
                     "instanceId": 1,
                 },
-                "message": "인스턴스 {action} 성공"
+                "message": API.RUN_INSTANCE.value
             }
         }
     }
@@ -169,7 +143,6 @@ class InstanceControlResponseModel(GlobalResponseModel):
 class InstanceDeleteResponse(BaseSchema):
     instance_id: int
 
-
 class InstanceDeleteResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
@@ -178,7 +151,7 @@ class InstanceDeleteResponseModel(GlobalResponseModel):
                 "data": {
                     "instanceId": 1,
                 },
-                "message": "인스턴스 삭제 성공"
+                "message": API.DELETE_INSTANCE.value
             }
         }
     }

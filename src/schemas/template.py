@@ -1,27 +1,16 @@
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, field_validator, Field
 
 from src.schemas.format import GlobalResponseModel
 from src.settings import BaseSchema
+from src.utils.my_enum import API
 
 
 ###### 생성 #######
 class TemplateCreateRequest(BaseSchema):
-    type: str
-    description: str
-    bag_file_path: str
-    topics: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example":
-            {
-                "type": "A",
-                "description": "템플릿A 입니다~~~",
-                "bagFilePath": "blah/blah/blah",
-                "topics": "topics"
-            }
-        }
-    }
+    type: str = Field(examples=["robot-arm"])
+    description: str = Field(examples=["This is robot-arm"])
+    bag_file_path: str = Field(examples=["bagfiles/blahblah.db3"])
+    topics: str = Field(examples=["/navi_motion_traj, /nav_vel, /scan_unified"])
 
 class TemplateCreateResponse(BaseSchema):
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
@@ -51,7 +40,7 @@ class TemplateCreateResponseModel(GlobalResponseModel):
                     "topics": "topics",
                     "createdAt": "2024-11-26 14:13:31.409721"
                 },
-                "message": "템플릿 생성 성공"
+                "message": API.CREATE_TEMPLATE.value,
             }
         }
     }
@@ -77,7 +66,7 @@ class TemplateListResponseModel(GlobalResponseModel):
                         "templateDescription": "템플릿A 입니다~~~"
                     }
                 ],
-                "message": "템플릿 목록 조회"
+                "message": API.GET_TEMPLATES.value,
             }
         }
     }
@@ -98,7 +87,7 @@ class TemplateDeleteResponseModel(GlobalResponseModel):
                 "data": {
                     "templateId": 1
                 },
-                "message": "템플릿 삭제 성공"
+                "message": API.DELETE_TEMPLATE.value,
             }
         }
     }
