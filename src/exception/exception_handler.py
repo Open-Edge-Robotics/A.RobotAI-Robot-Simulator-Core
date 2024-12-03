@@ -3,6 +3,7 @@ from fastapi import Request, FastAPI
 from fastapi.exceptions import RequestValidationError
 from kubernetes.client import ApiException
 from minio import S3Error
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 
 from src.schemas.format import GlobalResponseModel
@@ -57,7 +58,6 @@ async def api_exception_handler(request: Request, exception: ApiException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exception: RequestValidationError):
     """RequestValidationError 처리 핸들러"""
-    # TODO request 객체 활용 로깅하려면 사용
     error_details = {
         "path": request.url.path,
         "method": request.method,
@@ -71,6 +71,21 @@ async def validation_exception_handler(request: Request, exception: RequestValid
         message=error_details
     )
     return JSONResponse(status_code=400, content=response.model_dump())
+
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_exception_handler(request: Request, exception: SQLAlchemyError):
+    error_details = {
+        "path": request.url.path,
+        "details": str(exception)
+    }
+
+    response = GlobalResponseModel(
+        status_code=500,
+        data=None,
+        message=error_details
+    )
+    return JSONResponse(status_code=500, content=response.model_dump())
 
 
 @app.exception_handler(Exception)
