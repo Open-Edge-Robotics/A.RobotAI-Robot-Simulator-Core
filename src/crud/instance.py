@@ -16,6 +16,7 @@ from src.database import minio_conn
 from src.models.instance import Instance
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponse, InstanceListResponse, \
     InstanceDetailResponse, InstanceDeleteResponse
+from src.utils.my_enum import API
 
 pod_service = PodService()
 
@@ -27,10 +28,11 @@ class InstanceService:
         self.templates_service = TemplateService(session)
 
     async def create_instance(self, instance_create_data: InstanceCreateRequest):
+        api = API.CREATE_INSTANCE.value
+
         async with (self.session.begin()):
-            simulation = await self.simulation_service.find_simulation_by_id(instance_create_data.simulation_id,
-                                                                             "인스턴스 생성")
-            template = await self.templates_service.find_template_by_id(instance_create_data.template_id, "인스턴스 생성")
+            simulation = await self.simulation_service.find_simulation_by_id(instance_create_data.simulation_id,api)
+            template = await self.templates_service.find_template_by_id(instance_create_data.template_id, api)
 
             count = instance_create_data.instance_count
             new_instances = [
@@ -68,7 +70,7 @@ class InstanceService:
         if simulation_id is None:
             result = await self.session.execute(select(Instance).order_by(Instance.id.desc()))
         else:
-            simulation = await self.simulation_service.find_simulation_by_id(simulation_id, "시뮬레이션의 인스턴스 목록 조회")
+            simulation = await self.simulation_service.find_simulation_by_id(simulation_id, API.GET_INSTANCES.value)
             query = (
                 select(Instance)
                 .where(Instance.simulation_id == simulation.id)
@@ -98,7 +100,7 @@ class InstanceService:
 
 
     async def get_instance(self, instance_id: int):
-        instance = await self.find_instance_by_id(instance_id, '인스턴스 상세 조회')
+        instance = await self.find_instance_by_id(instance_id, API.GET_INSTANCE.value)
         pod_name = instance.pod_name
         namespace = instance.pod_namespace
 
@@ -115,7 +117,7 @@ class InstanceService:
         ).model_dump()
 
     async def delete_instance(self, instance_id: int):
-        find_instance = await self.find_instance_by_id(instance_id, "인스턴스 삭제")
+        find_instance = await self.find_instance_by_id(instance_id, API.DELETE_INSTANCE.value)
 
         await pod_service.delete_pod(
             find_instance.pod_name,
@@ -139,7 +141,7 @@ class InstanceService:
         instance = result.scalar_one_or_none()
 
         if instance is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api} 실패 : 존재하지 않는 인스턴스id 입니다.')
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api}: 존재하지 않는 인스턴스id 입니다.')
         return instance
 
     # process = await asyncio.create_subprocess_exec(
@@ -167,7 +169,7 @@ class InstanceService:
     async def download_bag_file(self, instance_id: int):
         minio_client = minio_conn.client
 
-        instance = await self.find_instance(instance_id)
+        instance = await self.find_instance_by_id(instance_id, API.RUN_INSTANCE.value)
         template = instance.template
         file_path = os.path.join("/data/bagfiles", template.bag_file_path)
         os.makedirs(os.path.dirname(file_path), exist_ok=True)

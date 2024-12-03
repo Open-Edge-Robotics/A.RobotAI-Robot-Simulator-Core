@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from kubernetes import client, config
 
-config.load_kube_config('/root/.kube/config')
+# config.load_kube_config('/root/.kube/config')
 pod_client = client.CoreV1Api()
 
 

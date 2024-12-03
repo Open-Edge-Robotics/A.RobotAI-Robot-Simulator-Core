@@ -9,7 +9,7 @@ from src.models.instance import Instance
 from src.models.simulation import Simulation
 from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
     SimulationControlRequest, SimulationDeleteResponse, SimulationControlResponse
-from src.utils.my_enum import SimulationStatus, PodStatus
+from src.utils.my_enum import SimulationStatus, PodStatus, API
 
 pod_service = PodService()
 
@@ -29,7 +29,7 @@ class SimulationService:
 
         if is_existed:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                                detail="시뮬레이션 이름이 이미 존재합니다.")
+                                detail=f"{API.CREATE_SIMULATION}: 시뮬레이션 이름이 이미 존재합니다.")
 
         new_simulation = Simulation(
             name=simulation_create_data.simulation_name,
@@ -83,7 +83,8 @@ class SimulationService:
 
 
     async def delete_simulation(self, simulation_id: int):
-        simulation = await self.find_simulation_by_id(simulation_id, "시뮬레이션 삭제")
+        api = API.DELETE_SIMULATION.value
+        simulation = await self.find_simulation_by_id(simulation_id, api)
 
         # 시뮬레이션이 존재해야 아래 코드 실행됨
         statement = select(
@@ -97,7 +98,7 @@ class SimulationService:
             await self.session.commit()
         else:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                detail='시뮬레이션 삭제 실패: 삭제하려는 시뮬레이션에 속한 인스턴스가 있어 시뮬레이션 삭제가 불가합니다.')
+                                detail=f'{api}: 삭제하려는 시뮬레이션에 속한 인스턴스가 있어 시뮬레이션 삭제가 불가합니다.')
 
         return SimulationDeleteResponse(
             simulation_id=simulation_id
@@ -111,7 +112,7 @@ class SimulationService:
 
         if simulation is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                                detail=f'{api} 실패: 존재하지 않는 시뮬레이션id 입니다.')
+                                detail=f'{api}: 존재하지 않는 시뮬레이션id 입니다.')
         return simulation
 
 
