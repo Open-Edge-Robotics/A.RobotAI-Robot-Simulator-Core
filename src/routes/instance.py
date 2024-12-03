@@ -9,6 +9,7 @@ from src.database.db_conn import get_db
 from src.schemas.format import GlobalResponseModel
 from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponseModel, InstanceListResponseModel, \
     InstanceControlRequest, InstanceDeleteResponseModel, InstanceDetailResponseModel
+from src.utils.my_enum import API
 
 router = APIRouter(prefix="/instance", tags=["Instance"])
 
@@ -23,7 +24,7 @@ async def create_instance(
     return InstanceCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
         data=new_instance,
-        message="인스턴스 생성 성공"
+        message=API.CREATE_INSTANCE.value
     )
 
 
@@ -42,7 +43,7 @@ async def get_instances(
     return InstanceListResponseModel(
         status_code=status.HTTP_200_OK,
         data=instance_list,
-        message="인스턴스 목록 조회 성공"
+        message=API.GET_INSTANCES.value
     )
 
 
@@ -56,7 +57,7 @@ async def get_instance(
     return InstanceDetailResponseModel(
         status_code=status.HTTP_200_OK,
         data=instance_detail,
-        message="인스턴스 상세 조회 성공"
+        message=API.GET_INSTANCE.value
     )
 
 
@@ -70,10 +71,10 @@ async def delete_instance(
     return InstanceDeleteResponseModel(
         status_code=status.HTTP_200_OK,
         data=data,
-        message="인스턴스 삭제 성공"
+        message=API.DELETE_INSTANCE.value
     )
 
-
+# TODO: message에 enum 사용, response_model 변경, control_instance로 변경?
 # TODO 실행/중지 보류
 @router.post("/action", response_model=GlobalResponseModel)
 async def run_instance(request: InstanceControlRequest, session: AsyncSession = Depends(get_db)):
@@ -88,5 +89,5 @@ async def run_instance(request: InstanceControlRequest, session: AsyncSession = 
     return GlobalResponseModel(
         status_code=status.HTTP_200_OK,
         data=result,
-        message=f"인스턴스 {request.action} 성공"
+        message=API.RUN_INSTANCE.value if request.action == "start" else API.STOP_INSTANCE.value
     )
