@@ -6,6 +6,7 @@ from src.crud.simulation import SimulationService
 from src.database.db_conn import get_db
 from src.schemas.simulation import SimulationCreateRequest, SimulationListResponseModel, SimulationCreateResponseModel, \
     SimulationControlRequest, SimulationControlResponseModel, SimulationDeleteResponseModel
+from src.utils.my_enum import API
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
@@ -20,7 +21,7 @@ async def create_simulation(
     return SimulationCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
         data=new_simulation,
-        message="시뮬레이션 생성 성공"
+        message=API.CREATE_SIMULATION
     )
 
 
@@ -34,7 +35,7 @@ async def get_simulations(
     return SimulationListResponseModel(
         status_code=status.HTTP_200_OK,
         data=simulation_list,
-        message="시뮬레이션 목록 조회 성공"
+        message=API.GET_SIMULATIONS.value
     )
 
 
@@ -48,7 +49,8 @@ async def control_simulation(
     return SimulationControlResponseModel(
         status_code=status.HTTP_200_OK,
         data=data,
-        message=f"시뮬레이션 {action} 성공"
+        message=API.RUN_SIMULATION.value if action == "start" else API.STOP_SIMULATION.value
+
     )
 
 
@@ -62,5 +64,5 @@ async def delete_simulation(
     return SimulationDeleteResponseModel(
         status_code=status.HTTP_200_OK,
         data=data,
-        message="시뮬레이션 삭제 성공"
+        message=API.DELETE_SIMULATION.value
     )

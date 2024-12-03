@@ -2,6 +2,7 @@ from pydantic import Field
 
 from src.schemas.format import GlobalResponseModel
 from src.settings import BaseSchema
+from src.utils.my_enum import API
 
 
 ###### 생성 #######
@@ -36,7 +37,7 @@ class InstanceCreateResponseModel(GlobalResponseModel):
                         "podName": "instance-3-1"
                     }
                 ],
-                "message": "인스턴스 생성 성공"
+                "message": API.CREATE_INSTANCE.value
             }
         }
     }
@@ -70,7 +71,7 @@ class InstanceListResponseModel(GlobalResponseModel):
                         "podStatus": "Running"
                     }
                 ],
-                "message": "인스턴스 목록 조회 성공"
+                "message": API.GET_TEMPLATES.value
             }
         }
     }
@@ -106,7 +107,7 @@ class InstanceDetailResponseModel(GlobalResponseModel):
                     "templateType": "robot-arm",
                     "topics": "/navi_motion_traj, /nav_vel, /scan_unified"
                 },
-                "message": "인스턴스 상세 조회 성공"
+                "message": API.GET_INSTANCE.value
             }
         }
     }
@@ -130,7 +131,7 @@ class InstanceControlResponseModel(GlobalResponseModel):
                 "data": {
                     "instanceId": 1,
                 },
-                "message": "인스턴스 {action} 성공"
+                "message": API.RUN_INSTANCE.value
             }
         }
     }
@@ -150,7 +151,7 @@ class InstanceDeleteResponseModel(GlobalResponseModel):
                 "data": {
                     "instanceId": 1,
                 },
-                "message": "인스턴스 삭제 성공"
+                "message": API.DELETE_INSTANCE.value
             }
         }
     }

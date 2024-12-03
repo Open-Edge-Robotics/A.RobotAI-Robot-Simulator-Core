@@ -2,6 +2,7 @@ from pydantic import ConfigDict, field_validator, Field
 
 from src.schemas.format import GlobalResponseModel
 from src.settings import BaseSchema
+from src.utils.my_enum import API
 
 
 ###### 생성 #######
@@ -39,7 +40,7 @@ class TemplateCreateResponseModel(GlobalResponseModel):
                     "topics": "topics",
                     "createdAt": "2024-11-26 14:13:31.409721"
                 },
-                "message": "템플릿 생성 성공"
+                "message": API.CREATE_TEMPLATE.value,
             }
         }
     }
@@ -65,7 +66,7 @@ class TemplateListResponseModel(GlobalResponseModel):
                         "templateDescription": "템플릿A 입니다~~~"
                     }
                 ],
-                "message": "템플릿 목록 조회"
+                "message": API.GET_TEMPLATES.value,
             }
         }
     }
@@ -86,7 +87,7 @@ class TemplateDeleteResponseModel(GlobalResponseModel):
                 "data": {
                     "templateId": 1
                 },
-                "message": "템플릿 삭제 성공"
+                "message": API.DELETE_TEMPLATE.value,
             }
         }
     }
