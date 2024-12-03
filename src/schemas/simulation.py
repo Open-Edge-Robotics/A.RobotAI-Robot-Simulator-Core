@@ -1,20 +1,15 @@
+from pydantic import Field
+
 from src.settings import BaseSchema
 
 from src.schemas.format import GlobalResponseModel
+from src.utils.my_enum import API
+
 
 ###### 생성 #######
 class SimulationCreateRequest(BaseSchema):
-    simulation_name: str
-    simulation_description: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "simulationName": "simulation1",
-                "simulationDescription": "시뮬레이션1 입니다~~"
-            }
-        }
-    }
+    simulation_name: str = Field(examples=["simulation1"])
+    simulation_description: str = Field(examples=["시뮬레이션1 입니다~~"])
 
 class SimulationCreateResponse(BaseSchema):
     simulation_id : int
@@ -31,7 +26,7 @@ class SimulationCreateResponseModel(GlobalResponseModel):
                     "simulationName": "simulation1",
                     "simulationDescription": "시뮬레이션1 입니다~~"
                 },
-                "message": "시뮬레이션 생성 성공"
+                "message": API.CREATE_SIMULATION.value
             }
         }
     }
@@ -61,7 +56,7 @@ class SimulationListResponseModel(GlobalResponseModel):
                         "simulationStatus": "Running"
                     }
                 ],
-                "message": "시뮬레이션 목록 조회 성공"
+                "message": API.GET_SIMULATIONS.value
             }
         }
     }
@@ -71,18 +66,8 @@ class SimulationListResponseModel(GlobalResponseModel):
 
 ###### 실행 #######
 class SimulationControlRequest(BaseSchema):
-    simulation_id : int
-    action: str
-
-    model_config = {
-        "json_schema_extra": {
-            "example":
-            {
-                "simulationId": 1,
-                "action": "start"
-            }
-        }
-    }
+    simulation_id : int = Field(examples=[1])
+    action: str = Field(examples=["start"])
 
 class SimulationControlResponse(BaseSchema):
     simulation_id: int
@@ -95,7 +80,7 @@ class SimulationControlResponseModel(GlobalResponseModel):
                 "data": {
                     "simulationId": 1,
                 },
-                "message": "시뮬레이션 {action} 성공"
+                "message": API.RUN_SIMULATION.value
             }
         }
     }
@@ -115,7 +100,7 @@ class SimulationDeleteResponseModel(GlobalResponseModel):
                 "data": {
                     "simulationId": 1,
                 },
-                "message": "시뮬레이션 삭제 성공"
+                "message": API.DELETE_SIMULATION.value
             }
         }
     }

@@ -6,6 +6,7 @@ from starlette import status
 from src.models.template import Template
 from src.schemas.template import TemplateListResponse, TemplateCreateRequest, TemplateCreateResponse, \
     TemplateDeleteResponse
+from src.utils.my_enum import API
 
 
 class TemplateService:
@@ -38,12 +39,12 @@ class TemplateService:
         return TemplateCreateResponse.model_validate(new_template).model_dump()
 
     async def delete_template(self, template_id: int):
-        find_template = await self.find_template_by_id(template_id, "템플릿 삭제")
+        find_template = await self.find_template_by_id(template_id, API.DELETE_TEMPLATE.value)
 
         await self.db.delete(find_template)
         await self.db.commit()
         return TemplateDeleteResponse(
-            template_id=find_template.template_id  # TODO: 필드 수정? 엑셀에는 template_id만 있어서 이렇게 적어둠. 반환 필드 추가 시 스키마까지 수정 필.
+            template_id=find_template.template_id
         ).model_dump()
 
     async def find_template_by_id(self, template_id: int, api: str):
@@ -52,5 +53,5 @@ class TemplateService:
         template = result.scalar_one_or_none()
 
         if template is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api} 실패: 존재하지 않는 템플릿id 입니다.')
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api}: 존재하지 않는 템플릿id 입니다.')
         return template

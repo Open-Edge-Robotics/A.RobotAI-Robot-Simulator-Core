@@ -7,6 +7,7 @@ from src.crud.template import TemplateService
 from src.database.db_conn import get_db
 from src.schemas.template import TemplateCreateRequest, TemplateCreateResponseModel, \
     TemplateListResponseModel, TemplateDeleteResponseModel
+from src.utils.my_enum import API
 
 router = APIRouter(prefix="/template", tags=["Template"])
 
@@ -18,7 +19,7 @@ async def get_templates(db: AsyncSession = Depends(get_db)):
     return TemplateListResponseModel(
         status_code=status.HTTP_200_OK,
         data=template_responses,
-        message="템플릿 목록 조회"
+        message=API.GET_TEMPLATES.value
     )
 
 
@@ -29,7 +30,7 @@ async def create_template(template: TemplateCreateRequest, db: AsyncSession = De
     return TemplateCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
         data=new_template,
-        message="템플릿 생성 성공"
+        message=API.CREATE_TEMPLATE.value
     )
 
 
@@ -40,5 +41,5 @@ async def delete_template(template_id: int, db: AsyncSession = Depends(get_db)):
     return TemplateDeleteResponseModel(
         status_code=status.HTTP_200_OK,
         data=data,
-        message="템플릿 삭제 성공"
+        message=API.DELETE_TEMPLATE.value
     )
