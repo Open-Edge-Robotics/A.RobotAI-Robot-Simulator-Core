@@ -6,9 +6,8 @@ from starlette import status
 
 from src.crud.instance import InstanceService
 from src.database.db_conn import get_db
-from src.schemas.format import GlobalResponseModel
-from src.schemas.instance import InstanceCreateRequest, InstanceCreateResponseModel, InstanceListResponseModel, \
-    InstanceControlRequest, InstanceDeleteResponseModel, InstanceDetailResponseModel
+
+from src.schemas.instance import *
 from src.utils.my_enum import API
 
 router = APIRouter(prefix="/instance", tags=["Instance"])
@@ -74,19 +73,15 @@ async def delete_instance(
         message=API.DELETE_INSTANCE.value
     )
 
-# TODO: message에 enum 사용, response_model 변경, control_instance로 변경?
-# TODO 실행/중지 보류
-@router.post("/action", response_model=GlobalResponseModel)
+
+@router.post("/action", response_model=InstanceControlResponseModel, status_code=status.HTTP_200_OK)
 async def run_instance(request: InstanceControlRequest, session: AsyncSession = Depends(get_db)):
-    # if not await InstanceService(session).download_bag_file(instance_id):
-    #     raise S3Error(code=status.HTTP_500_INTERNAL_SERVER_ERROR, message="저장 실패")
-    result = ""
-    if request.action == "start":
+    if request.action ==  "start":
         result = await InstanceService(session).control_instance(request.instance_id)
     else:
-        result = None
+        result = f"{request.action} failed"
 
-    return GlobalResponseModel(
+    return InstanceControlResponseModel(
         status_code=status.HTTP_200_OK,
         data=result,
         message=API.RUN_INSTANCE.value if request.action == "start" else API.STOP_INSTANCE.value
