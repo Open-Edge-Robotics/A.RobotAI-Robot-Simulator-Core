@@ -1,5 +1,5 @@
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
@@ -19,9 +19,7 @@ settings = Settings()
 
 
 class BaseSchema(BaseModel):
-    class Config:
-        alias_generator = to_camel
-        populate_by_name = True
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     def model_dump(self, **kwargs):
         return super().model_dump(by_alias=True)
