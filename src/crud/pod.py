@@ -58,3 +58,13 @@ class PodService:
     @staticmethod
     async def delete_pod(pod_name, namespace):
         pod_client.delete_namespaced_pod(name=pod_name, namespace=namespace)
+
+    @staticmethod
+    async def create_namespace(simulation_id: int):
+        name = f"instance-{simulation_id}"
+        pod_client.create_namespace(
+            client.V1Namespace(
+                metadata=client.V1ObjectMeta(name=name)
+            )
+        )
+        return name

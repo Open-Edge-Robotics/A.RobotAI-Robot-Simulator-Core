@@ -13,6 +13,7 @@ class Simulation(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(30), nullable=False)
     description: Mapped[str] = mapped_column(String(100), nullable=False)
+    namespace: Mapped[str] = mapped_column(String(100), nullable=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[DateTime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
