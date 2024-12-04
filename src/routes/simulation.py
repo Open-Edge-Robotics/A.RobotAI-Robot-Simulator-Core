@@ -21,7 +21,7 @@ async def create_simulation(
     return SimulationCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
         data=new_simulation,
-        message=API.CREATE_SIMULATION
+        message=API.CREATE_SIMULATION.value
     )
 
 
