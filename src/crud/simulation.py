@@ -40,10 +40,15 @@ class SimulationService:
         await self.session.commit()
         await self.session.refresh(new_simulation)
 
+        simulation_namespace = await pod_service.create_namespace(new_simulation.id)
+        new_simulation.namespace = simulation_namespace
+        await self.session.commit()
+
         return SimulationCreateResponse(
             simulation_id=new_simulation.id,
             simulation_name=new_simulation.name,
-            simulation_description=new_simulation.description
+            simulation_description=new_simulation.description,
+            simulation_namespace=new_simulation.namespace
         ).model_dump()
 
 

@@ -38,7 +38,7 @@ class InstanceService:
                 Instance(
                     name=instance_create_data.instance_name,
                     description=instance_create_data.instance_description,
-                    pod_namespace=instance_create_data.pod_namespace,
+                    pod_namespace=simulation.namespace,
                     template_id=template.template_id,
                     template=template,
                     simulation_id=simulation.id,
