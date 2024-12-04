@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
@@ -75,14 +75,26 @@ async def delete_instance(
 
 
 @router.post("/action", response_model=InstanceControlResponseModel, status_code=status.HTTP_200_OK)
-async def run_instance(request: InstanceControlRequest, session: AsyncSession = Depends(get_db)):
+async def run_instance(
+        request: InstanceControlRequest, session: AsyncSession = Depends(get_db)
+):
+    """
+    인스턴스 실행/중지
+
+    현재 실행만 가능함
+    """
     if request.action ==  "start":
         result = await InstanceService(session).control_instance(request.instance_id)
+        message = API.RUN_INSTANCE.value
+    elif request.action ==  "stop":
+        # TODO: 추후 개발 시 수정
+        result = InstanceControlResponse(instance_id=request.instance_id).model_dump()
+        message = API.STOP_INSTANCE.value
     else:
-        result = f"{request.action} failed"
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'{API.CONTROL_INSTANCE.value}: action 요청 값을 확인해주세요')
 
     return InstanceControlResponseModel(
         status_code=status.HTTP_200_OK,
         data=result,
-        message=API.RUN_INSTANCE.value if request.action == "start" else API.STOP_INSTANCE.value
+        message=message
     )

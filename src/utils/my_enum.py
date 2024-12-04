@@ -17,6 +17,7 @@ class API(Enum):
     CREATE_INSTANCE = "인스턴스 생성"
     GET_INSTANCES = "인스턴스 목록 조회"
     GET_INSTANCE = "인스턴스 상세 조회"
+    CONTROL_INSTANCE = "인스턴스 실행/중지"
     RUN_INSTANCE = "인스턴스 실행"
     STOP_INSTANCE = "인스턴스 실행 중지"
     DELETE_INSTANCE = "인스턴스 삭제"
@@ -24,6 +25,7 @@ class API(Enum):
     #시뮬레이션
     GET_SIMULATIONS = "시뮬레이션 목록 조회"
     CREATE_SIMULATION = "시뮬레이션 생성"
+    CONTROL_SIMULATION = "시뮬레이션 실행/중지"
     RUN_SIMULATION = "시뮬레이션 실행"
     STOP_SIMULATION = "시뮬레이션 실행 중지"
     DELETE_SIMULATION = "시뮬레이션 삭제"
