@@ -1,3 +1,5 @@
+from typing import List
+
 from pydantic import Field
 
 from src.schemas.format import GlobalResponseModel
@@ -117,11 +119,11 @@ class InstanceDetailResponseModel(GlobalResponseModel):
 
 ###### 실행 #######
 class InstanceControlRequest(BaseSchema):
-    instance_id: int = Field(examples=[1])
+    instance_ids: List[int]
     action: str = Field(examples=["start"]) # TODO: openapi_examples로 start/stop 시나리오 표현 가능
 
 class InstanceControlResponse(BaseSchema):
-    instance_id: int
+    status: str
 
 class InstanceControlResponseModel(GlobalResponseModel):
     model_config = {
