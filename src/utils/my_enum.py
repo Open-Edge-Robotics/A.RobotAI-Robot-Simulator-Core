@@ -1,11 +1,17 @@
 from enum import Enum
 
 class SimulationStatus(Enum):
-    NOTHING = "Empty" # 시뮬레이션에 속한 인스턴스가 없는 경우
-    RUNNING = "Running" # 시뮬레이션에 속한 모든 인스턴스의 pod status가 Running인 경우
+    EMPTY = "Empty" # 시뮬레이션에 속한 인스턴스가 없는 경우
+    ACTIVE = "Active" # 시뮬레이션에 속한 모든 인스턴스의 pod status가 Running인 경우
+    INACTIVE = "Inactive" # 인스턴스의 pod status가 하나라도 Running이 아닌 경우
 
 class PodStatus(Enum):
+    """Pod의 실제 status"""
     RUNNING = "Running"
+
+class InstanceStatus(Enum):
+    """Pod status를 Instance status로 변환"""
+    READY = "Ready"
 
 class API(Enum):
     # 템플릿
