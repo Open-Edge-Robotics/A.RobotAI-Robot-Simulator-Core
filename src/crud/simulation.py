@@ -29,7 +29,7 @@ class SimulationService:
 
         if is_existed:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                                detail=f"{API.CREATE_SIMULATION}: 시뮬레이션 이름이 이미 존재합니다.")
+                                detail=f"{API.CREATE_SIMULATION.value}: 시뮬레이션 이름이 이미 존재합니다.")
 
         new_simulation = Simulation(
             name=simulation_create_data.simulation_name,
