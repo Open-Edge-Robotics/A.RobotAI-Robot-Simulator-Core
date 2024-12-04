@@ -120,11 +120,11 @@ class SimulationService:
         instances = simulation.instance
 
         if not instances:
-            return SimulationStatus.NOTHING.value
+            return SimulationStatus.EMPTY.value
 
         for instance in instances:
             pod_status = await pod_service.get_pod_status(instance.pod_name, instance.pod_namespace)
             if pod_status != PodStatus.RUNNING.value:
-                return pod_status
+                return SimulationStatus.INACTIVE.value
 
-        return SimulationStatus.RUNNING.value
+        return SimulationStatus.ACTIVE.value
