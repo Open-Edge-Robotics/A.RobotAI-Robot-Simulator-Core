@@ -15,7 +15,7 @@ from src.crud.template import TemplateService
 from src.database import minio_conn
 from src.models.instance import Instance
 from src.schemas.instance import *
-from src.utils.my_enum import API
+from src.utils.my_enum import API, PodStatus, InstanceStatus
 
 pod_service = PodService()
 
@@ -83,6 +83,7 @@ class InstanceService:
         for instance in instances:
             pod_name = instance.pod_name
             pod_namespace = instance.pod_namespace
+            instance_status = await self.get_instance_status(pod_namespace, pod_name)
 
             response = InstanceListResponse(
                 instance_id=instance.id,
@@ -91,7 +92,7 @@ class InstanceService:
                 instance_created_at=str(instance.created_at),
                 pod_name=pod_name,
                 pod_namespace=pod_namespace,
-                pod_status=await pod_service.get_pod_status(pod_name, pod_namespace),
+                pod_status=instance_status,
             )
             instance_list.append(response)
 
@@ -101,12 +102,13 @@ class InstanceService:
         instance = await self.find_instance_by_id(instance_id, API.GET_INSTANCE.value)
         pod_name = instance.pod_name
         namespace = instance.pod_namespace
+        instance_status = await self.get_instance_status(namespace, pod_name)
 
         return InstanceDetailResponse(
             instance_id=instance.id,
             pod_name=pod_name,
             instance_namespace=namespace,
-            instance_status=await pod_service.get_pod_status(pod_name, namespace),
+            instance_status=instance_status,
             instance_image=await pod_service.get_pod_image(pod_name, namespace),
             instance_age=await pod_service.get_pod_age(pod_name, namespace),
             instance_label=await pod_service.get_pod_label(pod_name, namespace),
@@ -167,3 +169,9 @@ class InstanceService:
         except S3Error as e:
             print(f"Error downloading bag file: {e}")
         return None
+
+    async def get_instance_status(self, namespace, pod_name):
+        pod_status = await pod_service.get_pod_status(pod_name, namespace)
+        if pod_status == PodStatus.RUNNING.value:
+            return InstanceStatus.READY.value
+        return pod_status
