@@ -84,11 +84,11 @@ async def run_instance(
     현재 실행만 가능함
     """
     if request.action ==  "start":
-        result = await InstanceService(session).control_instance(request.instance_id)
+        result = await InstanceService(session).control_instance(request.instance_ids)
         message = API.RUN_INSTANCE.value
     elif request.action ==  "stop":
         # TODO: 추후 개발 시 수정
-        result = InstanceControlResponse(instance_id=request.instance_id).model_dump()
+        result = InstanceControlResponse(status="STOP").model_dump()
         message = API.STOP_INSTANCE.value
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'{API.CONTROL_INSTANCE.value}: action 요청 값을 확인해주세요')
