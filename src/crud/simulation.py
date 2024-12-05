@@ -1,6 +1,7 @@
 from fastapi import HTTPException
 from sqlalchemy import select, exists
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from starlette import status
 
 from src.crud.pod import PodService
@@ -54,6 +55,7 @@ class SimulationService:
     async def get_all_simulations(self):
         statement = (
             select(Simulation).
+            options(selectinload(Simulation.instance)).
             order_by(Simulation.id.desc())
         )
         results = await self.session.execute(statement)
