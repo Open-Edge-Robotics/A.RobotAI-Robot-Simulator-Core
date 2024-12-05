@@ -108,9 +108,11 @@ celerybeat.pid
 .env.production.local
 .venv
 venv/
+myvenv/
 .env/
 env.bak/
 venv.bak/
+*.env
 
 # Spyder project settings
 .spyderproject
@@ -164,6 +166,10 @@ Thumbs.db
 test/
 /test_main.http
 
-# Docker
+# Ops
 /docker-compose.yaml
+/k8s/
+/src/routes/rosbag.py
 
+# .tar
+*.tar
