@@ -148,15 +148,19 @@ class InstanceService:
             return InstanceStatus.READY.value
         return pod_status
 
-    async def control_instance(self, instance_id: int):
-        file_path = await self.download_bag_file(instance_id)
 
-        try:
-            command = ['ros2', 'bag', 'play', str(file_path)]
-            subprocess.run(command, check=True)
-            print(f"Successfully started playing rosbag: {file_path}")
-        except subprocess.CalledProcessError as e:
-            print(f"Error occurred while playing rosbag: {e}")
+
+
+    async def control_instance(self, instance_ids: List[int]):
+        for instance_id in instance_ids:
+            file_path = await self.get_bag_file_path(instance_id)
+
+            try:
+                command = ['ros2', 'bag', 'play', str(file_path)]
+                subprocess.run(command, check=True)
+                print(f"Successfully started playing rosbag: {file_path}")
+            except subprocess.CalledProcessError as e:
+                print(f"Error occurred while playing rosbag: {e}")
 
         return InstanceControlResponse(status="START").model_dump()
 
@@ -164,11 +168,11 @@ class InstanceService:
         instance = await self.find_instance_by_id(instance_id, "다운로드 백파일")
         template = instance.template
         file_path = os.path.join("/rosbag-data", template.bag_file_path)
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         if os.path.exists(file_path):
             return file_path
         else:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
             return await self.download_bag_file(file_path, template)
 
     async def download_bag_file(self, file_path, template):
