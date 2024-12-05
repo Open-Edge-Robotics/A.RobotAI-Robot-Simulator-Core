@@ -15,6 +15,7 @@ class SimulationCreateResponse(BaseSchema):
     simulation_id : int
     simulation_name: str
     simulation_description: str
+    simulation_namespace: str
 
 class SimulationCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -24,7 +25,8 @@ class SimulationCreateResponseModel(GlobalResponseModel):
                 "data": {
                     "simulationId": 1,
                     "simulationName": "simulation1",
-                    "simulationDescription": "시뮬레이션1 입니다~~"
+                    "simulationDescription": "시뮬레이션1 입니다~~",
+                    "simulationNamespace": "simulation-1"
                 },
                 "message": API.CREATE_SIMULATION.value
             }
@@ -39,6 +41,7 @@ class SimulationListResponse(BaseSchema):
     simulation_id : int
     simulation_name: str
     simulation_description: str
+    simulation_namespace: str
     simulation_created_at : str
     simulation_status : str
 
@@ -52,8 +55,9 @@ class SimulationListResponseModel(GlobalResponseModel):
                         "simulationId": 1,
                         "simulationName": "simulation1",
                         "simulationDescription": "시뮬레이션1 입니다~~",
+                        "simulationNamespace": "simulation-1",
                         "simulationCreatedAt": "2024-11-18 09:41:31.405853",
-                        "simulationStatus": "Running"
+                        "simulationStatus": "Active"
                     }
                 ],
                 "message": API.GET_SIMULATIONS.value

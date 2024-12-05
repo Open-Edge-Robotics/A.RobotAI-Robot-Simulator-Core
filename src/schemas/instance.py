@@ -14,7 +14,6 @@ class InstanceCreateRequest(BaseSchema):
     simulation_id: int = Field(examples=[1])
     template_id: int = Field(examples=[2])
     instance_count: int = Field(examples=[10])
-    pod_namespace: str = Field(examples=["instance"])
 
 class InstanceCreateResponse(BaseSchema):
     instance_id: int
@@ -70,7 +69,7 @@ class InstanceListResponseModel(GlobalResponseModel):
                         "instanceCreatedAt": "2024-11-22 08:22:16.315731",
                         "podName": "instance-3-1",
                         "podNamespace": "instance",
-                        "podStatus": "Running"
+                        "podStatus": "Ready"
                     }
                 ],
                 "message": API.GET_TEMPLATES.value

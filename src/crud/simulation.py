@@ -40,10 +40,15 @@ class SimulationService:
         await self.session.commit()
         await self.session.refresh(new_simulation)
 
+        simulation_namespace = await pod_service.create_namespace(new_simulation.id)
+        new_simulation.namespace = simulation_namespace
+        await self.session.commit()
+
         return SimulationCreateResponse(
             simulation_id=new_simulation.id,
             simulation_name=new_simulation.name,
-            simulation_description=new_simulation.description
+            simulation_description=new_simulation.description,
+            simulation_namespace=new_simulation.namespace
         ).model_dump()
 
 
@@ -120,11 +125,11 @@ class SimulationService:
         instances = simulation.instance
 
         if not instances:
-            return SimulationStatus.NOTHING.value
+            return SimulationStatus.EMPTY.value
 
         for instance in instances:
             pod_status = await pod_service.get_pod_status(instance.pod_name, instance.pod_namespace)
             if pod_status != PodStatus.RUNNING.value:
-                return pod_status
+                return SimulationStatus.INACTIVE.value
 
-        return SimulationStatus.RUNNING.value
+        return SimulationStatus.ACTIVE.value
