@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from kubernetes import client, config
 
-# config.load_kube_config('/root/.kube/config')
+config.load_kube_config('/root/.kube/config')
 pod_client = client.CoreV1Api()
 
 
@@ -10,8 +10,7 @@ class PodService:
     @staticmethod
     async def create_pod(instance, template):
         pod_env = client.V1EnvVar(name="AGENT_TYPE", value=template.type)
-        pod_label = {"agent-type": template.type}
-
+        pod_label = {"agent-type": template.type.lower()}
         pod_name = f"instance-{instance.simulation_id}-{instance.id}"
         pod_metadata = client.V1ObjectMeta(name=pod_name, labels=pod_label)
 
@@ -61,10 +60,8 @@ class PodService:
 
     @staticmethod
     async def create_namespace(simulation_id: int):
-        name = f"instance-{simulation_id}"
-        pod_client.create_namespace(
-            client.V1Namespace(
-                metadata=client.V1ObjectMeta(name=name)
-            )
-        )
+        name = f"simulation-{simulation_id}"
+        metadata = client.V1ObjectMeta(name=name)
+        namespace = client.V1Namespace(metadata=metadata)
+        pod_client.create_namespace(namespace)
         return name
