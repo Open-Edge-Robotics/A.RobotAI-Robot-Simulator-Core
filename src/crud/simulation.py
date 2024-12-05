@@ -37,12 +37,12 @@ class SimulationService:
         )
 
         self.session.add(new_simulation)
-        await self.session.commit()
-        await self.session.refresh(new_simulation)
+        await self.session.flush()
 
         simulation_namespace = await pod_service.create_namespace(new_simulation.id)
         new_simulation.namespace = simulation_namespace
         await self.session.commit()
+        await self.session.refresh(new_simulation)
 
         return SimulationCreateResponse(
             simulation_id=new_simulation.id,
@@ -60,6 +60,7 @@ class SimulationService:
         )
         results = await self.session.execute(statement)
         simulations = results.scalars().all()
+
         simulation_list =[]
 
         for simulation in simulations:
