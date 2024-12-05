@@ -30,7 +30,7 @@ class InstanceService:
         api = API.CREATE_INSTANCE.value
 
         async with (self.session.begin()):
-            simulation = await self.simulation_service.find_simulation_by_id(instance_create_data.simulation_id,api)
+            simulation = await self.simulation_service.find_simulation_by_id(instance_create_data.simulation_id, api)
             template = await self.templates_service.find_template_by_id(instance_create_data.template_id, api)
 
             count = instance_create_data.instance_count
@@ -83,7 +83,6 @@ class InstanceService:
         for instance in instances:
             pod_name = instance.pod_name
             pod_namespace = instance.pod_namespace
-            instance_status = await self.get_instance_status(pod_namespace, pod_name)
 
             response = InstanceListResponse(
                 instance_id=instance.id,
@@ -92,7 +91,7 @@ class InstanceService:
                 instance_created_at=str(instance.created_at),
                 pod_name=pod_name,
                 pod_namespace=pod_namespace,
-                pod_status=instance_status,
+                pod_status=await self.get_instance_status(pod_name, pod_namespace),
             )
             instance_list.append(response)
 
@@ -102,13 +101,12 @@ class InstanceService:
         instance = await self.find_instance_by_id(instance_id, API.GET_INSTANCE.value)
         pod_name = instance.pod_name
         namespace = instance.pod_namespace
-        instance_status = await self.get_instance_status(namespace, pod_name)
 
         return InstanceDetailResponse(
             instance_id=instance.id,
             pod_name=pod_name,
             instance_namespace=namespace,
-            instance_status=instance_status,
+            instance_status=await self.get_instance_status(pod_name, namespace),
             instance_image=await pod_service.get_pod_image(pod_name, namespace),
             instance_age=await pod_service.get_pod_age(pod_name, namespace),
             instance_label=await pod_service.get_pod_label(pod_name, namespace),
@@ -144,6 +142,12 @@ class InstanceService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api}: 존재하지 않는 인스턴스id 입니다.')
         return instance
 
+    async def get_instance_status(self, pod_name, namespace):
+        pod_status = await pod_service.get_pod_status(pod_name, namespace)
+        if pod_status == PodStatus.RUNNING.value:
+            return InstanceStatus.READY.value
+        return pod_status
+
     async def control_instance(self, instance_id: int):
         file_path = await self.download_bag_file(instance_id)
 
@@ -154,24 +158,28 @@ class InstanceService:
         except subprocess.CalledProcessError as e:
             print(f"Error occurred while playing rosbag: {e}")
 
-        return InstanceControlResponse(instance_id=instance_id).model_dump()
+        return InstanceControlResponse(status="START").model_dump()
 
-    async def download_bag_file(self, instance_id: int):
-        minio_client = minio_conn.client
+    async def get_bag_file_path(self, instance_id: int):
         instance = await self.find_instance_by_id(instance_id, "다운로드 백파일")
         template = instance.template
         file_path = os.path.join("/rosbag-data", template.bag_file_path)
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        if os.path.exists(file_path):
+            return file_path
+        else:
+            return await self.download_bag_file(file_path, template)
+
+    async def download_bag_file(self, file_path, template):
         try:
-            minio_client.fget_object(bucket_name=minio_conn.bucket_name, object_name=template.bag_file_path,
-                                     file_path=file_path)
+            minio_client = minio_conn.client
+            minio_client.fget_object(
+                bucket_name=minio_conn.bucket_name,
+                object_name=template.bag_file_path,
+                file_path=file_path
+            )
             return file_path
         except S3Error as e:
             print(f"Error downloading bag file: {e}")
         return None
-
-    async def get_instance_status(self, namespace, pod_name):
-        pod_status = await pod_service.get_pod_status(pod_name, namespace)
-        if pod_status == PodStatus.RUNNING.value:
-            return InstanceStatus.READY.value
-        return pod_status
