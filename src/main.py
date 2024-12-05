@@ -26,7 +26,8 @@ app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
 origins = [
-    "http://localhost:3000"
+    "http://localhost:3000",
+    "http://192.168.160.134:3001"
 ]
 app.add_middleware(
     CORSMiddleware,
