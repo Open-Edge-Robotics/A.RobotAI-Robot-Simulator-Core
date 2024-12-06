@@ -1,3 +1,5 @@
+from pydoc_data.topics import topics
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +16,8 @@ class TemplateService:
         self.db = db
 
     async def get_all_templates(self):
-        selected_template = await self.db.execute(select(Template))
+        statement = select(Template).order_by(Template.template_id.desc())
+        selected_template = await self.db.execute(statement)
         templates = selected_template.scalars().all()
 
         return [
@@ -22,6 +25,8 @@ class TemplateService:
                 template_id=str(template.template_id),
                 template_type=template.type,
                 template_description=template.description,
+                topics=template.topics,
+                created_at=str(template.created_at)
             ) for template in templates
         ]
 
