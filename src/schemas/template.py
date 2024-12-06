@@ -52,6 +52,8 @@ class TemplateListResponse(BaseSchema):
     template_id: int
     template_type: str
     template_description: str
+    topics : str
+    created_at : str
 
 class TemplateListResponseModel(GlobalResponseModel):
     model_config = {
@@ -62,8 +64,10 @@ class TemplateListResponseModel(GlobalResponseModel):
                 "data": [
                     {
                         "templateId": 1,
-                        "templateType": "A",
-                        "templateDescription": "템플릿A 입니다~~~"
+                        "templateType": "Robotic-Arm",
+                        "templateDescription": "This is robot arm",
+                        "topics" : "/cmd_vel, /scan, /navi_local_path",
+                        "created_at" : "2024-11-26 14:13:31.409721",
                     }
                 ],
                 "message": API.GET_TEMPLATES.value,
