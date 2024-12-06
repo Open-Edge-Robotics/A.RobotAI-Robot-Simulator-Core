@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from src.crud.simulation import SimulationService
 from src.database.db_conn import get_db
 from src.schemas.simulation import SimulationCreateRequest, SimulationListResponseModel, SimulationCreateResponseModel, \
-    SimulationControlRequest, SimulationControlResponseModel, SimulationDeleteResponseModel
+    SimulationControlRequest, SimulationControlResponseModel, SimulationDeleteResponseModel, SimulationControlResponse
 from src.utils.my_enum import API
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
@@ -41,16 +41,25 @@ async def get_simulations(
 
 @router.post("/action", response_model=SimulationControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_simulation(
-        simulation_control_data: SimulationControlRequest, session: AsyncSession = Depends(get_db)
+        request: SimulationControlRequest, session: AsyncSession = Depends(get_db)
 ):
     """시뮬레이션 실행/중지"""
-    data, action = await SimulationService(session).control_simulation(simulation_control_data)
+
+    if request.action == "start":
+        result = await SimulationService(session).control_simulation(request.simulation_id)
+        message = API.RUN_SIMULATION.value
+    elif request.action == "stop":
+        # TODO: 추후 개발 시 수정
+        result = SimulationControlResponse(status="STOP").model_dump()
+        message = API.STOP_SIMULATION.value
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f'{API.STOP_SIMULATION.value}: action 요청 값을 확인해주세요')
 
     return SimulationControlResponseModel(
         status_code=status.HTTP_200_OK,
-        data=data,
-        message=API.RUN_SIMULATION.value if action == "start" else API.STOP_SIMULATION.value
-
+        data=result,
+        message=message
     )
 
 
