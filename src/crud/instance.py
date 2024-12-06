@@ -1,8 +1,9 @@
 import os
-import subprocess
-from typing import Optional
+from typing import Optional, Sequence
 
+import requests
 from fastapi import HTTPException
+from kubernetes import config, client
 from minio import S3Error
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,7 @@ from sqlalchemy.orm import joinedload
 from starlette import status
 
 from src.crud.pod import PodService
+from src.crud.rosbag import RosService
 from src.crud.simulation import SimulationService
 from src.crud.template import TemplateService
 from src.database import minio_conn
@@ -25,6 +27,7 @@ class InstanceService:
         self.session = session
         self.simulation_service = SimulationService(session)
         self.templates_service = TemplateService(session)
+        self.ros_service = RosService(session)
 
     async def create_instance(self, instance_create_data: InstanceCreateRequest):
         api = API.CREATE_INSTANCE.value
@@ -129,6 +132,38 @@ class InstanceService:
             instance_id=find_instance.id
         ).model_dump()
 
+
+    async def control_instance(self, instance_ids: List[int]):
+        instances = await self.get_instances_by_ids(instance_ids)
+        await self.ros_service.run_instances(instances)
+
+        return InstanceControlResponse(status="START").model_dump()
+
+    async def control_instance_temp(self, instance_ids: List[int]):
+        config.load_kube_config('/root/.kube/config')
+        pod_client = client.CoreV1Api()
+
+        for instance_id in instance_ids:
+            instance = await self.find_instance_by_id(instance_id, "control instance")
+            object_path = instance.template.bag_file_path
+
+            pod_name = f"instance-{instance.simulation_id}-{instance.id}"
+            pod = pod_client.read_namespaced_pod(name=pod_name, namespace=instance.pod_namespace)
+
+            pod_ip = pod.status.pod_ip
+            pod_api_url = f"http://{pod_ip}:8002/download"
+            print(requests.get(f"http://{pod_ip}:8002/"))
+
+            requests.post(pod_api_url, json={"object_path": object_path})
+
+        return InstanceControlResponse(status="START").model_dump()
+
+    async def get_instance_status(self, pod_name, namespace):
+        pod_status = await pod_service.get_pod_status(pod_name, namespace)
+        if pod_status == PodStatus.RUNNING.value:
+            return InstanceStatus.READY.value
+        return pod_status
+
     async def find_instance_by_id(self, instance_id: int, api: str):
         query = (
             select(Instance).
@@ -142,48 +177,9 @@ class InstanceService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api}: 존재하지 않는 인스턴스id 입니다.')
         return instance
 
-    async def get_instance_status(self, pod_name, namespace):
-        pod_status = await pod_service.get_pod_status(pod_name, namespace)
-        if pod_status == PodStatus.RUNNING.value:
-            return InstanceStatus.READY.value
-        return pod_status
-
-
-
-
-    async def control_instance(self, instance_ids: List[int]):
-        for instance_id in instance_ids:
-            file_path = await self.get_bag_file_path(instance_id)
-
-            try:
-                command = ['ros2', 'bag', 'play', str(file_path)]
-                subprocess.run(command, check=True)
-                print(f"Successfully started playing rosbag: {file_path}")
-            except subprocess.CalledProcessError as e:
-                print(f"Error occurred while playing rosbag: {e}")
-
-        return InstanceControlResponse(status="START").model_dump()
-
-    async def get_bag_file_path(self, instance_id: int):
-        instance = await self.find_instance_by_id(instance_id, "다운로드 백파일")
-        template = instance.template
-        file_path = os.path.join("/rosbag-data", template.bag_file_path)
-
-        if os.path.exists(file_path):
-            return file_path
-        else:
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            return await self.download_bag_file(file_path, template)
-
-    async def download_bag_file(self, file_path, template):
-        try:
-            minio_client = minio_conn.client
-            minio_client.fget_object(
-                bucket_name=minio_conn.bucket_name,
-                object_name=template.bag_file_path,
-                file_path=file_path
-            )
-            return file_path
-        except S3Error as e:
-            print(f"Error downloading bag file: {e}")
-        return None
+    async def get_instances_by_ids(self, instance_ids: List[int]) -> List[Instance]:
+        result = await self.session.execute(
+            select(Instance).where(Instance.id.in_(instance_ids))
+        )
+        instances = result.scalars().all()
+        return list(instances)
