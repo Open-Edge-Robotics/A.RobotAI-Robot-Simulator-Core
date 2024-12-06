@@ -173,3 +173,4 @@ test/
 
 # .tar
 *.tar
+/src/pod-template.yaml
