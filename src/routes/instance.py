@@ -6,7 +6,6 @@ from starlette import status
 
 from src.crud.instance import InstanceService
 from src.database.db_conn import get_db
-
 from src.schemas.instance import *
 from src.utils.my_enum import API
 
@@ -83,15 +82,16 @@ async def run_instance(
 
     현재 실행만 가능함
     """
-    if request.action ==  "start":
+    if request.action == "start":
         result = await InstanceService(session).control_instance(request.instance_ids)
         message = API.RUN_INSTANCE.value
-    elif request.action ==  "stop":
+    elif request.action == "stop":
         # TODO: 추후 개발 시 수정
         result = InstanceControlResponse(status="STOP").model_dump()
         message = API.STOP_INSTANCE.value
     else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'{API.CONTROL_INSTANCE.value}: action 요청 값을 확인해주세요')
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f'{API.CONTROL_INSTANCE.value}: action 요청 값을 확인해주세요')
 
     return InstanceControlResponseModel(
         status_code=status.HTTP_200_OK,
