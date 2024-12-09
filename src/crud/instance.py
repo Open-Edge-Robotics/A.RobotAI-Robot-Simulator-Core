@@ -19,7 +19,7 @@ from src.models.instance import Instance
 from src.schemas.instance import *
 from src.utils.my_enum import API, PodStatus, InstanceStatus
 
-pod_service = PodService()
+
 
 
 class InstanceService:
@@ -27,7 +27,8 @@ class InstanceService:
         self.session = session
         self.simulation_service = SimulationService(session)
         self.templates_service = TemplateService(session)
-        self.ros_service = RosService(session)
+        self.pod_service = PodService()
+        self.ros_service = RosService()
 
     async def create_instance(self, instance_create_data: InstanceCreateRequest):
         api = API.CREATE_INSTANCE.value
@@ -53,7 +54,7 @@ class InstanceService:
             await self.session.flush()
             for instance in new_instances:
                 await self.session.refresh(instance)
-                instance.pod_name = await pod_service.create_pod(instance, template)
+                instance.pod_name = await self.pod_service.create_pod(instance, template)
                 self.session.add(instance)
 
             return [
@@ -110,9 +111,9 @@ class InstanceService:
             pod_name=pod_name,
             instance_namespace=namespace,
             instance_status=await self.get_instance_status(pod_name, namespace),
-            instance_image=await pod_service.get_pod_image(pod_name, namespace),
-            instance_age=await pod_service.get_pod_age(pod_name, namespace),
-            instance_label=await pod_service.get_pod_label(pod_name, namespace),
+            instance_image=await self.pod_service.get_pod_image(pod_name, namespace),
+            instance_age=await self.pod_service.get_pod_age(pod_name, namespace),
+            instance_label=await self.pod_service.get_pod_label(pod_name, namespace),
             template_type=instance.template.type,
             topics=instance.template.topics,
         ).model_dump()
@@ -120,7 +121,7 @@ class InstanceService:
     async def delete_instance(self, instance_id: int):
         find_instance = await self.find_instance_by_id(instance_id, API.DELETE_INSTANCE.value)
 
-        await pod_service.delete_pod(
+        await self.pod_service.delete_pod(
             find_instance.pod_name,
             find_instance.pod_namespace
         )
@@ -159,7 +160,7 @@ class InstanceService:
         return InstanceControlResponse(status="START").model_dump()
 
     async def get_instance_status(self, pod_name, namespace):
-        pod_status = await pod_service.get_pod_status(pod_name, namespace)
+        pod_status = await self.pod_service.get_pod_status(pod_name, namespace)
         if pod_status == PodStatus.RUNNING.value:
             return InstanceStatus.READY.value
         return pod_status
