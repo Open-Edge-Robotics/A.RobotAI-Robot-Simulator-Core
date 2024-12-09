@@ -10,15 +10,13 @@ from src.models.instance import Instance
 
 
 class RosService:
-    def __init__(self, session):
-        self.session = session
-
     async def run_instances(self, instances: List[Instance]):
         for instance in instances:
             file_path = await self.get_bag_file_path(instance)
             await asyncio.to_thread(self.run_rosbag, file_path)
 
-    def run_rosbag(self, file_path: str):
+    @staticmethod
+    def run_rosbag(file_path: str):
         try:
             command = ['ros2', 'bag', 'play', str(file_path)]
             subprocess.run(command, check=True)
@@ -31,7 +29,8 @@ class RosService:
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         return await self.download_bag_file(file_path, template)
 
-    async def download_bag_file(self, file_path, template):
+    @staticmethod
+    async def download_bag_file(file_path, template):
         try:
             minio_client = minio_conn.client
             minio_client.fget_object(

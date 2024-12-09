@@ -12,13 +12,12 @@ from src.schemas.simulation import SimulationCreateRequest, SimulationListRespon
     SimulationDeleteResponse, SimulationControlResponse
 from src.utils.my_enum import SimulationStatus, PodStatus, API
 
-pod_service = PodService()
-
 
 class SimulationService:
     def __init__(self, session: AsyncSession):
         self.session = session
-        self.ros_service = RosService(session)
+        self.ros_service = RosService()
+        self.pod_service = PodService()
 
     async def create_simulation(self, simulation_create_data: SimulationCreateRequest):
         # 시뮬레이션 이름 중복 검사
@@ -40,7 +39,7 @@ class SimulationService:
         self.session.add(new_simulation)
         await self.session.flush()
 
-        simulation_namespace = await pod_service.create_namespace(new_simulation.id)
+        simulation_namespace = await self.pod_service.create_namespace(new_simulation.id)
         new_simulation.namespace = simulation_namespace
         await self.session.commit()
         await self.session.refresh(new_simulation)
@@ -103,7 +102,7 @@ class SimulationService:
             await self.session.delete(simulation)
             await self.session.commit()
 
-            await pod_service.delete_namespace(simulation_id)
+            await self.pod_service.delete_namespace(simulation_id)
         else:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                                 detail=f'{api}: 삭제하려는 시뮬레이션에 속한 인스턴스가 있어 시뮬레이션 삭제가 불가합니다.')
@@ -129,7 +128,7 @@ class SimulationService:
             return SimulationStatus.EMPTY.value
 
         for instance in instances:
-            pod_status = await pod_service.get_pod_status(instance.pod_name, instance.pod_namespace)
+            pod_status = await self.pod_service.get_pod_status(instance.pod_name, instance.pod_namespace)
             if pod_status != PodStatus.RUNNING.value:
                 return SimulationStatus.INACTIVE.value
 

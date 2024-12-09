@@ -1,5 +1,3 @@
-from pydoc_data.topics import topics
-
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +20,7 @@ class TemplateService:
 
         return [
             TemplateListResponse(
-                template_id=str(template.template_id),
+                template_id=template.template_id,
                 template_type=template.type,
                 template_description=template.description,
                 topics=template.topics,
