@@ -73,6 +73,17 @@ async def delete_instance(
     )
 
 
+@router.post("/status", response_model=InstanceStatusResponseModel, status_code=status.HTTP_200_OK)
+async def check_instance(request: InstanceStatusRequest, session: AsyncSession = Depends(get_db)):
+    """인스턴스 실행 상태 조회"""
+    data = await InstanceService(session).check_instance_status(request.instance_ids)
+    return InstanceStatusResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=data,
+        message=API.CHECK_INSTANCE.value
+    )
+
+
 @router.post("/action", response_model=InstanceControlResponseModel, status_code=status.HTTP_200_OK)
 async def run_instance(
         request: InstanceControlRequest, session: AsyncSession = Depends(get_db)
@@ -83,11 +94,10 @@ async def run_instance(
     현재 실행만 가능함
     """
     if request.action == "start":
-        result = await InstanceService(session).control_instance(request.instance_ids)
+        result = await InstanceService(session).start_instances(request.instance_ids)
         message = API.RUN_INSTANCE.value
     elif request.action == "stop":
-        # TODO: 추후 개발 시 수정
-        result = InstanceControlResponse(status="STOP").model_dump()
+        result = await InstanceService(session).stop_instances(request.instance_ids)
         message = API.STOP_INSTANCE.value
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
