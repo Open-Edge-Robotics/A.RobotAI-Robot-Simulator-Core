@@ -1,6 +1,5 @@
 from typing import Optional
 
-import requests
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -129,17 +128,17 @@ class InstanceService:
 
     async def start_instances(self, instance_ids: List[int]):
         for instance_id in instance_ids:
-            instance = await self.find_instance_by_id(instance_id, "control instance")
+            instance = await self.find_instance_by_id(instance_id, "start instance")
             object_path = instance.template.bag_file_path
             pod_ip = await self.pod_service.get_pod_ip(instance)
-            await self.send_post_request(pod_ip, "/rosbag/play", {"object_path": object_path})
+            await self.ros_service.send_post_request(pod_ip, "/rosbag/play", {"object_path": object_path})
         return InstanceControlResponse(status="START").model_dump()
 
     async def stop_instances(self, instance_ids: List[int]):
         for instance_id in instance_ids:
-            instance = await self.find_instance_by_id(instance_id, "control instance")
+            instance = await self.find_instance_by_id(instance_id, "stop instance")
             pod_ip = await self.pod_service.get_pod_ip(instance)
-            await self.send_post_request(pod_ip, "/rosbag/stop")
+            await self.ros_service.send_post_request(pod_ip, "/rosbag/stop")
         return InstanceControlResponse(status="STOP").model_dump()
 
     async def check_instance_status(self, instance_ids: List[int]):
@@ -147,7 +146,7 @@ class InstanceService:
         for instance_id in instance_ids:
             instance = await self.find_instance_by_id(instance_id, "check instance")
             pod_ip = await self.pod_service.get_pod_ip(instance)
-            pod_status = await self.send_get_request(pod_ip)
+            pod_status = await self.ros_service.send_get_request(pod_ip)
 
             status_response = InstanceStatusResponse(
                 instance_id=instance.id,
@@ -156,32 +155,6 @@ class InstanceService:
             status_list.append(status_response)
 
         return status_list
-
-    @staticmethod
-    async def send_get_request(pod_ip):
-        pod_api_url = f"http://{pod_ip}:8002/rosbag/status"
-        try:
-            response = requests.get(pod_api_url)
-            response.raise_for_status()
-            response_data = response.json().get("status")
-
-            if response_data == PodStatus.RUNNING.value:
-                pod_status = PodStatus.RUNNING.value
-            else:
-                pod_status = PodStatus.STOPPED.value
-        except requests.RequestException as e:
-            raise Exception(e)
-        return pod_status
-
-    @staticmethod
-    async def send_post_request(pod_ip: str, endpoint: str, params: dict = None):
-        try:
-            url = f"http://{pod_ip}:8002{endpoint}"
-            response = requests.post(url, params=params)
-            response.raise_for_status()  # HTTP 오류 발생 시 예외 처리
-            return response
-        except requests.RequestException as e:
-            raise HTTPException(status_code=500, detail=f"Pod Server Request Failed: {e}")
 
     async def get_instance_status(self, pod_name, namespace):
         pod_status = await self.pod_service.get_pod_status(pod_name, namespace)
