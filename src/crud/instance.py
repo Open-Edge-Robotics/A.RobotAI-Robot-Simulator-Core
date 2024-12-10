@@ -1,10 +1,7 @@
-import os
-from typing import Optional, Sequence
+from typing import Optional
 
 import requests
 from fastapi import HTTPException
-from kubernetes import config, client
-from minio import S3Error
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -14,12 +11,9 @@ from src.crud.pod import PodService
 from src.crud.rosbag import RosService
 from src.crud.simulation import SimulationService
 from src.crud.template import TemplateService
-from src.database import minio_conn
 from src.models.instance import Instance
 from src.schemas.instance import *
 from src.utils.my_enum import API, PodStatus, InstanceStatus
-
-pod_service = PodService()
 
 
 class InstanceService:
@@ -27,7 +21,8 @@ class InstanceService:
         self.session = session
         self.simulation_service = SimulationService(session)
         self.templates_service = TemplateService(session)
-        self.ros_service = RosService(session)
+        self.pod_service = PodService()
+        self.ros_service = RosService()
 
     async def create_instance(self, instance_create_data: InstanceCreateRequest):
         api = API.CREATE_INSTANCE.value
@@ -53,7 +48,7 @@ class InstanceService:
             await self.session.flush()
             for instance in new_instances:
                 await self.session.refresh(instance)
-                instance.pod_name = await pod_service.create_pod(instance, template)
+                instance.pod_name = await self.pod_service.create_pod(instance, template)
                 self.session.add(instance)
 
             return [
@@ -110,9 +105,9 @@ class InstanceService:
             pod_name=pod_name,
             instance_namespace=namespace,
             instance_status=await self.get_instance_status(pod_name, namespace),
-            instance_image=await pod_service.get_pod_image(pod_name, namespace),
-            instance_age=await pod_service.get_pod_age(pod_name, namespace),
-            instance_label=await pod_service.get_pod_label(pod_name, namespace),
+            instance_image=await self.pod_service.get_pod_image(pod_name, namespace),
+            instance_age=await self.pod_service.get_pod_age(pod_name, namespace),
+            instance_label=await self.pod_service.get_pod_label(pod_name, namespace),
             template_type=instance.template.type,
             topics=instance.template.topics,
         ).model_dump()
@@ -120,7 +115,7 @@ class InstanceService:
     async def delete_instance(self, instance_id: int):
         find_instance = await self.find_instance_by_id(instance_id, API.DELETE_INSTANCE.value)
 
-        await pod_service.delete_pod(
+        await self.pod_service.delete_pod(
             find_instance.pod_name,
             find_instance.pod_namespace
         )
@@ -132,34 +127,64 @@ class InstanceService:
             instance_id=find_instance.id
         ).model_dump()
 
-
-    async def control_instance(self, instance_ids: List[int]):
-        instances = await self.get_instances_by_ids(instance_ids)
-        await self.ros_service.run_instances(instances)
-
-        return InstanceControlResponse(status="START").model_dump()
-
-    async def control_instance_temp(self, instance_ids: List[int]):
-        config.load_kube_config('/root/.kube/config')
-        pod_client = client.CoreV1Api()
-
+    async def start_instances(self, instance_ids: List[int]):
         for instance_id in instance_ids:
             instance = await self.find_instance_by_id(instance_id, "control instance")
             object_path = instance.template.bag_file_path
-
-            pod_name = f"instance-{instance.simulation_id}-{instance.id}"
-            pod = pod_client.read_namespaced_pod(name=pod_name, namespace=instance.pod_namespace)
-
-            pod_ip = pod.status.pod_ip
-            pod_api_url = f"http://{pod_ip}:8002/download"
-            print(requests.get(f"http://{pod_ip}:8002/"))
-
-            requests.post(pod_api_url, json={"object_path": object_path})
-
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            await self.send_post_request(pod_ip, "/rosbag/play", {"object_path": object_path})
         return InstanceControlResponse(status="START").model_dump()
 
+    async def stop_instances(self, instance_ids: List[int]):
+        for instance_id in instance_ids:
+            instance = await self.find_instance_by_id(instance_id, "control instance")
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            await self.send_post_request(pod_ip, "/rosbag/stop")
+        return InstanceControlResponse(status="STOP").model_dump()
+
+    async def check_instance_status(self, instance_ids: List[int]):
+        status_list = []
+        for instance_id in instance_ids:
+            instance = await self.find_instance_by_id(instance_id, "check instance")
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            pod_status = await self.send_get_request(pod_ip)
+
+            status_response = InstanceStatusResponse(
+                instance_id=instance.id,
+                running_status=pod_status,
+            )
+            status_list.append(status_response)
+
+        return status_list
+
+    @staticmethod
+    async def send_get_request(pod_ip):
+        pod_api_url = f"http://{pod_ip}:8002/rosbag/status"
+        try:
+            response = requests.get(pod_api_url)
+            response.raise_for_status()
+            response_data = response.json().get("status")
+
+            if response_data == PodStatus.RUNNING.value:
+                pod_status = PodStatus.RUNNING.value
+            else:
+                pod_status = PodStatus.STOPPED.value
+        except requests.RequestException as e:
+            raise Exception(e)
+        return pod_status
+
+    @staticmethod
+    async def send_post_request(pod_ip: str, endpoint: str, params: dict = None):
+        try:
+            url = f"http://{pod_ip}:8002{endpoint}"
+            response = requests.post(url, params=params)
+            response.raise_for_status()  # HTTP 오류 발생 시 예외 처리
+            return response
+        except requests.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Pod Server Request Failed: {e}")
+
     async def get_instance_status(self, pod_name, namespace):
-        pod_status = await pod_service.get_pod_status(pod_name, namespace)
+        pod_status = await self.pod_service.get_pod_status(pod_name, namespace)
         if pod_status == PodStatus.RUNNING.value:
             return InstanceStatus.READY.value
         return pod_status
@@ -178,8 +203,11 @@ class InstanceService:
         return instance
 
     async def get_instances_by_ids(self, instance_ids: List[int]) -> List[Instance]:
-        result = await self.session.execute(
-            select(Instance).where(Instance.id.in_(instance_ids))
+        query = (
+            select(Instance).
+            where(Instance.id.in_(instance_ids)).
+            options(joinedload(Instance.template), joinedload(Instance.simulation))
         )
+        result = await self.session.execute(query)
         instances = result.scalars().all()
         return list(instances)

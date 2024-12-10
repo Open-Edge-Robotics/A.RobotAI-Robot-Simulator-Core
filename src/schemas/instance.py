@@ -15,6 +15,7 @@ class InstanceCreateRequest(BaseSchema):
     template_id: int = Field(examples=[2])
     instance_count: int = Field(examples=[10])
 
+
 class InstanceCreateResponse(BaseSchema):
     instance_id: int
     instance_name: str
@@ -22,6 +23,7 @@ class InstanceCreateResponse(BaseSchema):
     simulation_id: int
     template_id: int
     pod_name: str
+
 
 class InstanceCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -55,6 +57,7 @@ class InstanceListResponse(BaseSchema):
     pod_name: str
     pod_namespace: str
     pod_status: str
+
 
 class InstanceListResponseModel(GlobalResponseModel):
     model_config = {
@@ -92,10 +95,11 @@ class InstanceDetailResponse(BaseSchema):
     template_type: str
     topics: str
 
+
 class InstanceDetailResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
-            "example":{
+            "example": {
                 "statusCode": 200,
                 "data": {
                     "instanceId": 1,
@@ -117,12 +121,38 @@ class InstanceDetailResponseModel(GlobalResponseModel):
 
 
 ###### 실행 #######
+class InstanceStatusRequest(BaseSchema):
+    instance_ids: List[int]
+
+
+class InstanceStatusResponse(BaseSchema):
+    instance_id: int
+    running_status: str
+
+
+class InstanceStatusResponseModel(GlobalResponseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "statusCode": 200,
+                "data": {
+                    "instanceId": 127,
+                    "runningStatus": "Running",
+                },
+                "message": API.CHECK_INSTANCE.value
+            }
+        }
+    }
+
+
 class InstanceControlRequest(BaseSchema):
     instance_ids: List[int]
-    action: str = Field(examples=["start"]) # TODO: openapi_examples로 start/stop 시나리오 표현 가능
+    action: str = Field(examples=["start"])  # TODO: openapi_examples로 start/stop 시나리오 표현 가능
+
 
 class InstanceControlResponse(BaseSchema):
     status: str
+
 
 class InstanceControlResponseModel(GlobalResponseModel):
     model_config = {
@@ -143,6 +173,7 @@ class InstanceControlResponseModel(GlobalResponseModel):
 ###### 삭제 #######
 class InstanceDeleteResponse(BaseSchema):
     instance_id: int
+
 
 class InstanceDeleteResponseModel(GlobalResponseModel):
     model_config = {

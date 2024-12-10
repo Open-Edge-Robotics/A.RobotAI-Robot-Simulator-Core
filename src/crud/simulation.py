@@ -1,7 +1,7 @@
 from fastapi import HTTPException
 from sqlalchemy import select, exists
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from starlette import status
 
 from src.crud.pod import PodService
@@ -12,13 +12,12 @@ from src.schemas.simulation import SimulationCreateRequest, SimulationListRespon
     SimulationDeleteResponse, SimulationControlResponse
 from src.utils.my_enum import SimulationStatus, PodStatus, API
 
-pod_service = PodService()
-
 
 class SimulationService:
     def __init__(self, session: AsyncSession):
         self.session = session
-        self.ros_service = RosService(session)
+        self.ros_service = RosService()
+        self.pod_service = PodService()
 
     async def create_simulation(self, simulation_create_data: SimulationCreateRequest):
         # 시뮬레이션 이름 중복 검사
@@ -40,7 +39,7 @@ class SimulationService:
         self.session.add(new_simulation)
         await self.session.flush()
 
-        simulation_namespace = await pod_service.create_namespace(new_simulation.id)
+        simulation_namespace = await self.pod_service.create_namespace(new_simulation.id)
         new_simulation.namespace = simulation_namespace
         await self.session.commit()
         await self.session.refresh(new_simulation)
@@ -80,9 +79,16 @@ class SimulationService:
 
     async def control_simulation(self, simulation_id: int):
         simulation = await self.find_simulation_by_id(simulation_id, "control simulation")
-        instances = simulation.instance
+        print(simulation.namespace)
+        query = (
+            select(Instance)
+            .options(joinedload(Instance.template))
+            .where(Instance.simulation_id == simulation.id)
+        )
+        result = await self.session.execute(query)
+        instances = result.scalars().all()
 
-        await self.ros_service.run_instances(instances)
+        await self.ros_service.run_instances(list(instances))
 
         return SimulationControlResponse(
             simulation_id=simulation_id
@@ -103,7 +109,7 @@ class SimulationService:
             await self.session.delete(simulation)
             await self.session.commit()
 
-            await pod_service.delete_namespace(simulation_id)
+            await self.pod_service.delete_namespace(simulation_id)
         else:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                                 detail=f'{api}: 삭제하려는 시뮬레이션에 속한 인스턴스가 있어 시뮬레이션 삭제가 불가합니다.')
@@ -113,11 +119,15 @@ class SimulationService:
         ).model_dump()
 
     async def find_simulation_by_id(self, simulation_id: int, api: str):
-        query = select(Simulation).where(Simulation.id == simulation_id)
+        query = (
+            select(Simulation)
+            .options(selectinload(Simulation.instance))
+            .where(Simulation.id == simulation_id)
+        )
         result = await self.session.execute(query)
         simulation = result.scalar_one_or_none()
 
-        if simulation is None:
+        if not simulation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail=f'{api}: 존재하지 않는 시뮬레이션id 입니다.')
         return simulation
@@ -129,7 +139,7 @@ class SimulationService:
             return SimulationStatus.EMPTY.value
 
         for instance in instances:
-            pod_status = await pod_service.get_pod_status(instance.pod_name, instance.pod_namespace)
+            pod_status = await self.pod_service.get_pod_status(instance.pod_name, instance.pod_namespace)
             if pod_status != PodStatus.RUNNING.value:
                 return SimulationStatus.INACTIVE.value
 
