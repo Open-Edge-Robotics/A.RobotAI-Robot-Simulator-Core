@@ -1,7 +1,7 @@
 from fastapi import HTTPException
 from sqlalchemy import select, exists
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from starlette import status
 
 from src.crud.pod import PodService
@@ -79,9 +79,16 @@ class SimulationService:
 
     async def control_simulation(self, simulation_id: int):
         simulation = await self.find_simulation_by_id(simulation_id, "control simulation")
-        instances = simulation.instance
+        print(simulation.namespace)
+        query = (
+            select(Instance)
+            .options(joinedload(Instance.template))
+            .where(Instance.simulation_id == simulation.id)
+        )
+        result = await self.session.execute(query)
+        instances = result.scalars().all()
 
-        await self.ros_service.run_instances(instances)
+        await self.ros_service.run_instances(list(instances))
 
         return SimulationControlResponse(
             simulation_id=simulation_id
@@ -112,11 +119,15 @@ class SimulationService:
         ).model_dump()
 
     async def find_simulation_by_id(self, simulation_id: int, api: str):
-        query = select(Simulation).where(Simulation.id == simulation_id)
+        query = (
+            select(Simulation)
+            .options(selectinload(Simulation.instance))
+            .where(Simulation.id == simulation_id)
+        )
         result = await self.session.execute(query)
         simulation = result.scalar_one_or_none()
 
-        if simulation is None:
+        if not simulation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail=f'{api}: 존재하지 않는 시뮬레이션id 입니다.')
         return simulation
