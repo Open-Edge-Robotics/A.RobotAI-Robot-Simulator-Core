@@ -88,11 +88,8 @@ async def check_instance(request: InstanceStatusRequest, session: AsyncSession =
 async def run_instance(
         request: InstanceControlRequest, session: AsyncSession = Depends(get_db)
 ):
-    """
-    인스턴스 실행/중지
+    """인스턴스 실행/중지"""
 
-    현재 실행만 가능함
-    """
     if request.action == "start":
         result = await InstanceService(session).start_instances(request.instance_ids)
         message = API.RUN_INSTANCE.value
