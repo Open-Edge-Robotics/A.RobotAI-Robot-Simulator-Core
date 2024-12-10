@@ -40,4 +40,5 @@ class API(Enum):
     CONTROL_SIMULATION = "시뮬레이션 실행/중지"
     RUN_SIMULATION = "시뮬레이션 실행"
     STOP_SIMULATION = "시뮬레이션 실행 중지"
+    CHECK_SIMULATION = "시뮬레이션 실행 상태 체크"
     DELETE_SIMULATION = "시뮬레이션 삭제"
