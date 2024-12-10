@@ -131,14 +131,14 @@ class InstanceService:
         for instance_id in instance_ids:
             instance = await self.find_instance_by_id(instance_id, "control instance")
             object_path = instance.template.bag_file_path
-            pod_ip = await self.pod_service.get_pod_and_ip(instance)
+            pod_ip = await self.pod_service.get_pod_ip(instance)
             await self.send_post_request(pod_ip, "/rosbag/play", {"object_path": object_path})
         return InstanceControlResponse(status="START").model_dump()
 
     async def stop_instances(self, instance_ids: List[int]):
         for instance_id in instance_ids:
             instance = await self.find_instance_by_id(instance_id, "control instance")
-            pod_ip = await self.pod_service.get_pod_and_ip(instance)
+            pod_ip = await self.pod_service.get_pod_ip(instance)
             await self.send_post_request(pod_ip, "/rosbag/stop")
         return InstanceControlResponse(status="STOP").model_dump()
 
@@ -146,7 +146,7 @@ class InstanceService:
         status_list = []
         for instance_id in instance_ids:
             instance = await self.find_instance_by_id(instance_id, "check instance")
-            pod_ip = await self.pod_service.get_pod_and_ip(instance)
+            pod_ip = await self.pod_service.get_pod_ip(instance)
             pod_status = await self.send_get_request(pod_ip)
 
             status_response = InstanceStatusResponse(
