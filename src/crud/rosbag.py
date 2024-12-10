@@ -1,44 +1,32 @@
-import asyncio
-import os
-import subprocess
-from typing import List
+import requests
+from fastapi import HTTPException
 
-from minio import S3Error
-
-from src.database import minio_conn
-from src.models.instance import Instance
+from src.utils.my_enum import PodStatus
 
 
 class RosService:
-    async def run_instances(self, instances: List[Instance]):
-        for instance in instances:
-            file_path = await self.get_bag_file_path(instance)
-            await asyncio.to_thread(self.run_rosbag, file_path)
+    @staticmethod
+    async def send_get_request(pod_ip):
+        pod_api_url = f"http://{pod_ip}:8002/rosbag/status"
+        try:
+            response = requests.get(pod_api_url)
+            response.raise_for_status()
+            response_data = response.json().get("status")
+
+            if response_data == PodStatus.RUNNING.value:
+                pod_status = PodStatus.RUNNING.value
+            else:
+                pod_status = PodStatus.STOPPED.value
+        except requests.RequestException as e:
+            raise Exception(e)
+        return pod_status
 
     @staticmethod
-    def run_rosbag(file_path: str):
+    async def send_post_request(pod_ip: str, endpoint: str, params: dict = None):
         try:
-            command = ['ros2', 'bag', 'play', str(file_path)]
-            subprocess.run(command, check=True)
-        except subprocess.CalledProcessError as e:
-            raise Exception(f"Error while playing rosbag: {e}")
-
-    async def get_bag_file_path(self, instance: Instance):
-        template = instance.template
-        file_path = os.path.join("/rosbag-data", template.bag_file_path)
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        return await self.download_bag_file(file_path, template)
-
-    @staticmethod
-    async def download_bag_file(file_path, template):
-        try:
-            minio_client = minio_conn.client
-            minio_client.fget_object(
-                bucket_name=minio_conn.bucket_name,
-                object_name=template.bag_file_path,
-                file_path=file_path
-            )
-            return file_path
-        except S3Error as e:
-            print(f"Error downloading bag file: {e}")
-        return None
+            url = f"http://{pod_ip}:8002{endpoint}"
+            response = requests.post(url, params=params)
+            response.raise_for_status()  # HTTP 오류 발생 시 예외 처리
+            return response
+        except requests.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Pod Server Request Failed: {e}")

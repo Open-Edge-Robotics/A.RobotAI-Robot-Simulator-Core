@@ -9,7 +9,7 @@ from src.crud.rosbag import RosService
 from src.models.instance import Instance
 from src.models.simulation import Simulation
 from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
-    SimulationDeleteResponse, SimulationControlResponse
+    SimulationDeleteResponse, SimulationControlResponse, SimulationStatusResponse
 from src.utils.my_enum import SimulationStatus, PodStatus, API
 
 
@@ -77,9 +77,41 @@ class SimulationService:
 
         return simulation_list
 
-    async def control_simulation(self, simulation_id: int):
+    async def start_simulation(self, simulation_id: int):
+        instances = await self.get_simulation_instances(simulation_id)
+
+        for instance in instances:
+            object_path = instance.template.bag_file_path
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            await self.ros_service.send_post_request(pod_ip, "/rosbag/play", {"object_path": object_path})
+
+        return SimulationControlResponse(simulation_id=simulation_id).model_dump()
+
+    async def stop_simulation(self, simulation_id: int):
+        instances = await self.get_simulation_instances(simulation_id)
+        for instance in instances:
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            await self.ros_service.send_post_request(pod_ip, "/rosbag/stop")
+
+        return SimulationControlResponse(simulation_id=simulation_id).model_dump()
+
+    async def check_simulation_status(self, simulation_id):
+        instances = await self.get_simulation_instances(simulation_id)
+        status_list = []
+        for instance in instances:
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            pod_status = await self.ros_service.send_get_request(pod_ip)
+
+            status_response = SimulationStatusResponse(
+                instance_id=instance.id,
+                running_status=pod_status,
+            )
+            status_list.append(status_response)
+
+        return status_list
+
+    async def get_simulation_instances(self, simulation_id: int):
         simulation = await self.find_simulation_by_id(simulation_id, "control simulation")
-        print(simulation.namespace)
         query = (
             select(Instance)
             .options(joinedload(Instance.template))
@@ -87,12 +119,7 @@ class SimulationService:
         )
         result = await self.session.execute(query)
         instances = result.scalars().all()
-
-        await self.ros_service.run_instances(list(instances))
-
-        return SimulationControlResponse(
-            simulation_id=simulation_id
-        ).model_dump()
+        return list(instances)
 
     async def delete_simulation(self, simulation_id: int):
         api = API.DELETE_SIMULATION.value
