@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import yaml
 from kubernetes import client, config
 
+from src.models.instance import Instance
+
 config.load_kube_config('/root/.kube/config')
 pod_client = client.CoreV1Api()
 
@@ -95,3 +97,8 @@ class PodService:
     @staticmethod
     async def delete_namespace(simulation_id: int):
         pod_client.delete_namespace(name=f"simulation-{simulation_id}")
+
+    @staticmethod
+    async def get_pod_ip(instance: Instance):
+        pod = pod_client.read_namespaced_pod(name=instance.pod_name, namespace=instance.pod_namespace)
+        return pod.status.pod_ip
