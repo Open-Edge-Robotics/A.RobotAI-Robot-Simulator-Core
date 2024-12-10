@@ -4,8 +4,7 @@ from starlette import status
 
 from src.crud.simulation import SimulationService
 from src.database.db_conn import get_db
-from src.schemas.simulation import SimulationCreateRequest, SimulationListResponseModel, SimulationCreateResponseModel, \
-    SimulationControlRequest, SimulationControlResponseModel, SimulationDeleteResponseModel, SimulationControlResponse
+from src.schemas.simulation import *
 from src.utils.my_enum import API
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
@@ -39,6 +38,18 @@ async def get_simulations(
     )
 
 
+@router.get("/status/{simulation_id}", response_model=SimulationStatusResponseModel, status_code=status.HTTP_200_OK)
+async def check_simulation(simulation_id: int, session: AsyncSession = Depends(get_db)):
+    """시뮬레이션 실행 상태 조회"""
+    response = await SimulationService(session).check_simulation_status(simulation_id)
+
+    return SimulationStatusResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=response,
+        message=API.CHECK_SIMULATION.value
+    )
+
+
 @router.post("/action", response_model=SimulationControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_simulation(
         request: SimulationControlRequest, session: AsyncSession = Depends(get_db)
@@ -46,11 +57,10 @@ async def control_simulation(
     """시뮬레이션 실행/중지"""
 
     if request.action == "start":
-        result = await SimulationService(session).control_simulation(request.simulation_id)
+        result = await SimulationService(session).start_simulation(request.simulation_id)
         message = API.RUN_SIMULATION.value
     elif request.action == "stop":
-        # TODO: 추후 개발 시 수정
-        result = SimulationControlResponse(status="STOP").model_dump()
+        result = await SimulationService(session).stop_simulation(request.simulation_id)
         message = API.STOP_SIMULATION.value
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
