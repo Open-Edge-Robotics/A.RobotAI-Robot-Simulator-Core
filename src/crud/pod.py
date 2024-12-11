@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 import yaml
+from fastapi import HTTPException
 from kubernetes import client, config
 
 from src.models.instance import Instance
@@ -102,3 +103,24 @@ class PodService:
     async def get_pod_ip(instance: Instance):
         pod = pod_client.read_namespaced_pod(name=instance.pod_name, namespace=instance.pod_namespace)
         return pod.status.pod_ip
+
+    async def check_pod_status(self, instance: Instance):
+        pod_status = await self.get_pod_status(instance.pod_name, instance.pod_namespace)
+        code = await self.get_pod_status_code(pod_status)
+        if code != 200:
+            raise HTTPException(status_code=code, detail=f"Pod Status: {pod_status}")
+
+    @staticmethod
+    async def get_pod_status_code(pod_status):
+        """Pod 상태에 따른 상태 코드 반환"""
+        status_code_map = {
+            "Pending": 102,
+            "ContainerCreating": 202,
+            "Running": 200,
+            "Error": 500,
+            "ImagePullBackOff": 502,
+            "ErrImagePull": 502,
+            "CrashLoopBackOff": 503,
+            "Unknown": 520,
+        }
+        return status_code_map.get(pod_status)
