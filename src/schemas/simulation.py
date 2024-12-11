@@ -71,20 +71,17 @@ class SimulationListResponseModel(GlobalResponseModel):
 
 
 ###### 실행 #######
-class SimulationStatusResponse(BaseSchema):
-    instance_id: int
-    running_status: str
-
-
 class SimulationStatusResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
                 "statusCode": 200,
-                "data": {
-                    "instanceId": 127,
-                    "runningStatus": "Running",
-                },
+                "data": [
+                    {
+                        "simulationId": 12,
+                        "runningStatus": "Running",
+                    },
+                ],
                 "message": API.CHECK_SIMULATION.value
             }
         }

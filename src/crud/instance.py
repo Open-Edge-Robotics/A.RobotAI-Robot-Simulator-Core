@@ -129,6 +129,7 @@ class InstanceService:
     async def start_instances(self, instance_ids: List[int]):
         for instance_id in instance_ids:
             instance = await self.find_instance_by_id(instance_id, "start instance")
+            await self.pod_service.check_pod_status(instance)
             object_path = instance.template.bag_file_path
             pod_ip = await self.pod_service.get_pod_ip(instance)
             await self.ros_service.send_post_request(pod_ip, "/rosbag/play", {"object_path": object_path})

@@ -9,7 +9,7 @@ from src.crud.rosbag import RosService
 from src.models.instance import Instance
 from src.models.simulation import Simulation
 from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
-    SimulationDeleteResponse, SimulationControlResponse, SimulationStatusResponse
+    SimulationDeleteResponse, SimulationControlResponse
 from src.utils.my_enum import SimulationStatus, PodStatus, API
 
 
@@ -95,21 +95,6 @@ class SimulationService:
 
         return SimulationControlResponse(simulation_id=simulation_id).model_dump()
 
-    async def check_simulation_status(self, simulation_id):
-        instances = await self.get_simulation_instances(simulation_id)
-        status_list = []
-        for instance in instances:
-            pod_ip = await self.pod_service.get_pod_ip(instance)
-            pod_status = await self.ros_service.send_get_request(pod_ip)
-
-            status_response = SimulationStatusResponse(
-                instance_id=instance.id,
-                running_status=pod_status,
-            )
-            status_list.append(status_response)
-
-        return status_list
-
     async def get_simulation_instances(self, simulation_id: int):
         simulation = await self.find_simulation_by_id(simulation_id, "control simulation")
         query = (
@@ -166,8 +151,10 @@ class SimulationService:
             return SimulationStatus.EMPTY.value
 
         for instance in instances:
-            pod_status = await self.pod_service.get_pod_status(instance.pod_name, instance.pod_namespace)
-            if pod_status != PodStatus.RUNNING.value:
-                return SimulationStatus.INACTIVE.value
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            pod_status = await self.ros_service.send_get_request(pod_ip)
 
-        return SimulationStatus.ACTIVE.value
+            if pod_status == PodStatus.RUNNING.value:
+                return SimulationStatus.ACTIVE.value
+
+        return SimulationStatus.INACTIVE.value
