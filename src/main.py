@@ -27,7 +27,8 @@ app.add_exception_handler(Exception, generic_exception_handler)
 
 origins = [
     "http://localhost:3000",
-    "http://192.168.160.134:3001"
+    "http://192.168.160.134:3001",
+    "http://192.168.160.129:3001"
 ]
 app.add_middleware(
     CORSMiddleware,
