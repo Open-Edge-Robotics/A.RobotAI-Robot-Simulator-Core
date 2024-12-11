@@ -3,9 +3,8 @@ from enum import Enum
 
 class SimulationStatus(Enum):
     EMPTY = "Empty"  # 시뮬레이션에 속한 인스턴스가 없는 경우
-    ACTIVE = "Active"  # 시뮬레이션에 속한 모든 인스턴스의 pod status가 Running인 경우
-    INACTIVE = "Inactive"  # 인스턴스의 pod status가 하나라도 Running이 아닌 경우
-
+    ACTIVE = "Active"  # 시뮬레이션에 속한 인스턴스의 pod status가 하나라도 Running인 경우
+    INACTIVE = "Inactive"  # 인스턴스의 pod status가 모두 Running이 아닌 경우
 
 class PodStatus(Enum):
     """Pod의 실제 status"""
