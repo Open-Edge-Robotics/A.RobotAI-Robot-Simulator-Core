@@ -38,18 +38,6 @@ async def get_simulations(
     )
 
 
-@router.get("/status/{simulation_id}", response_model=SimulationStatusResponseModel, status_code=status.HTTP_200_OK)
-async def check_simulation(simulation_id: int, session: AsyncSession = Depends(get_db)):
-    """시뮬레이션 실행 상태 조회"""
-    response = await SimulationService(session).check_simulation_status(simulation_id)
-
-    return SimulationStatusResponseModel(
-        status_code=status.HTTP_200_OK,
-        data=response,
-        message=API.CHECK_SIMULATION.value
-    )
-
-
 @router.post("/action", response_model=SimulationControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_simulation(
         request: SimulationControlRequest, session: AsyncSession = Depends(get_db)
