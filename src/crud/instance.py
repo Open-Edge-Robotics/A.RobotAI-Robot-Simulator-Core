@@ -138,6 +138,7 @@ class InstanceService:
     async def stop_instances(self, instance_ids: List[int]):
         for instance_id in instance_ids:
             instance = await self.find_instance_by_id(instance_id, "stop instance")
+            await self.pod_service.check_pod_status(instance)
             pod_ip = await self.pod_service.get_pod_ip(instance)
             await self.ros_service.send_post_request(pod_ip, "/rosbag/stop")
         return InstanceControlResponse(status="STOP").model_dump()
@@ -146,12 +147,13 @@ class InstanceService:
         status_list = []
         for instance_id in instance_ids:
             instance = await self.find_instance_by_id(instance_id, "check instance")
+            await self.pod_service.check_pod_status(instance)
             pod_ip = await self.pod_service.get_pod_ip(instance)
-            pod_status = await self.ros_service.send_get_request(pod_ip)
+            running_status = await self.ros_service.send_get_request(pod_ip)
 
             status_response = InstanceStatusResponse(
                 instance_id=instance.id,
-                running_status=pod_status,
+                running_status=running_status,
             )
             status_list.append(status_response)
 
