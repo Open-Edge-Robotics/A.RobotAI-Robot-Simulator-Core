@@ -82,6 +82,7 @@ class SimulationService:
 
         for instance in instances:
             object_path = instance.template.bag_file_path
+            await self.pod_service.check_pod_status(instance)
             pod_ip = await self.pod_service.get_pod_ip(instance)
             await self.ros_service.send_post_request(pod_ip, "/rosbag/play", {"object_path": object_path})
 
@@ -90,6 +91,7 @@ class SimulationService:
     async def stop_simulation(self, simulation_id: int):
         instances = await self.get_simulation_instances(simulation_id)
         for instance in instances:
+            await self.pod_service.check_pod_status(instance)
             pod_ip = await self.pod_service.get_pod_ip(instance)
             await self.ros_service.send_post_request(pod_ip, "/rosbag/stop")
 
