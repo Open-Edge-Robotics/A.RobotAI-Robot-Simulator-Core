@@ -114,13 +114,13 @@ class PodService:
     async def get_pod_status_code(pod_status):
         """Pod 상태에 따른 상태 코드 반환"""
         status_code_map = {
-            "Pending": 102,
-            "ContainerCreating": 202,
+            "Pending": 520,
+            "ContainerCreating": 521,
             "Running": 200,
             "Error": 500,
-            "ImagePullBackOff": 502,
-            "ErrImagePull": 502,
-            "CrashLoopBackOff": 503,
-            "Unknown": 520,
+            "ImagePullBackOff": 522,
+            "ErrImagePull": 523,
+            "CrashLoopBackOff": 524,
+            "Unknown": 530,
         }
         return status_code_map.get(pod_status)
