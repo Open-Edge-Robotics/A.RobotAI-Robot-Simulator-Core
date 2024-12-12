@@ -147,9 +147,7 @@ class InstanceService:
         status_list = []
         for instance_id in instance_ids:
             instance = await self.find_instance_by_id(instance_id, "check instance")
-            await self.pod_service.check_pod_status(instance)
-            pod_ip = await self.pod_service.get_pod_ip(instance)
-            running_status = await self.ros_service.send_get_request(pod_ip)
+            running_status = await self.get_instance_running_status(instance)
 
             status_response = InstanceStatusResponse(
                 instance_id=instance.id,
@@ -158,6 +156,13 @@ class InstanceService:
             status_list.append(status_response)
 
         return status_list
+
+    async def get_instance_running_status(self, instance):
+        if await self.pod_service.is_pod_ready(instance):
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            return await self.ros_service.send_get_request(pod_ip)
+
+        return PodStatus.STOPPED.value
 
     async def get_instance_status(self, pod_name, namespace):
         pod_status = await self.pod_service.get_pod_status(pod_name, namespace)
