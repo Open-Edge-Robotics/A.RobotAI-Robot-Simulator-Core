@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from kubernetes import client, config
 
 from src.models.instance import Instance
+from src.utils.my_enum import PodStatus
 
 config.load_kube_config('/root/.kube/config')
 pod_client = client.CoreV1Api()
@@ -103,6 +104,10 @@ class PodService:
     async def get_pod_ip(instance: Instance):
         pod = pod_client.read_namespaced_pod(name=instance.pod_name, namespace=instance.pod_namespace)
         return pod.status.pod_ip
+
+    async def is_pod_ready(self, instance: Instance):
+        pod_status = await self.get_pod_status(instance.pod_name, instance.pod_namespace)
+        return pod_status == PodStatus.RUNNING.value
 
     async def check_pod_status(self, instance: Instance):
         pod_status = await self.get_pod_status(instance.pod_name, instance.pod_namespace)
