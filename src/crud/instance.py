@@ -1,23 +1,18 @@
-import os
-import subprocess
 from typing import Optional
 
 from fastapi import HTTPException
-from minio import S3Error
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from starlette import status
 
 from src.crud.pod import PodService
+from src.crud.rosbag import RosService
 from src.crud.simulation import SimulationService
 from src.crud.template import TemplateService
-from src.database import minio_conn
 from src.models.instance import Instance
 from src.schemas.instance import *
 from src.utils.my_enum import API, PodStatus, InstanceStatus
-
-pod_service = PodService()
 
 
 class InstanceService:
@@ -25,6 +20,8 @@ class InstanceService:
         self.session = session
         self.simulation_service = SimulationService(session)
         self.templates_service = TemplateService(session)
+        self.pod_service = PodService()
+        self.ros_service = RosService()
 
     async def create_instance(self, instance_create_data: InstanceCreateRequest):
         api = API.CREATE_INSTANCE.value
@@ -50,7 +47,7 @@ class InstanceService:
             await self.session.flush()
             for instance in new_instances:
                 await self.session.refresh(instance)
-                instance.pod_name = await pod_service.create_pod(instance, template)
+                instance.pod_name = await self.pod_service.create_pod(instance, template)
                 self.session.add(instance)
 
             return [
@@ -107,9 +104,9 @@ class InstanceService:
             pod_name=pod_name,
             instance_namespace=namespace,
             instance_status=await self.get_instance_status(pod_name, namespace),
-            instance_image=await pod_service.get_pod_image(pod_name, namespace),
-            instance_age=await pod_service.get_pod_age(pod_name, namespace),
-            instance_label=await pod_service.get_pod_label(pod_name, namespace),
+            instance_image=await self.pod_service.get_pod_image(pod_name, namespace),
+            instance_age=await self.pod_service.get_pod_age(pod_name, namespace),
+            instance_label=await self.pod_service.get_pod_label(pod_name, namespace),
             template_type=instance.template.type,
             topics=instance.template.topics,
         ).model_dump()
@@ -117,7 +114,7 @@ class InstanceService:
     async def delete_instance(self, instance_id: int):
         find_instance = await self.find_instance_by_id(instance_id, API.DELETE_INSTANCE.value)
 
-        await pod_service.delete_pod(
+        await self.pod_service.delete_pod(
             find_instance.pod_name,
             find_instance.pod_namespace
         )
@@ -128,6 +125,50 @@ class InstanceService:
         return InstanceDeleteResponse(
             instance_id=find_instance.id
         ).model_dump()
+
+    async def start_instances(self, instance_ids: List[int]):
+        for instance_id in instance_ids:
+            instance = await self.find_instance_by_id(instance_id, "start instance")
+            await self.pod_service.check_pod_status(instance)
+            object_path = instance.template.bag_file_path
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            await self.ros_service.send_post_request(pod_ip, "/rosbag/play", {"object_path": object_path})
+        return InstanceControlResponse(status="START").model_dump()
+
+    async def stop_instances(self, instance_ids: List[int]):
+        for instance_id in instance_ids:
+            instance = await self.find_instance_by_id(instance_id, "stop instance")
+            await self.pod_service.check_pod_status(instance)
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            await self.ros_service.send_post_request(pod_ip, "/rosbag/stop")
+        return InstanceControlResponse(status="STOP").model_dump()
+
+    async def check_instance_status(self, instance_ids: List[int]):
+        status_list = []
+        for instance_id in instance_ids:
+            instance = await self.find_instance_by_id(instance_id, "check instance")
+            running_status = await self.get_instance_running_status(instance)
+
+            status_response = InstanceStatusResponse(
+                instance_id=instance.id,
+                running_status=running_status,
+            )
+            status_list.append(status_response)
+
+        return status_list
+
+    async def get_instance_running_status(self, instance):
+        if await self.pod_service.is_pod_ready(instance):
+            pod_ip = await self.pod_service.get_pod_ip(instance)
+            return await self.ros_service.send_get_request(pod_ip)
+
+        return PodStatus.STOPPED.value
+
+    async def get_instance_status(self, pod_name, namespace):
+        pod_status = await self.pod_service.get_pod_status(pod_name, namespace)
+        if pod_status == PodStatus.RUNNING.value:
+            return InstanceStatus.READY.value
+        return pod_status
 
     async def find_instance_by_id(self, instance_id: int, api: str):
         query = (
@@ -142,48 +183,12 @@ class InstanceService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api}: 존재하지 않는 인스턴스id 입니다.')
         return instance
 
-    async def get_instance_status(self, pod_name, namespace):
-        pod_status = await pod_service.get_pod_status(pod_name, namespace)
-        if pod_status == PodStatus.RUNNING.value:
-            return InstanceStatus.READY.value
-        return pod_status
-
-
-
-
-    async def control_instance(self, instance_ids: List[int]):
-        for instance_id in instance_ids:
-            file_path = await self.get_bag_file_path(instance_id)
-
-            try:
-                command = ['ros2', 'bag', 'play', str(file_path)]
-                subprocess.run(command, check=True)
-                print(f"Successfully started playing rosbag: {file_path}")
-            except subprocess.CalledProcessError as e:
-                print(f"Error occurred while playing rosbag: {e}")
-
-        return InstanceControlResponse(status="START").model_dump()
-
-    async def get_bag_file_path(self, instance_id: int):
-        instance = await self.find_instance_by_id(instance_id, "다운로드 백파일")
-        template = instance.template
-        file_path = os.path.join("/rosbag-data", template.bag_file_path)
-
-        if os.path.exists(file_path):
-            return file_path
-        else:
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            return await self.download_bag_file(file_path, template)
-
-    async def download_bag_file(self, file_path, template):
-        try:
-            minio_client = minio_conn.client
-            minio_client.fget_object(
-                bucket_name=minio_conn.bucket_name,
-                object_name=template.bag_file_path,
-                file_path=file_path
-            )
-            return file_path
-        except S3Error as e:
-            print(f"Error downloading bag file: {e}")
-        return None
+    async def get_instances_by_ids(self, instance_ids: List[int]) -> List[Instance]:
+        query = (
+            select(Instance).
+            where(Instance.id.in_(instance_ids)).
+            options(joinedload(Instance.template), joinedload(Instance.simulation))
+        )
+        result = await self.session.execute(query)
+        instances = result.scalars().all()
+        return list(instances)
