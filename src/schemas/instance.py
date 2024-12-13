@@ -57,6 +57,7 @@ class InstanceListResponse(BaseSchema):
     pod_name: str
     pod_namespace: str
     pod_status: str
+    running_status: str = ""
 
 
 class InstanceListResponseModel(GlobalResponseModel):

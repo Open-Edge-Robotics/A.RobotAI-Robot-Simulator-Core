@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from kubernetes import client, config
 
 from src.models.instance import Instance
+from src.utils.my_enum import PodStatus
 
 config.load_kube_config('/root/.kube/config')
 pod_client = client.CoreV1Api()
@@ -104,6 +105,10 @@ class PodService:
         pod = pod_client.read_namespaced_pod(name=instance.pod_name, namespace=instance.pod_namespace)
         return pod.status.pod_ip
 
+    async def is_pod_ready(self, instance: Instance):
+        pod_status = await self.get_pod_status(instance.pod_name, instance.pod_namespace)
+        return pod_status == PodStatus.RUNNING.value
+
     async def check_pod_status(self, instance: Instance):
         pod_status = await self.get_pod_status(instance.pod_name, instance.pod_namespace)
         code = await self.get_pod_status_code(pod_status)
@@ -114,13 +119,13 @@ class PodService:
     async def get_pod_status_code(pod_status):
         """Pod 상태에 따른 상태 코드 반환"""
         status_code_map = {
-            "Pending": 102,
-            "ContainerCreating": 202,
+            "Pending": 520,
+            "ContainerCreating": 521,
             "Running": 200,
             "Error": 500,
-            "ImagePullBackOff": 502,
-            "ErrImagePull": 502,
-            "CrashLoopBackOff": 503,
-            "Unknown": 520,
+            "ImagePullBackOff": 522,
+            "ErrImagePull": 523,
+            "CrashLoopBackOff": 524,
+            "Unknown": 530,
         }
         return status_code_map.get(pod_status)

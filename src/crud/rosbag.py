@@ -7,6 +7,9 @@ from src.utils.my_enum import PodStatus
 class RosService:
     @staticmethod
     async def send_get_request(pod_ip):
+        if pod_ip is None:
+            return "Not Ready"
+
         pod_api_url = f"http://{pod_ip}:8002/rosbag/status"
         try:
             response = requests.get(pod_api_url)
@@ -17,8 +20,8 @@ class RosService:
                 pod_status = PodStatus.RUNNING.value
             else:
                 pod_status = PodStatus.STOPPED.value
-        except requests.RequestException as e:
-            raise Exception(e)
+        except requests.RequestException:
+            return "Error"
         return pod_status
 
     @staticmethod
