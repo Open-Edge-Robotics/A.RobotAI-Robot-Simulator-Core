@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.database.db_conn import init_db, close_db
 from src.exception.exception_handler import *
-from src.routes import template, rosbag, instance, simulation
+from src.routes import template, instance, simulation
 from src.settings import settings
 
 
@@ -38,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-routers = [template.router, rosbag.router, instance.router, simulation.router]
+routers = [template.router, instance.router, simulation.router]
 for router in routers:
     app.include_router(router, prefix=settings.API_STR)
 
