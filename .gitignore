@@ -168,9 +168,4 @@ test/
 
 # Ops
 /docker-compose.yaml
-/k8s/
-/src/routes/rosbag.py
 
-# .tar
-*.tar
-/src/pod-template.yaml
