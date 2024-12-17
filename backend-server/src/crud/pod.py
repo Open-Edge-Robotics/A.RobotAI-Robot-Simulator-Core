@@ -14,7 +14,7 @@ pod_client = client.CoreV1Api()
 class PodService:
     @staticmethod
     async def create_pod(instance, template):
-        with open("/robot-simulator/k8s/pod-template.yaml", "r") as f:
+        with open("/robot-simulator/src/pod-template.yaml", "r") as f:
             pod = yaml.safe_load(f)
 
         pod_name = f"instance-{instance.simulation_id}-{instance.id}"
