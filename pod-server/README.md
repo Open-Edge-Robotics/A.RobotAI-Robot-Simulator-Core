@@ -90,10 +90,17 @@ docker pull innoagent/pod-server:<tag>
 
 
 
-## Docker 이미지 변경
+<br>
 
-### `pod-template.yaml` 수정
-pod-template.yaml 파일의 아래 내용을 변경할 이미지명으로 수정합니다.
+## Docker 이미지 변경
+### 1. Docker 이미지 빌드 및 Docker Hub에 push
+[사용 가이드](#5-docker-이미지-빌드-및-docker-hub에-이미지-push) 내용과 동일하게 진행합니다.
+
+### 2. ssh 접속 및 Docker Hub에서 이미지 pull
+[사용 가이드](#6-ssh-접속-및-docker-hub에서-이미지-pull) 내용과 동일하게 진행합니다.
+
+### 3. `pod-template.yaml` 수정
+backend-server/src/pod-template.yaml 파일의 아래 내용을 변경할 이미지명으로 수정합니다.
 ```yaml
 spec:
   containers:
@@ -101,13 +108,7 @@ spec:
       image: innoagent/pod:1.1  # 변경된 이미지로 수정
 ```
 
-### Docker 이미지 빌드 및 Docker Hub에 push
-사용 가이드 내용과 동일하게 진행합니다.
-
-### ssh 접속 및 Docker Hub에서 이미지 pull
-사용 가이드 내용과 동일하게 진행합니다.
-
-### 백엔드 서버 재시작
+### 4. 백엔드 서버 재시작
 Pod 도커 이미지가 수정된다면 자율행동체 플랫폼 백엔드 서버 역시 재시작해야 합니다.
 ```bash
 kubectl delete pod <backend-server-deploy-name> -n <namespace>
