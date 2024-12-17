@@ -60,7 +60,7 @@ Docker Hub에 이미지를 push 합니다.
 docker push innoagent/pod-server:<tag>
 ```
 
-### 6. ssh 접속
+### 6. ssh 접속 및 Docker Hub에서 이미지 pull
 
 ```bash
 ssh root@192.168.160.135
@@ -72,7 +72,6 @@ Docker Hub에서 이미지를 pull 합니다.
 ```bash
 docker pull innoagent/pod-server:<tag>
 ```
-❗️만약 Pod 이미지가 수정된다면 자율행동체 플랫폼 백엔드 서버 역시 재배포하여야 합니다.
 
 
 
@@ -90,3 +89,26 @@ docker pull innoagent/pod-server:<tag>
 | GET  | /rosbag/status | rosbag file 실행 상태 조회 |
 
 
+
+## Docker 이미지 변경
+
+### `pod-template.yaml` 수정
+pod-template.yaml 파일의 아래 내용을 변경할 이미지명으로 수정합니다.
+```yaml
+spec:
+  containers:
+    - name: placeholder-container-name 
+      image: innoagent/pod:1.1  # 변경된 이미지로 수정
+```
+
+### Docker 이미지 빌드 및 Docker Hub에 push
+사용 가이드 내용과 동일하게 진행합니다.
+
+### ssh 접속 및 Docker Hub에서 이미지 pull
+사용 가이드 내용과 동일하게 진행합니다.
+
+### 백엔드 서버 재시작
+Pod 도커 이미지가 수정된다면 자율행동체 플랫폼 백엔드 서버 역시 재시작해야 합니다.
+```bash
+kubectl delete pod <backend-server-deploy-name> -n <namespace>
+```
