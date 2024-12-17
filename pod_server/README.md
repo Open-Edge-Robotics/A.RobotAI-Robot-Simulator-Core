@@ -51,13 +51,13 @@ docker login
 
 명령줄(cmd)에서 프로젝트 디렉토리로 이동한 후 Docker 이미지를 빌드합니다.
 ```bash
-cd path/to/pod-server
-docker build -t innoagent:pod-server:<tag>.
+cd path/to/pod_server
+docker build -t innoagent:pod_server:<tag>.
 ```
 
 Docker Hub에 이미지를 push 합니다.
 ```bash
-docker push innoagent/pod-server:<tag>
+docker push innoagent/pod_server:<tag>
 ```
 
 ### 6. ssh 접속 및 Docker Hub에서 이미지 pull
@@ -70,7 +70,7 @@ ssh root@192.168.160.135
 
 Docker Hub에서 이미지를 pull 합니다.
 ```bash
-docker pull innoagent/pod-server:<tag>
+docker pull innoagent/pod_server:<tag>
 ```
 
 
@@ -111,5 +111,5 @@ spec:
 ### 4. 백엔드 서버 재시작
 Pod 도커 이미지가 수정된다면 자율행동체 플랫폼 백엔드 서버 역시 재시작해야 합니다.
 ```bash
-kubectl delete pod <backend-server-deploy-name> -n <namespace>
+kubectl delete pod <backend_server-deploy-pod> -n <namespace>
 ```

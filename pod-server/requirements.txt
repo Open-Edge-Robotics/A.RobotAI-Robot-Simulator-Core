@@ -1,7 +1,0 @@
-fastapi==0.115.5
-uvicorn==0.31.1
-python-dotenv~=1.0.1
-pydantic~=2.10.1
-minio~=7.2.12
-pydantic-settings~=2.6.1
-starlette~=0.41.3
