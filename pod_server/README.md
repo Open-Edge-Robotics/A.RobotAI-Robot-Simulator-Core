@@ -1,7 +1,8 @@
- # pod-server
+ # Pod Server
 - 자율행동체 플랫폼에서 인스턴스를 생성할 때 함께 생성되는 kubernetes pod의 템플릿         
 - rosbag file의 실행/중지가 진행되며, 자율행동체 플랫폼에서 실행 상태체크 요청의 결과를 반환하는 API가 포함됨
 
+<br>
 
 ## 소개
 
@@ -19,7 +20,7 @@
 **해당 프로젝트는 Openstack 인스턴스에 세팅된 Ubuntu 22.04 환경에서 실행됩니다.**
 
 ### 1. 프로젝트 저장
-로컬에 프로젝트 파일을 저장합니다.
+로컬에 프로젝트 파일을 저장합니다. #TODO 수정 ?
 
 ### 2. 가상 환경 생성 및 활성화
 명령줄(cmd)에서 루트 디렉토리로 이동한 후 다음 명령어를 실행합니다.
@@ -52,7 +53,7 @@ docker login
 명령줄(cmd)에서 프로젝트 디렉토리로 이동한 후 Docker 이미지를 빌드합니다.
 ```bash
 cd path/to/pod_server
-docker build -t innoagent:pod_server:<tag>.
+docker build -t innoagent:pod_server:<tag> .
 ```
 
 Docker Hub에 이미지를 push 합니다.
