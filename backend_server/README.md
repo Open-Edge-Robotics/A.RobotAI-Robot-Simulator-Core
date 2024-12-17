@@ -3,7 +3,7 @@
 
 - **Project Template**: [taking](https://github.com/taking/java-spring-base-structure)
 
----
+<br>
 
 ## 소개
 
