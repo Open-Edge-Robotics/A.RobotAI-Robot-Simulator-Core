@@ -29,30 +29,6 @@ class PodService:
         return pod_name
 
     @staticmethod
-    async def create_pod_temp(instance, template):
-        pod_name = f"instance-{instance.simulation_id}-{instance.id}"
-        pod_label = {"agent-type": template.type.lower()}
-        pod_metadata = client.V1ObjectMeta(name=pod_name, labels=pod_label)
-
-        pod_client.connect_get_namespaced_pod_exec()
-
-        pod_env = client.V1EnvVar(name="BAG_FILE_PATH", value=template.bag_file_path)
-        container = client.V1Container(
-            name=pod_name,
-            image="innoagent/pod:1.0",
-            env=[pod_env],
-        )
-
-        pod = client.V1Pod(
-            metadata=pod_metadata,
-            spec=client.V1PodSpec(containers=[container]),
-        )
-
-        pod_namespace = instance.pod_namespace
-        pod_client.create_namespaced_pod(namespace=pod_namespace, body=pod)
-        return pod_name
-
-    @staticmethod
     async def get_pod_status(pod_name, namespace):
         pod = pod_client.read_namespaced_pod(namespace=namespace, name=pod_name)
         return pod.status.phase
