@@ -1,4 +1,4 @@
-# robot-simulator-back
+# Robot Simulator Back
 자율행동체 시뮬레이터 플랫폼
 
 <br>
@@ -12,18 +12,18 @@
         <th scope="col">리드미 바로가기</th>
     </tr>
     <tr>
-        <td>backend-server</td>
-        <td>로봇 시뮬레이터 플랫폼 서버</td>
+        <td>backend_server</td>
+        <td>자율행동체 시뮬레이터 플랫폼 서버</td>
         <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/blob/file/backend_server">바로가기</a></td>
     </tr>
     <tr>
         <td>k8s</td>
-        <td>쿠버네티스 설정 yaml 모음</td>
+        <td>쿠버네티스 배포 스크립트 모음</td>
         <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/tree/file/k8s">바로가기</a></td>
     </tr>
     <tr>
-        <td>pod-server</td>
-        <td>로봇 인스턴스 파드 API</td>
+        <td>pod_server</td>
+        <td>자율행동체 인스턴스(Pod) API</td>
         <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/tree/file/pod_server">바로가기</a></td>
     </tr>
   </table>
