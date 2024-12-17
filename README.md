@@ -1,7 +1,7 @@
 # robot-simulator-back
 자율행동체 시뮬레이터 플랫폼
 
----
+<br>
 
 ### 소개
 
@@ -14,7 +14,7 @@
     <tr>
         <td>backend-server</td>
         <td>로봇 시뮬레이터 플랫폼 서버</td>
-        <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/tree/file/backend-server">바로가기</a></td>
+        <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/blob/file/backend_server">바로가기</a></td>
     </tr>
     <tr>
         <td>k8s</td>
@@ -24,7 +24,7 @@
     <tr>
         <td>pod-server</td>
         <td>로봇 인스턴스 파드 API</td>
-        <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/tree/file/pod-server">바로가기</a></td>
+        <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/tree/file/pod_server">바로가기</a></td>
     </tr>
   </table>
 
