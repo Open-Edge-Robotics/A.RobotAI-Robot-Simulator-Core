@@ -1,4 +1,4 @@
-# robot-simulator-back
+# Backend Server
 자율행동체 시뮬레이터 플랫폼
 
 - **Project Template**: [taking](https://github.com/taking/java-spring-base-structure)
@@ -8,7 +8,7 @@
 ## 소개
 
 ### 사전 요구 사항
-- **Name**: robot-simulator-back
+- **Name**: backend_server
 - **Language**: Python 3.10.12
 - **Build System**: pip
 - **Environment Management**: venv
@@ -92,35 +92,40 @@ docker login
 > ID: innoagent  
 > PW: qwe1212!Q
 
+
 ### 5. Docker 이미지 빌드 및 Docker Hub에 이미지 push
 
 명령줄(cmd)에서 프로젝트 디렉토리로 이동한 후 Docker 이미지를 빌드합니다.
 ```bash
-cd path/to/robot-simulator
-docker build -t innoagent:robot-simulator-back:<tag>.
+cd path/to/backend_server
+docker build -t innoagent/<image-name>:<tag> .
 ```
 
 Docker Hub에 이미지를 push 합니다.
 ```bash
-docker push innoagent/robot-simulator-back:<tag>
+docker push innoagent/<image-name>:<tag>
 ```
 
-### 6. ssh 접속
+
+### 6. ssh 접속 및 배포
 
 ```bash
 ssh root@192.168.160.135
 ```
 > PW: qwe1212!Q
 
-### 7. 서버 구동
-
 
 
 Docker Hub에서 이미지를 pull 합니다.
 ```bash
-docker pull innoagent/robot-simulator-back:<tag>
+docker pull innoagent/<image-name>:<tag>
 ```
-#TODO yaml 재실행 과정 작성 필요
+
+저장된 배포 스크립트를 apply 합니다.
+```bash
+cd path/to/script/
+kubectl apply -f server-deploy.yaml
+```
 
 
 
@@ -174,7 +179,7 @@ docker pull innoagent/robot-simulator-back:<tag>
     </tr>
     <tr>
         <td>mymonitoring</td>
-        <td>Prometheus, Grafana</td>
+        <td>Prometheus, Grafana 관련 시스템</td>
     </tr>
     <tr>
         <td>robot</td>
@@ -189,5 +194,30 @@ docker pull innoagent/robot-simulator-back:<tag>
     </tr>
   </table>
 
-### 도커 이미지 변경
-TODO: 도커 이미지 변경하는 방법 작성
+
+
+<br>
+
+
+
+## Docker 이미지 변경하는 경우
+### 1. Docker 이미지 빌드 및 Docker Hub에 push
+[사용 가이드](#5-docker-이미지-빌드-및-docker-hub에-이미지-push) 내용과 동일하게 진행합니다.
+
+### 2. ssh 접속 및 Docker Hub에서 이미지 pull
+[사용 가이드](#6-ssh-접속-및-배포) 내용과 동일하게 진행합니다.
+
+### 3. `server-deploy.yaml` 수정
+server-deploy.yaml 파일의 아래 내용을 변경할 이미지명으로 수정합니다.
+```yaml
+spec:
+  containers:
+    - name: robot-deploy
+      image: innoagent/robot:1.1  # 변경된 이미지로 수정
+```
+
+### 4. 백엔드 서버 재시작
+배포 서버를 재시작합니다.
+```bash
+kubectl delete pod <backend-server-deploy-pod> -n <namespace>
+```

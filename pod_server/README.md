@@ -92,7 +92,7 @@ docker pull innoagent/pod_server:<tag>
 
 <br>
 
-## Docker 이미지 변경
+## Docker 이미지 변경하는 경우
 ### 1. Docker 이미지 빌드 및 Docker Hub에 push
 [사용 가이드](#5-docker-이미지-빌드-및-docker-hub에-이미지-push) 내용과 동일하게 진행합니다.
 
@@ -111,5 +111,5 @@ spec:
 ### 4. 백엔드 서버 재시작
 Pod 도커 이미지가 수정된다면 자율행동체 플랫폼 백엔드 서버 역시 재시작해야 합니다.
 ```bash
-kubectl delete pod <backend_server-deploy-pod> -n <namespace>
+kubectl delete pod <backend-server-deploy-pod> -n <namespace>
 ```
