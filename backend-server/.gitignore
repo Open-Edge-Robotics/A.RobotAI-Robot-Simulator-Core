@@ -133,7 +133,7 @@ dmypy.json
 .pyre/
 
 # PyCharm
-.idea/
+../.idea/
 
 # JupyterLab
 .jupyterlab-config/
