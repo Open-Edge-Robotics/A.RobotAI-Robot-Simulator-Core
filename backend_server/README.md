@@ -1,5 +1,5 @@
 # Backend Server
-자율행동체 시뮬레이터 플랫폼
+자율행동체 시뮬레이터 서버
 
 - **Project Template**: [taking](https://github.com/taking/java-spring-base-structure)
 
@@ -58,13 +58,7 @@ PGDATA=/var/lib/postgresql/pgdata
 
 ## 실행 가이드 - 공통
 
-### 1. 저장소 Clone
-
-```bash
-git clone https://(private token)@github.com/inno-rnd-project/robot-simulator-back.git
-```
-
-### 2. 가상 환경 생성 및 활성화
+### 1. 가상 환경 생성 및 활성화
 명령줄(cmd)에서 프로젝트 디렉토리로 이동한 후 가상 환경을 생성하고 활성화합니다.
 
 ```bash
@@ -76,7 +70,7 @@ python -m venv <가상환경 이름>
 source <가상환경 이름>/bin/activate
 ```
 
-### 3. 패키지 설치
+### 2. 패키지 설치
 
 ```bash
 pip install -r requirements.txt
@@ -88,12 +82,12 @@ pip install -r requirements.txt
 ## 실행 가이드 - 로컬
 **현재 로컬에서는 쿠버네티스와 관련된 API를 제외하고 테스트할 수 있습니다.**
 
-### 4. K8S 주석처리
+### 3. K8S 주석처리
 
 로컬 실행 시에는 `src/crud/pod.py`의 10번째 줄 `config.load_kube_config('/root/.kube/config')`을 주석 처리해주세요.
 
 
-### 5. 서버 실행
+### 4. 서버 실행
 
 명령줄(cmd)에서 루트 디렉토리로 이동한 후 서버를 실행합니다.
 
@@ -110,14 +104,14 @@ runserver.py 대신 uvicorn 명령어를 직접 사용할 수도 있습니다.
 가이드는 '192.168.160.135' 환경 기준으로 설명합니다.**
 
 
-### 4. Docker 로그인
+### 3. Docker 로그인
 
 ```bash
 docker login
 ```
 
 
-### 5. Docker 이미지 빌드 및 Docker Hub에 이미지 push
+### 4. Docker 이미지 빌드 및 Docker Hub에 이미지 push
 **backend_server 디렉토리**에서 Docker 이미지를 빌드합니다.
 
 ```bash
@@ -130,13 +124,15 @@ docker push <username>/robot:<tag>
 ```
 
 
-### 6. ssh 접속 및 배포
+### 5. ssh 접속
 
 ```bash
 ssh root@192.168.160.135
 ```
 > PW: qwe1212!Q
 
+
+### 6. 원격 배포
 
 Docker Hub로부터 이미지를 pull 합니다.
 ```bash
@@ -222,10 +218,10 @@ server-deploy.yaml 파일의 아래 내용을 변경할 이미지명으로 수�
 spec:
   containers:
     - name: robot-deploy
-      image: innoagent/robot:1.1  # 이부분을 변경할 이미지로 수정
+      image: innoagent/robot:1.1  # 이 부분을 변경할 이미지(<username>/robot:<tag>)로 수정
 ```
 
-참고: 현재 모든 컨테이너의 기반 이미지는 innoagent(개인 계정)에서 가져오도록 설정되어 있습니다.  
+참고: 현재 모든 컨테이너의 기반 이미지는 `innoagent(개인 계정입니다)`에서 가져오도록 설정되어 있습니다.  
 추후 개발 시 본인 계정으로 변경 및 적용해주세요.
 
 ### 4. 백엔드 서버 재시작

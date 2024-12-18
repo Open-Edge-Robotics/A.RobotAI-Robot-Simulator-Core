@@ -7,7 +7,7 @@
 ## 소개
 
 ### 사전 요구 사항
-- **Name**: pod-server
+- **Name**: pod_server
 - **Language**: Python 3.10.12
 - **Build System**: pip
 - **Container**: Docker 27.3.1
@@ -19,10 +19,7 @@
 
 **해당 프로젝트는 Openstack 인스턴스에 세팅된 Ubuntu 22.04 환경에서 실행됩니다.**
 
-### 1. 프로젝트 저장
-로컬에 프로젝트 파일을 저장합니다. #TODO 수정 ?
-
-### 2. 가상 환경 생성 및 활성화
+### 1. 가상 환경 생성 및 활성화
 명령줄(cmd)에서 루트 디렉토리로 이동한 후 다음 명령어를 실행합니다.
 ```bash
 python -m venv <가상환경 이름>
@@ -32,33 +29,30 @@ python -m venv <가상환경 이름>
 source <가상환경 이름>/bin/activate
 ```
 
-### 3. 패키지 설치
+### 2. 패키지 설치
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Docker 로그인
-
-참고: 현재 모든 컨테이너의 기반 이미지는 `innoagent`에서 가져오도록 설정되어 있습니다.  
+### 3. Docker 로그인
 
 ```bash
 docker login
 ```
-> ID: innoagent  
-> PW: qwe1212!Q
 
-### 5. Docker 이미지 빌드 및 Docker Hub에 이미지 push
+
+### 4. Docker 이미지 빌드 및 Docker Hub에 이미지 push
 
 명령줄(cmd)에서 프로젝트 디렉토리로 이동한 후 Docker 이미지를 빌드합니다.
 ```bash
 cd path/to/pod_server
-docker build -t innoagent:pod_server:<tag> .
+docker build -t <username>:pod_server:<tag> .
 ```
 
 Docker Hub에 이미지를 push 합니다.
 ```bash
-docker push innoagent/pod_server:<tag>
+docker push <username>/pod_server:<tag>
 ```
 
 ### 6. ssh 접속 및 Docker Hub에서 이미지 pull
@@ -74,6 +68,11 @@ Docker Hub에서 이미지를 pull 합니다.
 docker pull innoagent/pod_server:<tag>
 ```
 
+### 7. 컨테이너의 Docker 이미지 변경
+
+쿠버네티스 내의 컨테이너 이미지 이름을 변경해야 합니다.
+다음 가이드의 3번부터 따라 진행해주세요.  
+[Docker 이미지 변경하는 경우](#3-pod-templateyaml-수정)
 
 
 <br>
@@ -106,8 +105,11 @@ backend-server/src/pod-template.yaml 파일의 아래 내용을 변경할 이미
 spec:
   containers:
     - name: placeholder-container-name 
-      image: innoagent/pod:1.1  # 변경된 이미지로 수정
+      image: innoagent/pod:1.1  # 이 부분을 변경할 이미지(<username>/pod_server:<tag>)로 수정
 ```
+
+참고: 현재 모든 컨테이너의 기반 이미지는 `innoagent(개인 계정입니다)`에서 가져오도록 설정되어 있습니다.  
+추후 개발 시 본인 계정으로 변경 및 적용해주세요.
 
 ### 4. 백엔드 서버 재시작
 Pod 도커 이미지가 수정된다면 자율행동체 플랫폼 백엔드 서버 역시 재시작해야 합니다.

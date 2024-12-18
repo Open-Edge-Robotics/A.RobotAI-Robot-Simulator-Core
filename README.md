@@ -1,9 +1,23 @@
 # Robot Simulator Back
 자율행동체 시뮬레이터 플랫폼
 
-<br>
+---
 
-### 소개
+### 개발 환경
+- **Language**: Python 3.10.12
+- **Container**: Docker 27.3.1
+- **Container Orchestration Tool**: Kubernetes 1.30.5
+
+
+## 실행 가이드
+
+### 저장소 Clone
+
+```bash
+git clone https://(private token)@github.com/inno-rnd-project/robot-simulator-back.git
+```
+
+이후 작업은 해당 디렉토리별 리드미에 작성되어 있습니다.
 
 <table>
     <tr>
@@ -32,5 +46,4 @@
 
 ### 전체 아키텍쳐 구조도
 
-[//]: # (<img src="~~~.png" width="100">)  
-(사진 첨부)
+<img src="architecture.jpg" width="80%">
