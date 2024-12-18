@@ -4,7 +4,7 @@ from threading import Event, Thread
 
 from minio import S3Error
 
-from src.database import minio_conn
+from pod_server.src.database import minio_conn
 
 
 class RosbagService:

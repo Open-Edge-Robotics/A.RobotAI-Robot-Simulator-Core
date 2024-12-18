@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from starlette import status
 
-from src.crud.rosbag import RosbagService
+from pod_server.src.crud.rosbag import RosbagService
 
 router = APIRouter(prefix="/rosbag", tags=["Rosbag"])
 

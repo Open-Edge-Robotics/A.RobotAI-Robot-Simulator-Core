@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from src.routes import rosbag
+from pod_server.src.routes import rosbag
 
 app = FastAPI()
 
