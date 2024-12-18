@@ -14,12 +14,12 @@ RUN apt install ros-dev-tools -y
 RUN apt install python3-pip -y
 RUN apt install python3.10 -y
 
-COPY requirements.txt /pod-server/requirements.txt
+COPY requirements.txt /pod_server/requirements.txt
 
-ENV PYTHONPATH=/pod-server
+ENV PYTHONPATH=/pod_server
 
 RUN pip install --no-cache-dir --upgrade -r /pod_server/requirements.txt
 
-COPY src /pod-server/src
+COPY src /pod_server/src
 
-CMD ["bash", "-c", "echo source /opt/ros/humble/setup.bash >> ~/.bashrc && source ~/.bashrc && uvicorn pod-server.src.main:app --host 0.0.0.0 --port 8002"]
+CMD ["bash", "-c", "echo source /opt/ros/humble/setup.bash >> ~/.bashrc && source ~/.bashrc && uvicorn pod_server.src.main:app --host 0.0.0.0 --port 8002"]
