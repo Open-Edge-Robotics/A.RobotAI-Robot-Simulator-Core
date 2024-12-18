@@ -7,7 +7,7 @@ from kubernetes import client, config
 from backend_server.src.models.instance import Instance
 from backend_server.src.utils.my_enum import PodStatus
 
-# config.load_kube_config('/root/.kube/config')
+config.load_kube_config('/root/.kube/config')  # 로컬 실행 시에는 주석 처리 필수
 pod_client = client.CoreV1Api()
 
 
