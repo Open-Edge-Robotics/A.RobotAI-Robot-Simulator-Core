@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from src.crud.instance import InstanceService
-from src.database.db_conn import get_db
-from src.schemas.instance import *
-from src.utils.my_enum import API
+from backend_server.src.crud.instance import InstanceService
+from backend_server.src.database.db_conn import get_db
+from backend_server.src.schemas.instance import *
+from backend_server.src.utils.my_enum import API
 
 router = APIRouter(prefix="/instance", tags=["Instance"])
 

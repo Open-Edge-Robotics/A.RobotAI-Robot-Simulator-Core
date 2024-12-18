@@ -2,9 +2,9 @@ from typing import List
 
 from pydantic import Field
 
-from src.schemas.format import GlobalResponseModel
-from src.settings import BaseSchema
-from src.utils.my_enum import API
+from .format import GlobalResponseModel
+from backend_server.src.settings import BaseSchema
+from backend_server.src.utils.my_enum import API
 
 
 ###### 생성 #######

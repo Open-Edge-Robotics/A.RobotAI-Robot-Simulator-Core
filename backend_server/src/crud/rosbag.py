@@ -1,7 +1,7 @@
 import requests
 from fastapi import HTTPException
 
-from src.utils.my_enum import PodStatus
+from backend_server.src.utils.my_enum import PodStatus
 
 
 class RosService:

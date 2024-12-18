@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from src.crud.simulation import SimulationService
-from src.database.db_conn import get_db
-from src.schemas.simulation import *
-from src.utils.my_enum import API
+from backend_server.src.crud.simulation import SimulationService
+from backend_server.src.database.db_conn import get_db
+from backend_server.src.schemas.simulation import *
+from backend_server.src.utils.my_enum import API
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 

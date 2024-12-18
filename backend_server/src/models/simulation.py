@@ -4,7 +4,7 @@ from typing import List
 from sqlalchemy import String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.database.db_conn import Base
+from backend_server.src.database.db_conn import Base
 
 
 class Simulation(Base):

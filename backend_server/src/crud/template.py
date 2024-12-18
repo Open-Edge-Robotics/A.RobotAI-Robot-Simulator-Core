@@ -3,10 +3,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from src.models.template import Template
-from src.schemas.template import TemplateListResponse, TemplateCreateRequest, TemplateCreateResponse, \
+from backend_server.src.models.template import Template
+from backend_server.src.schemas.template import TemplateListResponse, TemplateCreateRequest, TemplateCreateResponse, \
     TemplateDeleteResponse
-from src.utils.my_enum import API
+from backend_server.src.utils.my_enum import API
 
 
 class TemplateService:

@@ -4,13 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from starlette import status
 
-from src.crud.pod import PodService
-from src.crud.rosbag import RosService
-from src.models.instance import Instance
-from src.models.simulation import Simulation
-from src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
+from .pod import PodService
+from .rosbag import RosService
+from backend_server.src.models.instance import Instance
+from backend_server.src.models.simulation import Simulation
+from backend_server.src.schemas.simulation import SimulationCreateRequest, SimulationListResponse, SimulationCreateResponse, \
     SimulationDeleteResponse, SimulationControlResponse
-from src.utils.my_enum import SimulationStatus, PodStatus, API
+from backend_server.src.utils.my_enum import SimulationStatus, PodStatus, API
 
 
 class SimulationService:

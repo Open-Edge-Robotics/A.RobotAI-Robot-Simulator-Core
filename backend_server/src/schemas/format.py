@@ -1,6 +1,6 @@
 from typing import List
 
-from src.settings import BaseSchema
+from backend_server.src.settings import BaseSchema
 
 
 class GlobalResponseModel(BaseSchema):

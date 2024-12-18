@@ -2,10 +2,10 @@ from contextlib import asynccontextmanager
 
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.database.db_conn import init_db, close_db
-from src.exception.exception_handler import *
-from src.routes import template, instance, simulation
-from src.settings import settings
+from .database.db_conn import init_db, close_db
+from .exception.exception_handler import *
+from .routes import template, instance, simulation
+from .settings import settings
 
 
 @asynccontextmanager

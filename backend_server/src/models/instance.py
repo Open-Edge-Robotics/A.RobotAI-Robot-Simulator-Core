@@ -3,8 +3,8 @@ from datetime import datetime
 from sqlalchemy import String, ForeignKey, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.database.db_conn import Base
-from src.models.simulation import Simulation
+from backend_server.src.database.db_conn import Base
+from .simulation import Simulation
 
 
 class Instance(Base):

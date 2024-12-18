@@ -1,6 +1,6 @@
 from minio import Minio
 
-from src.settings import settings
+from backend_server.src.settings import settings
 
 minio_url = settings.MINIO_URL
 

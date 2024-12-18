@@ -4,8 +4,8 @@ from typing import List
 from sqlalchemy import String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.database.db_conn import Base
-from src.models.instance import Instance
+from backend_server.src.database.db_conn import Base
+from .instance import Instance
 
 
 class Template(Base):

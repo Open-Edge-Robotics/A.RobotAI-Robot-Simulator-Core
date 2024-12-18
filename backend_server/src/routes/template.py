@@ -3,11 +3,11 @@ from fastapi.params import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from src.crud.template import TemplateService
-from src.database.db_conn import get_db
-from src.schemas.template import TemplateCreateRequest, TemplateCreateResponseModel, \
+from backend_server.src.crud.template import TemplateService
+from backend_server.src.database.db_conn import get_db
+from backend_server.src.schemas.template import TemplateCreateRequest, TemplateCreateResponseModel, \
     TemplateListResponseModel, TemplateDeleteResponseModel
-from src.utils.my_enum import API
+from backend_server.src.utils.my_enum import API
 
 router = APIRouter(prefix="/template", tags=["Template"])
 

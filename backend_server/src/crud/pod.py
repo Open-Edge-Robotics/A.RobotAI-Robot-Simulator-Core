@@ -4,10 +4,10 @@ import yaml
 from fastapi import HTTPException
 from kubernetes import client, config
 
-from src.models.instance import Instance
-from src.utils.my_enum import PodStatus
+from backend_server.src.models.instance import Instance
+from backend_server.src.utils.my_enum import PodStatus
 
-config.load_kube_config('/root/.kube/config')
+# config.load_kube_config('/root/.kube/config')
 pod_client = client.CoreV1Api()
 
 

@@ -6,13 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from starlette import status
 
-from src.crud.pod import PodService
-from src.crud.rosbag import RosService
-from src.crud.simulation import SimulationService
-from src.crud.template import TemplateService
-from src.models.instance import Instance
-from src.schemas.instance import *
-from src.utils.my_enum import API, PodStatus, InstanceStatus
+from .pod import PodService
+from .rosbag import RosService
+from .simulation import SimulationService
+from .template import TemplateService
+from backend_server.src.models.instance import Instance
+from backend_server.src.schemas.instance import *
+from backend_server.src.utils.my_enum import API, PodStatus, InstanceStatus
 
 
 class InstanceService:

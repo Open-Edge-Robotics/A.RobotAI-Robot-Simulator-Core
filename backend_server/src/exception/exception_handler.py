@@ -6,7 +6,7 @@ from minio import S3Error
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 
-from src.schemas.format import GlobalResponseModel
+from backend_server.src.schemas.format import GlobalResponseModel
 
 app = FastAPI()
 
