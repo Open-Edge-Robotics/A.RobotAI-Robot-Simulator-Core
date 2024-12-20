@@ -28,26 +28,6 @@ spec:
                 secretKeyRef:
                   name: robot-secret
                   key: db_url
-            - name: MINIO_URL
-              valueFrom:
-                secretKeyRef:
-                  name: robot-secret
-                  key: minio_url
-            - name: MINIO_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: minio-secret
-                  key: minio-access-key
-            - name: MINIO_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: minio-secret
-                  key: minio-secret-key
-            - name: MINIO_BUCKET_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: minio-secret
-                  key: minio_bucket_name
             - name: API_STR
               value: /api
           volumeMounts:
