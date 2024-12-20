@@ -9,10 +9,6 @@ load_dotenv()
 class Settings(BaseSettings):
     API_STR: str
     DATABASE_URL: str
-    MINIO_URL: str
-    MINIO_ACCESS_KEY: str
-    MINIO_SECRET_KEY: str
-    MINIO_BUCKET_NAME: str
 
 
 settings = Settings()
