@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robot-deploy
+  namespace: robot
+  labels:
+    app: robot-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: robot-deploy
+  template:
+    metadata:
+      name: robot-deploy
+      labels:
+        app: robot-deploy
+    spec:
+      containers:
+        - name: robot-deploy
+          image: innoagent/robot:2.3
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: robot-secret
+                  key: db_url
+            - name: API_STR
+              value: /api
+          volumeMounts:
+            - mountPath: /root/.kube/config
+              name: kube-config
+              subPath: config
+
+      volumes:
+        - name: kube-config
+          configMap:
+            name: kube-config
+
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: robot-service
+  namespace: robot
+spec:
+  selector:
+    app: robot-deploy
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+      nodePort: 30020
+  type: NodePort
+  externalTrafficPolicy: Local

@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio-deploy
+  namespace: robot
+  labels:
+    app: minio-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio-deploy
+  template:
+    metadata:
+      name: minio-deploy
+      labels:
+        app: minio-deploy
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: isu-master
+      volumes:
+        - name: storage
+          hostPath:
+            path: /data/minio
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2024-11-07T00-52-20Z.fips
+          args:
+            - server
+            - --console-address
+            - ":9001"
+            - "--address"
+            - "0.0.0.0:9000"
+            - "/storage"
+          env:
+            - name: ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  key: root-user
+                  name: minio-secret
+            - name: ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: root-password
+                  name: minio-secret
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: minio-access-key
+                  name: minio-secret
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: minio-secret-key
+                  name: minio-secret
+          volumeMounts:
+            - name: storage
+              mountPath: "/storage"
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-service
+  namespace: robot
+  labels:
+    run: minio-deploy
+spec:
+  type: NodePort
+  ports:
+    - port: 9000
+      targetPort: 9000
+      nodePort: 30333
+      name: api
+    - port: 9001
+      targetPort: 9001
+      nodePort: 30334
+      name: console
+  selector:
+    app: minio-deploy
