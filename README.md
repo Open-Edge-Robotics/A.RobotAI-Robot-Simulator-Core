@@ -28,17 +28,17 @@ git clone https://(private token)@github.com/inno-rnd-project/robot-simulator-ba
     <tr>
         <td>backend_server</td>
         <td>자율행동체 시뮬레이터 플랫폼 서버</td>
-        <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/blob/file/backend_server">바로가기</a></td>
+        <td><a href="https://github.com/Open-Edge-Robotics/A.RobotAI-Robot-Simulator-Back/blob/main/backend_server">바로가기</a></td>
     </tr>
     <tr>
         <td>k8s</td>
         <td>쿠버네티스 배포 스크립트 모음</td>
-        <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/tree/file/k8s">바로가기</a></td>
+        <td><a href="https://github.com/Open-Edge-Robotics/A.RobotAI-Robot-Simulator-Back/tree/main/k8s">바로가기</a></td>
     </tr>
     <tr>
         <td>pod_server</td>
         <td>자율행동체 인스턴스(Pod) API</td>
-        <td><a href="https://github.com/inno-rnd-project/robot-simulator-back/tree/file/pod_server">바로가기</a></td>
+        <td><a href="https://github.com/Open-Edge-Robotics/A.RobotAI-Robot-Simulator-Back/tree/main/pod_server">바로가기</a></td>
     </tr>
   </table>
 
