@@ -169,5 +169,5 @@ test/
 # Ops
 /docker-compose.yaml
 
-/src/pod-template.yaml
+/src/pod-template.yaml/
 
