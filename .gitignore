@@ -1,0 +1,4 @@
+.idea
+/k8s/minio-deploy.yaml
+/k8s/postgres-deploy.yaml
+/k8s/server-deploy.yaml

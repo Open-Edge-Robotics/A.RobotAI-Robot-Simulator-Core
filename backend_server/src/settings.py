@@ -1,0 +1,26 @@
+from dotenv import load_dotenv
+from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+load_dotenv()
+
+
+class Settings(BaseSettings):
+    API_STR: str
+    DATABASE_URL: str
+    MINIO_URL: str
+    MINIO_ACCESS_KEY: str
+    MINIO_SECRET_KEY: str
+    MINIO_BUCKET_NAME: str
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+settings = Settings()
+
+
+class BaseSchema(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    def model_dump(self, **kwargs):
+        return super().model_dump(by_alias=True)
