@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: placeholder-name
+  labels:
+    agent-type: placeholder-agent-type
+spec:
+  containers:
+    - name: placeholder-container-name
+      image: docker사용자/image:version
+      imagePullPolicy: Always
+      env:
+        - name: MINIO_URL
+          value: ""
+        - name: MINIO_ACCESS_KEY
+          value: ""
+        - name: MINIO_SECRET_KEY
+          value: ""
+        - name: MINIO_BUCKET_NAME
+          value: ""
+
