@@ -1,8 +1,6 @@
 # Backend Server
 자율행동체 시뮬레이터 서버
 
-- **Project Template**: [taking](https://github.com/taking/java-spring-base-structure)
-
 <br>
 
 ## 소개
