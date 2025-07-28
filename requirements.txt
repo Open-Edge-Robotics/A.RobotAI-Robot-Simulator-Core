@@ -1,0 +1,15 @@
+asyncpg==0.30.0
+fastapi==0.115.5
+kubernetes==31.0.0
+pydantic==2.9.2
+pydantic-settings==2.6.1
+Pygments==2.18.0
+python-dotenv==1.0.1
+PyYAML==6.0.2
+SQLAlchemy==2.0.36
+sqlmodel==0.0.22
+starlette==0.41.2
+uvicorn==0.31.1
+minio==7.2.10
+asyncio
+requests
