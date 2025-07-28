@@ -1,0 +1,3 @@
+nohup: ignoring input
+Unable to listen on port 5432: Listeners failed to create with the following errors: [unable to create listener: Error listen tcp4 127.0.0.1:5432: bind: address already in use unable to create listener: Error listen tcp6 [::1]:5432: bind: address already in use]
+error: unable to listen on any of the requested ports: [{5432 5432}]
