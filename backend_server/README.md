@@ -122,7 +122,6 @@ docker push <username>/robot:<tag>
 ```bash
 ssh root@192.168.160.135
 ```
-> PW: qwe1212!Q
 
 
 ### 6. 원격 배포
