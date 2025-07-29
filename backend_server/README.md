@@ -117,14 +117,7 @@ docker push <username>/robot:<tag>
 ```
 
 
-### 5. ssh 접속
-
-```bash
-ssh root@192.168.160.135
-```
-
-
-### 6. 원격 배포
+### 5. 이미지 배포(같은 VM일 경우 해당사항 없음)
 
 Docker Hub로부터 이미지를 pull 합니다.
 ```bash
