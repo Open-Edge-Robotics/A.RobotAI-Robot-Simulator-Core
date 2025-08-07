@@ -1,7 +1,11 @@
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import String, DateTime, Integer, ForeignKey
+from .simulation_groups import SimulationGroup
+from .simulation_steps import SimulationStep
+
+from .enums import PatternType, PodCreationStatus, SimulationStatus
+from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as PgEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.db_conn import Base
@@ -10,31 +14,63 @@ from database.db_conn import Base
 class Simulation(Base):
     __tablename__ = 'simulations'
 
+    # 기본 정보
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(30), nullable=False)
     description: Mapped[str] = mapped_column(String(100), nullable=False)
-    namespace: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-
-    template_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("templates.template_id", ondelete="SET NULL")
+    pattern_type: Mapped[str] = mapped_column(
+        PgEnum(PatternType, name = "pattern_type_enum", create_constraint = True), 
+        nullable = False 
     )
-    template: Mapped[Optional["Template"]] = relationship(back_populates="simulations")
-
-    autonomous_agent_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    execution_time: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    delay_time: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    repeat_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-
-    scheduled_start_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    scheduled_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-
     mec_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
+    # 상태 및 namespace
+    status: Mapped[SimulationStatus] = mapped_column(
+        PgEnum(SimulationStatus, name="simulation_status_enum", create_constraint=True),
+        default=SimulationStatus.CREATED,
+        nullable=False
+    )
+    namespace: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    
+    # Pod 생성 상태 관리 (실시간 모니터링용)
+    pod_creation_status: Mapped[PodCreationStatus] = mapped_column(
+        PgEnum(PodCreationStatus, name="pod_creation_status_enum", create_constraint=True),
+        default=PodCreationStatus.PENDING,
+        nullable=False
+    )
+    
+    # 진행률 추적 (실시간 모니터링용)
+    total_expected_pods: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_created_pods: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_successful_pods: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_failed_pods: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    
+    # 백그라운드 작업 관리
+    background_task_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    pod_creation_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    pod_creation_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # 실행 통계
+    actual_start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    actual_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_agents_count: Mapped[int] = mapped_column(Integer, default=0)
+    successful_agents_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_agents_count: Mapped[int] = mapped_column(Integer, default=0) 
+
+    # 메타 정보
+    created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable = True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
+    # 관계
+    steps: Mapped[Optional[List["SimulationStep"]]] = relationship(
+        backref="simulation", cascade="all, delete-orphan", lazy="selectin"
+    )
+    groups: Mapped[Optional[List["SimulationGroup"]]] = relationship(
+        backref="simulation", cascade="all, delete-orphan", lazy="selectin"
+    )
     instances: Mapped[List["Instance"]] = relationship(back_populates="simulation", lazy="selectin")
 
     def __repr__(self) -> str:
-        return f"Simulation => {self.name}"
+        return f"Simulation => {self.name} ({self.pattern_type})"
 

@@ -1,9 +1,10 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, ForeignKey, DateTime
+from sqlalchemy import Integer, String, ForeignKey, DateTime, Enum as PgEnum, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from .enums import InstanceStatus
 from database.db_conn import Base
 
 
@@ -11,10 +12,33 @@ class Instance(Base):
     __tablename__ = 'instances'
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(30), nullable=False)
-    description: Mapped[str] = mapped_column(String(100), nullable=False)
-    pod_name: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
-    pod_namespace: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    pod_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    pod_namespace: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    
+    # Instance 상태 추적 (실시간 모니터링용)
+    status: Mapped[InstanceStatus] = mapped_column(
+        PgEnum(InstanceStatus, name="instance_status_enum", create_constraint=True),
+        default=InstanceStatus.PENDING,
+        nullable=False
+    )
+    
+    # 오류 정보 (리소스 누수 방지 & 부분 실패 처리용)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    
+    # Pod 생성 시간 추적 (실시간 모니터링용)
+    pod_creation_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    pod_creation_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    # 재시도 정보 (부분 실패 처리용)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_retries: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    
+    # Step/Group 정보
+    step_order: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 순차 실행용
+    group_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)    # 병렬 실행용
 
     created_at: Mapped[DateTime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[DateTime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
