@@ -1,21 +1,29 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from crud.simulation import SimulationService
-from database.db_conn import get_db
+from database.db_conn import get_db, async_session
 from schemas.simulation import *
 from utils.my_enum import API
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 
-@router.post("", response_model=SimulationCreateResponseModel, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", 
+    response_model=SimulationCreateResponseModel, 
+    status_code=status.HTTP_201_CREATED,
+    summary="새로운 시뮬레이션 생성",
+    description="시뮬레이션 생성 요청을 처리하고, 백그라운드에서 시뮬레이션을 시작합니다."
+)
 async def create_simulation(
-        simulation_create_data: SimulationCreateRequest, session: AsyncSession = Depends(get_db)
+    simulation_create_data: SimulationCreateRequest,
+    background_tasks: BackgroundTasks, 
+    session: AsyncSession = Depends(get_db)
 ):
     """새로운 시뮬레이션 생성 (고도화된 패턴 설정 포함)"""
-    new_simulation = await SimulationService(session).create_simulation(simulation_create_data)
+    new_simulation = await SimulationService(session, async_session).create_simulation(simulation_create_data, background_tasks)
 
     return SimulationCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
