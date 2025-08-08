@@ -1,9 +1,10 @@
 import asyncio
+from collections import namedtuple
 from datetime import timedelta, datetime, timezone
 
 from sqlalchemy import select
 from .status_update_manager import get_status_manager
-from models.enums import GroupStatus, PodCreationStatus
+from models.enums import GroupStatus, PodCreationStatus, SimulationStatus
 from models.simulation_groups import SimulationGroup
 from crud.pod import PodService
 from crud.template import TemplateService
@@ -127,7 +128,7 @@ async def process_single_step(
     status_manager,
     current_time
 ) -> dict:
-    """단일 단계 처리 (반복 로직 제거됨)"""
+    """단일 단계 처리"""
     
     step_successful = 0
     step_failed = 0
@@ -163,7 +164,6 @@ async def process_single_step(
         await session.commit()
         print(f"시뮬레이션 단계 DB 저장 완료 (StepOrder={step.step_order})")
     
-    # Pod 생성 (반복 없이 지정된 수만큼만 생성)
     instance_data_list = []
     
     # Instance 정보 준비
@@ -267,7 +267,6 @@ async def create_single_pod_with_status(instance, template, status_manager):
         )
         raise e
 
-
 async def finalize_simulation_success(
     sessionmaker, 
     simulation_id: int, 
@@ -325,413 +324,9 @@ async def handle_simulation_failure(sessionmaker, simulation_id: int, status_man
             await cleanup_failed_simulation_pods(simulation_id)
     except Exception as e:
         print(f"Pod 정리 실패: {e}")
-
-# async def handle_sequential_pattern_background(
-#     sessionmaker,
-#     simulation_id: int,
-#     steps_data: list[SequentialStep],
-#     api: str
-# ):
-#     print(f"\n--- [Sequential 패턴 MVP] 백그라운드 작업 시작 (Simulation ID: {simulation_id}) ---")
-    
-#     try:
-#         status_manager = get_status_manager()
-#         # 🆕 MVP: 초기 상태 설정
-#         await status_manager.update_simulation_status(
-#             simulation_id,
-#             pod_creation_status="IN_PROGRESS",
-#             current_step_order=1,
-#             current_step_repeat=1
-#         )
-        
-#         async with sessionmaker() as session:
-#             print(f"Session 열림. Simulation {simulation_id} 조회 중...")
-#             templates_service = TemplateService(session)
-#             pod_service = PodService()
-            
-#             simulation = await session.get(Simulation, simulation_id)
-#             if not simulation:
-#                 print(f"ERROR: Simulation {simulation_id}를 찾을 수 없습니다.")
-#                 raise ValueError(f"Simulation {simulation_id} not found")
-            
-#             print(f"시뮬레이션 정보: 이름='{simulation.name}', 예상 Pod 수={simulation.total_expected_pods}")
-            
-#             current_time = datetime.now(timezone.utc)
-#             overall_successful = 0
-#             overall_failed = 0
-#             overall_created = 0
-
-#             print(f"총 {len(steps_data)}개의 단계 처리 시작.")
-#             for step in sorted(steps_data, key=lambda s: s.step_order):
-#                 print(f"\n- [단계 {step.step_order}] 처리 시작 -")
-                
-#                 # 🆕 MVP: 단계 시작 상태 업데이트
-#                 await status_manager.update_simulation_status(
-#                     simulation_id,
-#                     current_step_order=step.step_order,
-#                     current_step_repeat=1
-#                 )
-                
-#                 template = await templates_service.find_template_by_id(step.template_id, api)
-#                 print(f"템플릿 조회 완료: ID={template.template_id}, 타입='{template.type}'")
-
-#                 step_start_time = current_time
-#                 step_end_time = step_start_time + timedelta(seconds=step.execution_time)
-
-#                 # 🆕 MVP: repeat_count 포함하여 SimulationStep 생성
-#                 simulation_step = SimulationStep(
-#                     simulation_id=simulation.id,
-#                     step_order=step.step_order,
-#                     template_id=template.template_id,
-#                     autonomous_agent_count=step.autonomous_agent_count,
-#                     execution_time=step.execution_time,
-#                     delay_after_completion=step.delay_after_completion,
-#                     repeat_count=step.repeat_count,  # 🆕 MVP
-#                     current_repeat=0,  # 🆕 MVP
-#                     expected_pods_count=step.autonomous_agent_count ,  # 🆕 MVP
-#                     actual_start_time=step_start_time,
-#                     actual_end_time=step_end_time,
-#                     status="RUNNING"  # 🆕 MVP
-#                 )
-#                 session.add(simulation_step)
-#                 await session.flush()
-#                 print(f"시뮬레이션 단계 (StepOrder={step.step_order}) DB에 추가 완료 (repeat_count={step.repeat_count})")
-
-#                 # 🆕 MVP: 반복 실행 처리
-#                 step_successful = 0
-#                 step_failed = 0
-#                 step_created = 0
-                
-#                 for repeat in range(1, step.repeat_count + 1):
-#                     print(f"\n  === 단계 {step.step_order} - {repeat}/{step.repeat_count}번째 반복 ===")
-                    
-#                     # 🆕 MVP: 반복 상태 업데이트
-#                     await status_manager.update_step_status(
-#                         simulation_id, step.step_order, current_repeat=repeat
-#                     )
-#                     await status_manager.update_simulation_status(
-#                         simulation_id, current_step_repeat=repeat
-#                     )
-
-#                     # 이 반복에서의 Pod 생성
-#                     for i in range(step.autonomous_agent_count):
-#                         # 🆕 MVP: step_order 포함하여 Instance 생성
-#                         instance = Instance(
-#                             name=f"{simulation.name}_step{step.step_order}_repeat{repeat}_agent_{i}",
-#                             description=f"Step {step.step_order} Repeat {repeat} - Agent {i}",
-#                             pod_namespace=simulation.namespace,
-#                             simulation_id=simulation.id,
-#                             simulation=simulation,
-#                             template_id=template.template_id,
-#                             template=template,
-#                             status="PENDING",  # 🆕 MVP
-#                             step_order=step.step_order,  # 🆕 MVP
-#                         )
-#                         session.add(instance)
-#                         await session.flush()
-#                         print(f"    -> 인스턴스 {instance.name} DB에 추가 완료.")
-
-#                         # 🆕 MVP: Pod 생성 with 상태 추적
-#                         try:
-#                             # 생성 시작 상태
-#                             await status_manager.update_instance_status(
-#                                 instance.id, status="CREATING"
-#                             )
-                            
-#                             # 실제 Pod 생성
-#                             print(f"    -> Pod 생성 요청 중... (인스턴스 ID: {instance.id})")
-#                             pod_name = await pod_service.create_pod(instance, template)
-                            
-#                             # 성공 상태 업데이트
-#                             await status_manager.update_instance_status(
-#                                 instance.id, 
-#                                 status="RUNNING",
-#                                 pod_name=pod_name
-#                             )
-                            
-#                             step_successful += 1
-#                             step_created += 1
-#                             print(f"    -> Pod 생성 성공: {pod_name}")
-                            
-#                         except Exception as e:
-#                             # 🆕 MVP: 실패 상태 업데이트
-#                             print(f"    -> Pod 생성 실패: {e}")
-#                             await status_manager.update_instance_status(
-#                                 instance.id,
-#                                 status="FAILED",
-#                                 error_message=str(e),
-#                                 error_code="POD_CREATION_FAILED"
-#                             )
-                            
-#                             step_failed += 1
-#                             step_created += 1
-
-#                     # 반복 간 지연 (마지막 반복 제외)
-#                     if repeat < step.repeat_count:
-#                         print(f"    -> 반복 간 대기: {step.delay_after_completion}초")
-#                         await asyncio.sleep(step.delay_after_completion)
-
-#                 # 🆕 MVP: 단계 완료 후 상태 업데이트
-#                 overall_successful += step_successful
-#                 overall_failed += step_failed
-#                 overall_created += step_created
-                
-#                 await status_manager.update_step_status(
-#                     simulation_id,
-#                     step.step_order,
-#                     status="COMPLETED",
-#                     successful_agents=step_successful,
-#                     failed_agents=step_failed,
-#                     created_pods_count=step_created
-#                 )
-                
-#                 await status_manager.update_simulation_status(
-#                     simulation_id,
-#                     total_created_pods=overall_created,
-#                     total_successful_pods=overall_successful,
-#                     total_failed_pods=overall_failed
-#                 )
-
-#                 # 🆕 MVP: 부분 실패 체크
-#                 if step_failed > 0:
-#                     failure_rate = step_failed / step_created
-#                     print(f"    -> 단계 {step.step_order} 실패율: {failure_rate:.1%} ({step_failed}/{step_created})")
-                    
-#                     if failure_rate > 0.5:  # 50% 이상 실패
-#                         print(f"    -> 단계 {step.step_order} 과도한 실패 감지, 사용자 액션 필요")
-#                         await status_manager.update_simulation_status(
-#                             simulation_id,
-#                             pod_creation_status="PARTIAL_SUCCESS",
-#                             user_action_required=True,
-#                             partial_failure_step_order=step.step_order
-#                         )
-#                         # 여기서 백그라운드 작업을 일시 중단하고 사용자 선택 대기
-#                         print("    -> 백그라운드 작업 일시 중단 (사용자 액션 대기)")
-#                         return  # 함수 종료
-
-#                 current_time = step_end_time + timedelta(seconds=step.delay_after_completion)
-#                 print(f"단계 {step.step_order} 완료. 성공: {step_successful}, 실패: {step_failed}")
-
-#             # 🆕 MVP: 전체 완료 상태 업데이트
-#             print("\n모든 단계 처리 완료. 최종 상태 업데이트.")
-#             await status_manager.update_simulation_status(
-#                 simulation_id,
-#                 pod_creation_status="COMPLETED"
-#             )
-            
-#             # 기존 로직 유지
-#             simulation.status = "PAUSED"
-#             simulation.total_agents = overall_successful  # 성공한 Pod 수만 카운트
-#             await session.commit()
-#             print("DB 커밋 완료. 시뮬레이션 상태 'PAUSED'로 변경.")
-            
-#     except Exception as e:
-#         print(f"ERROR: Sequential 패턴 백그라운드 작업 실패: {e}")
-        
-#         # 🆕 MVP: 실패 상태 업데이트
-#         await status_manager.update_simulation_status(
-#             simulation_id,
-#             pod_creation_status="FAILED"
-#         )
-        
-#         # 🆕 MVP: 생성된 Pod들 정리 (리소스 누수 방지)
-#         await cleanup_failed_simulation_pods(simulation_id)
-        
-#         # 기존 로직 유지
-#         async with sessionmaker() as session:
-#             try:
-#                 simulation = await session.get(Simulation, simulation_id)
-#                 if simulation:
-#                     simulation.status = "ERROR"
-#                     await session.commit()
-#                     print(f"Simulation ID {simulation_id} 상태를 'ERROR'로 업데이트.")
-#             except:
-#                 print("ERROR: 롤백 후 상태 업데이트 실패.")
-#         raise
-        
-#     print(f"--- [Sequential 패턴 MVP] 백그라운드 작업 종료 (Simulation ID: {simulation_id}) ---")
-
-    
-    
-    
-    # async with sessionmaker() as session:
-    #     try:
-    #         print(f"Session 열림. Simulation {simulation_id} 조회 중...")
-    #         templates_service = TemplateService(session)
-    #         pod_service = PodService()
-            
-    #         simulation = await session.get(Simulation, simulation_id)
-    #         if not simulation:
-    #             print(f"ERROR: Simulation {simulation_id}를 찾을 수 없습니다.")
-    #             raise ValueError(f"Simulation {simulation_id} not found")
-            
-    #         print(f"시뮬레이션 정보: 이름='{simulation.name}', 시작 시간='{simulation.scheduled_start_time}'")
-            
-    #         current_time = simulation.scheduled_start_time
-    #         total_agents = 0
-
-    #         print(f"총 {len(steps_data)}개의 단계 처리 시작.")
-    #         for step in sorted(steps_data, key=lambda s: s.step_order):
-    #             print(f"\n- [단계 {step.step_order}] 처리 시작 -")
-    #             print(f"템플릿 ID: {step.template_id}, 에이전트 수: {step.autonomous_agent_count}, 실행 시간: {step.execution_time}초")
-                
-    #             template = await templates_service.find_template_by_id(step.template_id, api)
-    #             print(f"템플릿 조회 완료: ID={template.template_id}, 타입='{template.type}'")
-
-    #             step_start_time = current_time
-    #             step_end_time = step_start_time + timedelta(seconds=step.execution_time)
-    #             print(f"단계 시간 설정: 시작='{step_start_time}', 종료='{step_end_time}'")
-
-    #             simulation_step = SimulationStep(
-    #                 simulation_id=simulation.id,
-    #                 step_order=step.step_order,
-    #                 template_id=template.template_id,
-    #                 autonomous_agent_count=step.autonomous_agent_count,
-    #                 execution_time=step.execution_time,
-    #                 delay_after_completion=step.delay_after_completion,
-    #                 actual_start_time=step_start_time,
-    #                 actual_end_time=step_end_time
-    #             )
-    #             session.add(simulation_step)
-    #             await session.flush()
-    #             print(f"시뮬레이션 단계 (StepOrder={step.step_order}) DB에 추가 완료.")
-
-    #             for i in range(step.autonomous_agent_count):
-    #                 instance = Instance(
-    #                     name=f"{simulation.name}_step{step.step_order}_agent_{i}",
-    #                     description=f"Step {step.step_order} - Agent {i}",
-    #                     pod_namespace=simulation.namespace,
-    #                     simulation_id=simulation.id,
-    #                     simulation=simulation,
-    #                     template_id=template.template_id,
-    #                     template=template,
-    #                 )
-    #                 session.add(instance)
-    #                 await session.flush()
-    #                 print(f"  -> 인스턴스 {instance.name} DB에 추가 완료.")
-
-    #                 # Pod 생성 로직 디버깅용
-    #                 print(f"  -> Pod 생성 요청 중... (인스턴스 ID: {instance.id})")
-    #                 instance.pod_name = await pod_service.create_pod(instance, template)
-    #                 print(f"  -> Pod 생성 완료: {instance.pod_name}")
-    #                 session.add(instance)
-
-    #             current_time = step_end_time + timedelta(seconds=step.delay_after_completion)
-    #             total_agents += step.autonomous_agent_count
-    #             print(f"다음 단계 시작 시간 계산: {current_time}, 현재까지 총 에이전트: {total_agents}")
-
-    #         print("\n모든 단계 처리 완료. 최종 DB 업데이트 시작.")
-    #         simulation.status = "PAUSED"
-    #         simulation.total_agents = total_agents
-            
-    #         await session.commit()
-    #         print("DB 커밋 완료. 시뮬레이션 상태 'PAUSED'로 변경.")
-            
-    #     except Exception as e:
-    #         await session.rollback()
-    #         print(f"ERROR: Sequential 패턴 백그라운드 작업 실패: {e}")
-    #         try:
-    #             simulation = await session.get(Simulation, simulation_id)
-    #             if simulation:
-    #                 simulation.status = "ERROR"
-    #                 await session.commit()
-    #                 print(f"Simulation ID {simulation_id} 상태를 'ERROR'로 업데이트.")
-    #         except:
-    #             print("ERROR: 롤백 후 상태 업데이트 실패.")
-    #         raise
-    # print(f"--- [Sequential 패턴] 백그라운드 작업 종료 (Simulation ID: {simulation_id}) ---")
-
-
-async def handle_parallel_pattern_background(
-    sessionmaker,
-    simulation_id: int,
-    agents_data: list[ParallelAgent],
-    api: str
-):
-    print(f"\n--- [Parallel 패턴] 백그라운드 작업 시작 (Simulation ID: {simulation_id}) ---")
-    async with sessionmaker() as session:
-        try:
-            print(f"Session 열림. Simulation {simulation_id} 조회 중...")
-            templates_service = TemplateService(session)
-            pod_service = PodService()
-            
-            simulation = await session.get(Simulation, simulation_id)
-            if not simulation:
-                print(f"ERROR: Simulation {simulation_id}를 찾을 수 없습니다.")
-                raise ValueError(f"Simulation {simulation_id} not found")
-            
-            print(f"시뮬레이션 정보: 이름='{simulation.name}', 총 에이전트 그룹: {len(agents_data)}개")
-            
-            total_agents = 0
-            
-            print("에이전트 그룹 처리 시작.")
-            for agent in agents_data:
-                print(f"\n- [에이전트 그룹] 처리 시작 -")
-                print(f"템플릿 ID: {agent.template_id}, 에이전트 수: {agent.autonomous_agent_count}, 실행 시간: {agent.execution_time}초")
-                
-                template = await templates_service.find_template_by_id(agent.template_id, api)
-                print(f"템플릿 조회 완료: ID={template.template_id}, 타입='{template.type}'")
-                
-                simulation_group = SimulationGroup(
-                    simulation_id=simulation.id,
-                    group_name=f"{simulation.name}_parallel_group_{agent.template_id}",  # 그룹 이름 생성
-                    template_id=agent.template_id,
-                    autonomous_agent_count=agent.autonomous_agent_count,
-                    execution_time=agent.execution_time,
-                    assigned_area=simulation.namespace,  # 또는 적절한 영역 할당
-                    status=GroupStatus.PENDING,  # 기본 상태
-                )
-                
-                session.add(simulation_group)
-                await session.flush()
-                print(f"  -> SimulationGroup 생성 완료: ID={simulation_group.id}, 이름='{simulation_group.group_name}', 템플릿={agent.template_id}, 에이전트수={agent.autonomous_agent_count}")
-
-                for i in range(agent.autonomous_agent_count):
-                    instance = Instance(
-                        name=f"{simulation.name}_parallel_{agent.template_id}_agent_{i}",
-                        description=f"Parallel agent {i} for template {agent.template_id}",
-                        pod_namespace=simulation.namespace,
-                        simulation_id=simulation.id,
-                        simulation=simulation,
-                        template_id=template.template_id,
-                        template=template
-                    )
-                    session.add(instance)
-                    await session.flush()
-                    print(f"  -> 인스턴스 {instance.name} DB에 추가 완료.")
-
-                    # Pod 생성 로직 디버깅용
-                    print(f"  -> Pod 생성 요청 중... (인스턴스 ID: {instance.id})")
-                    instance.pod_name = await pod_service.create_pod(instance, template)
-                    print(f"  -> Pod 생성 완료: {instance.pod_name}")
-                    session.add(instance)
-                
-                total_agents += agent.autonomous_agent_count
-                print(f"에이전트 그룹 처리 완료. 현재까지 총 에이전트: {total_agents}")
-
-            print("\n모든 에이전트 그룹 처리 완료. 최종 DB 업데이트 시작.")
-            simulation.status = "PAUSED"
-            simulation.total_agents = total_agents
-            
-            await session.commit()
-            print("DB 커밋 완료. 시뮬레이션 상태 'PAUSED'로 변경.")
-            
-        except Exception as e:
-            await session.rollback()
-            print(f"ERROR: Parallel 패턴 백그라운드 작업 실패: {e}")
-            try:
-                simulation = await session.get(Simulation, simulation_id)
-                if simulation:
-                    simulation.status = "ERROR"
-                    await session.commit()
-                    print(f"Simulation ID {simulation_id} 상태를 'ERROR'로 업데이트.")
-            except:
-                print("ERROR: 롤백 후 상태 업데이트 실패.")
-            raise
-    print(f"--- [Parallel 패턴] 백그라운드 작업 종료 (Simulation ID: {simulation_id}) ---")
     
 async def cleanup_failed_simulation_pods(simulation_id: int):
-    """실패한 시뮬레이션의 Pod들 정리 (MVP 목표 1: 리소스 누수 방지)"""
+    """실패한 시뮬레이션의 Pod들 정리"""
     print(f"[CLEANUP] 시뮬레이션 {simulation_id}의 실패/성공 Pod 정리 시작")
     status_manager = get_status_manager()
     async with status_manager.get_session() as session:
@@ -764,3 +359,414 @@ async def cleanup_failed_simulation_pods(simulation_id: int):
                 # 삭제 실패해도 계속 진행
         
         print(f"[CLEANUP] 정리 완료: {cleaned_count}/{len(instances)} Pod 삭제 성공")
+    
+async def handle_parallel_pattern_background(
+    sessionmaker,
+    simulation_id: int,
+    agents_data: list[ParallelAgent],
+    api: str
+):
+    """
+    병렬 패턴 백그라운드 처리
+    - 상태 업데이트를 최소화하여 세션 충돌 방지
+    - 배치 처리 방식으로 안정성 확보
+    """
+    print(f"\n--- [Parallel 패턴] 백그라운드 작업 시작 (Simulation ID: {simulation_id}) ---")
+    
+    status_manager = None
+    overall_successful = 0
+    overall_failed = 0
+    overall_created = 0
+    
+    try:
+        # 상태 관리자 초기화
+        status_manager = get_status_manager()
+        
+        # 초기 상태 설정
+        await status_manager.update_simulation_status(
+            simulation_id,
+            pod_creation_status=PodCreationStatus.IN_PROGRESS
+        )
+        
+        # 1. 시뮬레이션 정보 조회
+        print("📋 [단계1] 시뮬레이션 정보 조회 중...")
+        simulation_data = None
+        async with sessionmaker() as session:
+            simulation = await session.get(Simulation, simulation_id)
+            if not simulation:
+                raise ValueError(f"❌ Simulation {simulation_id}를 찾을 수 없습니다!")
+            
+            simulation_data = {
+                'id': simulation.id,
+                'name': simulation.name,
+                'namespace': simulation.namespace,
+                'total_expected_pods': simulation.total_expected_pods
+            }
+            
+            print(f"시뮬레이션 정보: 이름='{simulation_data['name']}', 예상 Pod 수={simulation_data['total_expected_pods']}")
+            
+        # 2. 모든 그룹 확인 및 준비
+        if not agents_data:
+            raise ValueError("에이전트 데이터가 없습니다!")
+        
+        print(f"총 {len(agents_data)}개 그룹을 처리할 예정!")
+        total_expected_pods = 0
+        
+        for i, agent in enumerate(agents_data):
+            total_expected_pods += agent.autonomous_agent_count
+            print(f"   - [그룹 {i}] 템플릿 ID: {agent.template_id}, Pod 수: {agent.autonomous_agent_count}")
+        
+        print(f"🎯 총 예상 Pod 수: {total_expected_pods}개")
+        
+        # 3. 그룹 메타데이터 순차 생성
+        print(f"\n⚙️ [단계2] 그룹 메타데이터 순차 생성...")
+        group_metadata_list = []
+        
+        for group_index, agent in enumerate(agents_data):
+            print(f"   📝 [그룹 {group_index}] 메타데이터 생성 중...")
+            
+            try:
+                # ✅ 하나의 세션에서 템플릿 조회 + SimulationGroup 생성
+                async with sessionmaker() as session:
+                    # 1. 템플릿 조회
+                    templates_service = TemplateService(session)
+                    template = await templates_service.find_template_by_id(agent.template_id, api)
+                    print(f"      템플릿 조회 완료: {template.type}")
+                    
+                    # 2. SimulationGroup 생성
+                    current_time = datetime.now(timezone.utc)
+                    group_end_time = current_time + timedelta(seconds=agent.execution_time)
+                    
+                    simulation_group = SimulationGroup(
+                        simulation_id=simulation_data['id'],
+                        group_name=f"{simulation_data['name']}_parallel_group_{agent.template_id}_{group_index}",
+                        template_id=agent.template_id,
+                        autonomous_agent_count=agent.autonomous_agent_count,
+                        execution_time=agent.execution_time,
+                        assigned_area=simulation_data['namespace'],
+                        expected_pods_count=agent.autonomous_agent_count,
+                        actual_start_time=current_time,
+                        actual_end_time=group_end_time,
+                        status=GroupStatus.RUNNING
+                    )
+                    session.add(simulation_group)
+                    await session.flush()
+                    
+                    group_id = simulation_group.id
+                    print(f"      [그룹 {group_index}] SimulationGroup 생성 완료 (ID: {group_id})")
+                    
+                    # 3. 세션 내에서 필요한 데이터만 추출
+                    template_data = {
+                        'template_id': template.template_id,
+                        'type': template.type,
+                        'description': template.description,
+                        'bag_file_path': template.bag_file_path,
+                        'topics': template.topics
+                    }
+                    
+                    agent_data = {
+                        'template_id': agent.template_id,
+                        'autonomous_agent_count': agent.autonomous_agent_count,
+                        'execution_time': agent.execution_time
+                    }
+                    
+                    # 4. 메타데이터 구성 (세션 내에서)
+                    group_metadata = {
+                        'group_index': group_index,
+                        'group_id': group_id,
+                        'agent_data': agent_data,
+                        'template_data': template_data,
+                        'simulation_data': simulation_data
+                    }
+                    
+                # 세션 종료 후 안전하게 추가
+                group_metadata_list.append(group_metadata)
+                
+                print(f"      [그룹 {group_index}] 메타데이터 수집 완료")
+                
+            except Exception as e:
+                print(f"      ❌ [그룹 {group_index}] 메타데이터 생성 실패: {e}")
+                raise
+        
+        print(f"✅ 모든 그룹 메타데이터 생성 완료!")
+        
+        # 4. 모든 그룹 동시 Pod 생성!
+        print(f"\n⚡ [단계3] {len(group_metadata_list)}개 그룹 동시 Pod 생성 시작!")
+        print("💫 모든 그룹이 동시에 시작됩니다...")
+        
+        # 그룹별 Pod 생성 태스크 생성
+        group_tasks = []
+        for group_metadata in group_metadata_list:
+            print(f"   🎯 [그룹 {group_metadata['group_index']}] 태스크 준비 완료")
+            task = process_group_pod_creation_safe(
+                sessionmaker,
+                group_metadata,
+                status_manager
+            )
+            group_tasks.append(task)
+        
+        print(f"\n🚀 {len(group_tasks)}개 그룹 동시 실행 시작!")
+        print("=" * 60)
+        
+        overall_start_time = datetime.now()
+        
+        # 🎯 핵심! 모든 그룹의 Pod 생성을 동시에 처리
+        group_results = await asyncio.gather(*group_tasks, return_exceptions=True)
+        
+        overall_end_time = datetime.now()
+        total_elapsed_time = (overall_end_time - overall_start_time).total_seconds()
+        
+        print("=" * 60)
+        print(f"🎉 모든 그룹 동시 처리 완료!")
+        print(f"⏱️ 전체 소요시간: {total_elapsed_time:.2f}초")
+        
+        # 5. 전체 결과 집계 및 분석
+        print(f"\n📊 [단계4] 전체 결과 분석...")
+        successful_groups = []
+        failed_groups = []
+        
+        for group_index, result in enumerate(group_results):
+            if isinstance(result, Exception):
+                failed_groups.append({
+                    'group_index': group_index,
+                    'template_id': agents_data[group_index].template_id,
+                    'error': str(result)
+                })
+                print(f"   ❌ [그룹 {group_index}] 실패: {result}")
+            else:
+                successful_groups.append({
+                    'group_index': group_index,
+                    'template_id': agents_data[group_index].template_id,
+                    **result
+                })
+                overall_successful += result['successful']
+                overall_failed += result['failed']
+                overall_created += result['created']
+                print(f"   ✅ [그룹 {group_index}] 성공: "
+                      f"생성 {result['created']}, 성공 {result['successful']}, 실패 {result['failed']}")
+        
+        # 6. 최종 상태 일괄 업데이트
+        print(f"\n📝 [단계5] 최종 상태 일괄 업데이트...")
+        
+        # 시뮬레이션 진행 상황 업데이트
+        await status_manager.update_simulation_status(
+            simulation_id,
+            total_created_pods=overall_created,
+            total_successful_pods=overall_successful,
+            total_failed_pods=overall_failed
+        )
+        
+        # 그룹별 최종 상태 일괄 업데이트
+        await update_all_groups_final_status(
+            sessionmaker, 
+            group_metadata_list, 
+            group_results
+        )
+        
+        print(f"📈 최종 결과: 생성={overall_created}, 성공={overall_successful}, 실패={overall_failed}")
+        
+        # 과도한 실패 검사
+        if overall_created > 0:
+            failure_rate = overall_failed / overall_created
+            if failure_rate > 0.8:  # 80% 이상 실패
+                print(f"과도한 실패 감지 (실패율: {failure_rate:.1%})")
+                await status_manager.update_simulation_status(
+                    simulation_id,
+                    pod_creation_status="PARTIAL_SUCCESS"
+                )
+            else:
+                # 전체 완료 처리
+                await finalize_simulation_success(
+                    sessionmaker, 
+                    simulation_id, 
+                    status_manager,
+                    overall_successful,
+                    overall_failed,
+                    overall_created
+                )
+        else:
+            # Pod가 하나도 생성되지 않은 경우
+            await status_manager.update_simulation_status(
+                simulation_id,
+                pod_creation_status="FAILED"
+            )
+        
+        print(f"=== 병렬 패턴 완료: 생성={overall_created}, 성공={overall_successful}, 실패={overall_failed} ===")
+        
+    except Exception as e:
+        print(f"ERROR: Parallel 패턴 백그라운드 작업 실패: {e}")
+        await handle_simulation_failure(sessionmaker, simulation_id, status_manager, str(e))
+        raise
+
+    print(f"--- [Parallel 패턴] 백그라운드 작업 종료 (Simulation ID: {simulation_id}) ---")
+
+async def process_group_pod_creation_safe(
+    sessionmaker,
+    group_metadata: dict,
+    status_manager
+) -> dict:
+    """
+    그룹별 Pod 생성 처리
+    """
+    
+    group_index = group_metadata['group_index']
+    group_id = group_metadata['group_id']
+    agent_data = group_metadata['agent_data']
+    template_data = group_metadata['template_data']
+    simulation_data = group_metadata['simulation_data']
+    
+    group_successful = 0
+    group_failed = 0
+    group_created = 0
+    
+    print(f"🎯 [그룹 {group_index}] Pod 생성 시작! (ID: {group_id})")
+    
+    try:
+        # 1. 그룹 내 인스턴스들 생성
+        print(f"   [그룹 {group_index}] 인스턴스 {agent_data['autonomous_agent_count']}개 생성 중...")
+        instance_data_list = []
+        
+        async with sessionmaker() as session:
+            instances = []
+            
+            for i in range(agent_data['autonomous_agent_count']):
+                instance = Instance(
+                    name=f"{simulation_data['name']}_group{group_index}_pod_{i}",
+                    description=f"그룹 {group_index} Pod {i} (병렬 처리)",
+                    pod_namespace=simulation_data['namespace'],
+                    simulation_id=simulation_data['id'],
+                    template_id=template_data['template_id'],
+                    status="PENDING",
+                    group_id=group_id,  # 그룹과 연결
+                )
+                session.add(instance)
+                instances.append(instance)
+            
+            await session.flush()
+            
+            # 인스턴스 데이터 추출
+            for instance in instances:
+                instance_data = {
+                    'id': instance.id,
+                    'name': instance.name,
+                    'description': instance.description,
+                    'pod_namespace': instance.pod_namespace,
+                    'simulation_id': instance.simulation_id,
+                    'template_id': instance.template_id,
+                    'status': instance.status,
+                    'group_id': instance.group_id
+                }
+                instance_data_list.append(instance_data)
+            
+            await session.commit()
+            print(f"   [그룹 {group_index}] 인스턴스 {len(instance_data_list)}개 DB 저장 완료!")
+        
+        # 2. 그룹 내 Pod들 동시 생성
+        print(f"   [그룹 {group_index}] Pod {len(instance_data_list)}개 동시 생성 시작!")
+        
+        # ✅ template_data에서 Pod 생성용 객체 재구성
+        Template = namedtuple('Template', ['template_id', 'type', 'description', 'bag_file_path', 'topics'])
+        template_obj = Template(**template_data)
+        
+        pod_creation_tasks = []
+        for i, instance_data in enumerate(instance_data_list):
+            task = create_single_pod_with_status(instance_data, template_obj, status_manager)
+            pod_creation_tasks.append(task)
+        
+        group_start_time = datetime.now()
+        results = await asyncio.gather(*pod_creation_tasks, return_exceptions=True)
+        group_end_time = datetime.now()
+        group_elapsed_time = (group_end_time - group_start_time).total_seconds()
+        
+        print(f"   [그룹 {group_index}] Pod 동시 생성 완료! 소요시간: {group_elapsed_time:.2f}초")
+        
+        # 3. 결과 집계
+        successful_pods = []
+        failed_pods = []
+        
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                failed_pods.append({'index': i, 'error': str(result)})
+                group_failed += 1
+                print(f"      [그룹 {group_index}] Pod {i} 실패: {result}")
+            else:
+                successful_pods.append({'index': i, 'pod_name': result})
+                group_successful += 1
+                print(f"      [그룹 {group_index}] Pod {i} 성공: {result}")
+        
+        group_created = len(results)
+        
+        print(f"✅ [그룹 {group_index}] Pod 생성 완료! 생성: {group_created}, 성공: {group_successful}, 실패: {group_failed}")
+        
+        return {
+            'successful': group_successful,
+            'failed': group_failed,
+            'created': group_created,
+            'elapsed_time': group_elapsed_time,
+            'group_id': group_id
+        }
+        
+    except Exception as e:
+        print(f"❌ [그룹 {group_index}] 전체 실패: {e}")
+        raise e
+
+async def update_all_groups_final_status(
+    sessionmaker,
+    group_metadata_list: list[dict],
+    group_results: list
+):
+    """
+    모든 그룹의 최종 상태를 일괄 업데이트
+    (별도 세션에서 안전하게 처리)
+    """
+    print("📝 그룹별 최종 상태 일괄 업데이트 시작...")
+    
+    try:
+        async with sessionmaker() as session:
+            updated_count = 0
+            
+            for i, group_metadata in enumerate(group_metadata_list):
+                group_id = group_metadata['group_id']
+                group_index = group_metadata['group_index']
+                
+                # 결과 확인
+                if i < len(group_results) and not isinstance(group_results[i], Exception):
+                    result = group_results[i]
+                    
+                    # 그룹 상태 결정
+                    final_status = "COMPLETED"
+                    if result['created'] > 0:
+                        failure_rate = result['failed'] / result['created']
+                        if failure_rate > 0.8:
+                            final_status = "PARTIAL_SUCCESS"
+                    
+                    # 그룹 업데이트
+                    group = await session.get(SimulationGroup, group_id)
+                    if group:
+                        group.status = final_status
+                        group.successful_agents = result['successful']
+                        group.failed_agents = result['failed']
+                        group.created_pods_count = result['created']
+                        group.execution_completed_at = datetime.now()
+                        group.updated_at = datetime.now()
+                        session.add(group)
+                        updated_count += 1
+                        
+                        print(f"   ✅ [그룹 {group_index}] 상태 업데이트: {final_status}")
+                else:
+                    # 실패한 그룹
+                    group = await session.get(SimulationGroup, group_id)
+                    if group:
+                        group.status = "FAILED"
+                        group.execution_completed_at = datetime.now()
+                        group.updated_at = datetime.now()
+                        session.add(group)
+                        updated_count += 1
+                        
+                        print(f"   ❌ [그룹 {group_index}] 상태 업데이트: FAILED")
+            
+            await session.commit()
+            print(f"📝 그룹 상태 일괄 업데이트 완료: {updated_count}개 그룹")
+            
+    except Exception as e:
+        print(f"❌ 그룹 상태 일괄 업데이트 실패 (무시하고 계속): {e}")

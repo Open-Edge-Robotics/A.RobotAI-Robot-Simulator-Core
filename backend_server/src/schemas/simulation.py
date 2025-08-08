@@ -34,7 +34,8 @@ class SequentialPattern(BaseModel):
             "template_id": 1,
             "autonomous_agent_count": 5,
             "execution_time": 1800,
-            "delay_after_completion": 300
+            "delay_after_completion": 300,
+            "repeat_count": 2
         }]]
     )
 
@@ -45,7 +46,8 @@ class ParallelPattern(BaseModel):
         examples=[[{
             "template_id": 1,
             "autonomous_agent_count": 6,
-            "execution_time": 7200
+            "execution_time": 7200,
+            "repeat_count": 2
         }]]
     )
 
@@ -88,18 +90,16 @@ class SimulationCreateResponseModel(GlobalResponseModel):
             "example": {
                 "statusCode": 201,
                 "data": {
-                    "simulationId": 1,
-                    "simulationName": "simulation1",
-                    "simulationDescription": "시뮬레이션1 입니다~~",
-                    "simulationNamespace": "simulation-1",
-                    "templateId": 1,
-                    "autonomousAgentCount": 5,
-                    "executionTime": 300,
-                    "delayTime": 10,
-                    "repeatCount": 3,
-                    "scheduledStartTime": "2024-12-01T09:00:00",
-                    "scheduledEndTime": "2024-12-01T18:00:00",
-                    "mecId": "mec-01"
+                    "simulationId": 8,
+                    "simulationName": "병렬 실행 시뮬레이션 테스트",
+                    "simulationDescription": "2개 그룹 병렬적으로 실행하는 시뮬레이션",
+                    "patternType": "parallel",
+                    "status": "CREATED",
+                    "simulationNamespace": "simulation-8",
+                    "mecId": "mec-01",
+                    "createdAt": "2025-08-08 04:38:51.022791",
+                    "totalExpectedPods": 4,
+                    "podCreationStatus": "PENDING"
                 },
                 "message": API.CREATE_SIMULATION.value
             }
