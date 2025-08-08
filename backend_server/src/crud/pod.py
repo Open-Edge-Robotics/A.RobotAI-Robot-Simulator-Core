@@ -296,14 +296,34 @@ class PodService:
     @staticmethod
     async def create_namespace(simulation_id: int):
         name = f"simulation-{simulation_id}"
-        metadata = client.V1ObjectMeta(name=name)
-        namespace = client.V1Namespace(metadata=metadata)
-        pod_client.create_namespace(namespace)
-        return name
+        try:
+            metadata = client.V1ObjectMeta(name=name)
+            namespace = client.V1Namespace(metadata=metadata)
+            
+            # 생성 시도
+            result = pod_client.create_namespace(namespace)
+            
+            # 생성 확인
+            if result:
+                print(f"네임스페이스 '{name}' 생성 성공")
+                return name
+            else:
+                raise Exception("네임스페이스 생성 결과가 None")
+                
+        except Exception as e:
+            print(f"네임스페이스 '{name}' 생성 실패: {e}")
+            raise Exception(f"네임스페이스 생성 실패: {str(e)}")
 
     @staticmethod
     async def delete_namespace(simulation_id: int):
-        pod_client.delete_namespace(name=f"simulation-{simulation_id}")
+        name = f"simulation-{simulation_id}"
+        try:
+            pod_client.delete_namespace(name=name)
+            print(f"네임스페이스 '{name}' 삭제 성공")
+        except Exception as e:
+            print(f"네임스페이스 '{name}' 삭제 실패: {e}")
+            # 삭제는 실패해도 크리티컬하지 않을 수 있음
+            pass
 
     @staticmethod
     async def get_pod_ip(instance: Instance):
