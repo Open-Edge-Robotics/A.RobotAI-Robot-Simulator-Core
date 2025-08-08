@@ -27,7 +27,7 @@ class Simulation(Base):
     # 상태 및 namespace
     status: Mapped[SimulationStatus] = mapped_column(
         PgEnum(SimulationStatus, name="simulation_status_enum", create_constraint=True),
-        default=SimulationStatus.CREATED,
+        default=SimulationStatus.CREATING,
         nullable=False
     )
     namespace: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

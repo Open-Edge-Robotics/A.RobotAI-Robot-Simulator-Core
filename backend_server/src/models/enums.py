@@ -6,12 +6,14 @@ class PatternType(str, Enum):
     PARALLEL = "parallel"
 
 class SimulationStatus(str, Enum):
-    CREATED = "CREATED"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
-    PAUSED = "PAUSED"
+    CREATING = "CREATING"
+    CREATED = "CREATED"           # 시뮬레이션 메타데이터 생성 완료, Pod 생성 중
+    READY = "READY"               # 모든 Pod 생성 완료, 실행 대기 상태
+    RUNNING = "RUNNING"           # 실제 시뮬레이션 실행 중
+    COMPLETED = "COMPLETED"       # 시뮬레이션 정상 완료
+    FAILED = "FAILED"             # 생성 또는 실행 과정에서 오류 발생
+    CANCELLED = "CANCELLED"       # 사용자에 의해 취소됨
+    PAUSED = "PAUSED"             # 실행 중이던 시뮬레이션 일시정지
     
 class PodCreationStatus(str, Enum):
     PENDING = "PENDING"
