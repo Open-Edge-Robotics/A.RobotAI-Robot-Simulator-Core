@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import Field, validator
+from typing import List, Optional, Union
+from pydantic import BaseModel, Field, field_validator, validator
 
 from .format import GlobalResponseModel
 from settings import BaseSchema
@@ -8,30 +8,67 @@ from utils.my_enum import API
 
 
 ###### 생성 #######
-class SimulationCreateRequest(BaseSchema):
-    # 기본 정보
-    simulation_name: str = Field(examples=["simulation1"])
-    simulation_description: str = Field(examples=["시뮬레이션1 입니다~~"])
+# 1) Sequential 패턴용 Step DTO
+class SequentialStep(BaseModel):
+    step_order: int = Field(..., ge=1, description="단계 순서 (1부터 시작)", examples=[1])
+    template_id: int = Field(..., description="템플릿 ID", examples=[1])
+    autonomous_agent_count: int = Field(..., ge=1, description="해당 단계 자율행동체 수", examples=[5])
+    execution_time: int = Field(..., ge=1, description="단계 실행 시간(초)", examples=[1800])
+    delay_after_completion: int = Field(0, ge=0, description="단계 완료 후 지연 시간(초)", examples=[300])
+    repeat_count: int = Field(..., ge=1, description="동작 실행 반복 횟수", examples=[1])
 
-    # 패턴 설정
-    template_id: int = Field(examples=[1], description="템플릿 ID")
-    autonomous_agent_count: int = Field(examples=[5], description="자율행동체 개수", ge=1)
-    execution_time: int = Field(examples=[300], description="실행 시간(초)", ge=1)
-    delay_time: Optional[int] = Field(None, examples=[10], description="지연 시간(초)", ge=0)
-    repeat_count: Optional[int] = Field(None, examples=[3], description="반복 횟수 (None이면 무한 반복)", ge=1)
+# 2) Parallel 패턴용 Agent DTO
+class ParallelAgent(BaseModel):
+    template_id: int = Field(..., description="템플릿 ID", examples=[1])
+    autonomous_agent_count: int = Field(..., ge=1, description="자율행동체 수", examples=[6])
+    execution_time: int = Field(..., ge=1, description="실행 시간(초)", examples=[7200])
+    repeat_count: int = Field(..., ge=1, description="동작 실행 반복 횟수", examples=[1])
 
-    # 시작/종료 시간 설정
-    scheduled_start_time: Optional[datetime] = Field(None, description="시작 시간")
-    scheduled_end_time: Optional[datetime] = Field(None, description="종료 시간")
+# 4) 패턴 타입 별 패턴 데이터 DTO
+class SequentialPattern(BaseModel):
+    steps: List[SequentialStep] = Field(
+        ..., 
+        description="순차 실행 단계 리스트",
+        examples=[[{
+            "step_order": 1,
+            "template_id": 1,
+            "autonomous_agent_count": 5,
+            "execution_time": 1800,
+            "delay_after_completion": 300,
+            "repeat_count": 2
+        }]]
+    )
 
-    # MEC 선택
-    mec_id: Optional[str] = Field(None, examples=["mec-01"], description="MEC 식별자")
+class ParallelPattern(BaseModel):
+    agents: List[ParallelAgent] = Field(
+        ..., 
+        description="병렬 실행 에이전트 리스트",
+        examples=[[{
+            "template_id": 1,
+            "autonomous_agent_count": 6,
+            "execution_time": 7200,
+            "repeat_count": 2
+        }]]
+    )
 
-    @validator('scheduled_end_time')
-    def validate_end_time(cls, v, values):
-        if v and 'scheduled_start_time' in values and values['scheduled_start_time']:
-            if v <= values['scheduled_start_time']:
-                raise ValueError('종료 시간은 시작 시간보다 늦어야 합니다')
+# 5) 상위 SimulationCreateRequest DTO
+class SimulationCreateRequest(BaseModel):
+    simulation_name: str = Field(..., description="시뮬레이션 이름", examples=["순차 실행 시뮬레이션 테스트"])
+    simulation_description: str = Field(..., description="시뮬레이션 설명", examples=["3단계로 나누어 순차적으로 실행하는 시뮬레이션"])
+    pattern_type: str = Field(..., description="시뮬레이션 패턴 타입 ('sequential' 또는 'parallel')", examples=["sequential"])
+    mec_id: str = Field(..., description="MEC 식별자", examples=["mec-01"])
+    
+    pattern: Union[SequentialPattern, ParallelPattern] = Field(..., description="패턴별 상세 실행 계획")
+
+    @field_validator('pattern')
+    @classmethod
+    def validate_pattern(cls, v, info):
+        values = info.data
+        pattern_type = values.get('pattern_type')
+        if pattern_type == 'sequential' and not isinstance(v, SequentialPattern):
+            raise ValueError('pattern_type이 sequential일 때 pattern은 SequentialPattern이어야 합니다.')
+        if pattern_type == 'parallel' and not isinstance(v, ParallelPattern):
+            raise ValueError('pattern_type이 parallel일 때 pattern은 ParallelPattern이어야 합니다.')
         return v
 
 
@@ -39,16 +76,13 @@ class SimulationCreateResponse(BaseSchema):
     simulation_id: int
     simulation_name: str
     simulation_description: str
+    pattern_type: str 
+    status: str 
     simulation_namespace: str
-    template_id: int
-    autonomous_agent_count: int
-    execution_time: int
-    delay_time: Optional[int]
-    repeat_count: Optional[int]
-    scheduled_start_time: Optional[str]
-    scheduled_end_time: Optional[str]
     mec_id: Optional[str]
-
+    created_at: str
+    total_expected_pods: int
+    pod_creation_status: str 
 
 class SimulationCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -56,18 +90,16 @@ class SimulationCreateResponseModel(GlobalResponseModel):
             "example": {
                 "statusCode": 201,
                 "data": {
-                    "simulationId": 1,
-                    "simulationName": "simulation1",
-                    "simulationDescription": "시뮬레이션1 입니다~~",
-                    "simulationNamespace": "simulation-1",
-                    "templateId": 1,
-                    "autonomousAgentCount": 5,
-                    "executionTime": 300,
-                    "delayTime": 10,
-                    "repeatCount": 3,
-                    "scheduledStartTime": "2024-12-01T09:00:00",
-                    "scheduledEndTime": "2024-12-01T18:00:00",
-                    "mecId": "mec-01"
+                    "simulationId": 8,
+                    "simulationName": "병렬 실행 시뮬레이션 테스트",
+                    "simulationDescription": "2개 그룹 병렬적으로 실행하는 시뮬레이션",
+                    "patternType": "parallel",
+                    "status": "CREATED",
+                    "simulationNamespace": "simulation-8",
+                    "mecId": "mec-01",
+                    "createdAt": "2025-08-08 04:38:51.022791",
+                    "totalExpectedPods": 4,
+                    "podCreationStatus": "PENDING"
                 },
                 "message": API.CREATE_SIMULATION.value
             }
@@ -90,8 +122,6 @@ class SimulationListResponse(BaseSchema):
     execution_time: Optional[int]
     delay_time: Optional[int]
     repeat_count: Optional[int]
-    scheduled_start_time: Optional[str]
-    scheduled_end_time: Optional[str]
     mec_id: Optional[str]
 
 

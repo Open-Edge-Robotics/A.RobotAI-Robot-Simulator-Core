@@ -17,5 +17,7 @@ class Template(Base):
     topics: Mapped[str] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    simulations: Mapped[List["Simulation"]] = relationship(back_populates="template", lazy="selectin")
     instances: Mapped[List["Instance"]] = relationship(back_populates="template", lazy="selectin")
+
+    def __repr__(self) -> str:
+        return f"Template => {self.type} ({self.template_id})"

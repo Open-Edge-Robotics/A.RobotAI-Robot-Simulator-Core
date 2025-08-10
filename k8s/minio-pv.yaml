@@ -3,7 +3,6 @@ kind: PersistentVolume
 metadata:
   name: minio-pv
 spec:
-  storageClassName: manual
   capacity:
     storage: 1Gi
   accessModes:
@@ -19,7 +18,6 @@ metadata:
   name: minio-pvc
   namespace: robot
 spec:
-  storageClassName: manual
   accessModes:
     - ReadWriteOnce
   resources:
