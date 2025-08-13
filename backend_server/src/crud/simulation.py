@@ -1,13 +1,12 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import traceback
-import uuid
 from fastapi import HTTPException, status
 from sqlalchemy import select, exists, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
 
-from models.enums import PatternType, PodCreationStatus, SimulationStatus
+from models.enums import PatternType, SimulationStatus
 from utils.simulation_background import (
     handle_parallel_pattern_background,
     handle_sequential_pattern_background,
@@ -71,13 +70,12 @@ class SimulationService:
             created_namespace = response_data['namespace']
             
             print(f"시뮬레이션 생성 완료: ID={simulation_id}, namespace={created_namespace}")
-
-            # [단계 3] 상태 관리자 초기화
+            
             print("\n[단계 3] 상태 관리자 초기화")
             from utils.status_update_manager import init_status_manager
             init_status_manager(self.sessionmaker)
 
-            # [단계 4] 백그라운드 작업 시작
+            # [단계 3] 백그라운드 작업 시작
             print("\n[단계 4] 패턴 생성 (백그라운드) 처리 시작")
             await self._start_background_pattern_creation(
                 background_tasks, 
@@ -95,8 +93,7 @@ class SimulationService:
                 simulation_namespace=response_data['namespace'],
                 mec_id=response_data['mec_id'],
                 created_at=str(response_data['created_at']),
-                total_expected_pods=response_data['total_expected_pods'],
-                pod_creation_status=PodCreationStatus.PENDING
+                total_expected_pods=response_data['total_expected_pods']
             )
             
         except HTTPException:
@@ -156,25 +153,19 @@ class SimulationService:
                             detail=f"시뮬레이션 이름이 이미 존재합니다."
                         )
                     
-                    # CREATING 상태로 DB에 저장 (일관된 타입 사용)
                     new_simulation = Simulation(
                         name=simulation_create_data.simulation_name,
                         description=simulation_create_data.simulation_description,
                         pattern_type=simulation_create_data.pattern_type,
                         mec_id=simulation_create_data.mec_id,
-                        status=SimulationStatus.CREATING,  
-                        pod_creation_status=PodCreationStatus.PENDING,
+                        status=SimulationStatus.INITIATING,
                         total_expected_pods=total_expected_pods,
-                        total_created_pods=0,
-                        total_successful_pods=0,
-                        total_failed_pods=0,
+                        total_pods=0,
                         namespace=None,
                     )
                     db_session.add(new_simulation)
                     await db_session.flush()  # ID 생성
                     simulation_id = new_simulation.id
-                    
-                    print(f"DB에 CREATING 상태로 저장 완료: ID={simulation_id}")
                     # 트랜잭션 커밋됨
             
             # [2단계] 네임스페이스 생성 (트랜잭션 외부에서)
@@ -197,16 +188,13 @@ class SimulationService:
                     detail=f"네임스페이스 생성 실패: {str(ns_error)}"
                 )
             
-            # [3단계] 상태를 CREATED로 업데이트 (별도 트랜잭션)
+            # [3단계] 네임스페이스 정보 업데이트
             async with self.sessionmaker() as db_session:
                 async with db_session.begin():
                     # 다시 조회해서 업데이트
                     simulation = await db_session.get(Simulation, simulation_id)
                     if not simulation:
                         raise Exception(f"시뮬레이션 ID {simulation_id}를 찾을 수 없습니다")
-                    
-                    # 상태를 CREATED로 업데이트
-                    simulation.status = SimulationStatus.CREATED
                     simulation.namespace = created_namespace
                     
                     print(f"시뮬레이션 상태 업데이트 완료: ID={simulation_id}, namespace={created_namespace}")

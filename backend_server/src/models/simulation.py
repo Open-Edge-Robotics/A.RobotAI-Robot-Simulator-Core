@@ -4,7 +4,7 @@ from typing import List, Optional
 from .simulation_groups import SimulationGroup
 from .simulation_steps import SimulationStep
 
-from .enums import PatternType, PodCreationStatus, SimulationStatus
+from .enums import PatternType, SimulationStatus
 from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as PgEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,23 +27,14 @@ class Simulation(Base):
     # 상태 및 namespace
     status: Mapped[SimulationStatus] = mapped_column(
         PgEnum(SimulationStatus, name="simulation_status_enum", create_constraint=True),
-        default=SimulationStatus.CREATING,
+        default=SimulationStatus.INITIATING,
         nullable=False
     )
     namespace: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     
-    # Pod 생성 상태 관리 (실시간 모니터링용)
-    pod_creation_status: Mapped[PodCreationStatus] = mapped_column(
-        PgEnum(PodCreationStatus, name="pod_creation_status_enum", create_constraint=True),
-        default=PodCreationStatus.PENDING,
-        nullable=False
-    )
-    
     # 진행률 추적 (실시간 모니터링용)
     total_expected_pods: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    total_created_pods: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    total_successful_pods: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    total_failed_pods: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_pods: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     
     # 백그라운드 작업 관리
     background_task_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -53,9 +44,6 @@ class Simulation(Base):
     # 실행 통계
     actual_start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     actual_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    total_agents_count: Mapped[int] = mapped_column(Integer, default=0)
-    successful_agents_count: Mapped[int] = mapped_column(Integer, default=0)
-    failed_agents_count: Mapped[int] = mapped_column(Integer, default=0) 
 
     # 메타 정보
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable = True)

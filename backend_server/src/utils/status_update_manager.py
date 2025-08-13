@@ -47,14 +47,8 @@ class StatusUpdateManager:
     async def update_simulation_status(
         self, 
         simulation_id: int, 
-        pod_creation_status: str = None,
-        current_step_order: int = None,
-        current_step_repeat: int = None,
-        total_created_pods: int = None,
-        total_successful_pods: int = None,
-        total_failed_pods: int = None,
-        user_action_required: bool = None,
-        partial_failure_step_order: int = None
+        status: str = None,
+        total_pods: int = None
     ):
         """시뮬레이션 상태 원자적 업데이트 (안정화)"""
         
@@ -65,27 +59,15 @@ class StatusUpdateManager:
                     raise ValueError(f"Simulation {simulation_id} not found")
                 
                 # 상태 업데이트
-                if pod_creation_status:
-                    simulation.pod_creation_status = pod_creation_status
-                if current_step_order is not None:
-                    simulation.current_step_order = current_step_order
-                if current_step_repeat is not None:
-                    simulation.current_step_repeat = current_step_repeat
-                if total_created_pods is not None:
-                    simulation.total_created_pods = total_created_pods
-                if total_successful_pods is not None:
-                    simulation.total_successful_pods = total_successful_pods
-                if total_failed_pods is not None:
-                    simulation.total_failed_pods = total_failed_pods
-                if user_action_required is not None:
-                    simulation.user_action_required = user_action_required
-                if partial_failure_step_order is not None:
-                    simulation.partial_failure_step_order = partial_failure_step_order
+                if status:
+                    simulation.status = status
+                if total_pods is not None:
+                    simulation.total_pods = total_pods
                 
                 simulation.updated_at = datetime.now()
                 session.add(simulation)
                 
-                print(f"[STATUS UPDATE] Simulation {simulation_id}: {pod_creation_status}")
+                print(f"[STATUS UPDATE] Simulation {simulation_id}: {status}")
         
         await self.safe_update_with_retry(_update)
     
@@ -262,7 +244,6 @@ class StatusUpdateManager:
             return {
                 'simulation_id': simulation_id,
                 'simulation_status': simulation.status,
-                'pod_creation_status': simulation.pod_creation_status,
                 'total_instances': len(instances),
                 'status_breakdown': status_counts,
                 'progress_percentage': self._calculate_progress_percentage(simulation, instances)
