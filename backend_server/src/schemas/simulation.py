@@ -10,61 +10,56 @@ from utils.my_enum import API
 ###### 생성 #######
 # 1) Sequential 패턴용 Step DTO
 class SequentialStep(BaseModel):
-    step_order: int = Field(..., ge=1, description="단계 순서 (1부터 시작)", examples=[1])
-    template_id: int = Field(..., description="템플릿 ID", examples=[1])
-    autonomous_agent_count: int = Field(..., ge=1, description="해당 단계 자율행동체 수", examples=[5])
-    execution_time: int = Field(..., ge=1, description="단계 실행 시간(초)", examples=[1800])
-    delay_after_completion: int = Field(0, ge=0, description="단계 완료 후 지연 시간(초)", examples=[300])
-    repeat_count: int = Field(..., ge=1, description="동작 실행 반복 횟수", examples=[1])
+    step_order: int = Field(..., alias="stepOrder", ge=1, description="단계 순서 (1부터 시작)")
+    template_id: int = Field(..., alias="templateId", description="템플릿 ID")
+    autonomous_agent_count: int = Field(..., alias="autonomousAgentCount", ge=1, description="자율행동체 수")
+    execution_time: int = Field(..., alias="executionTime", ge=1, description="단계 실행 시간(초)")
+    delay_after_completion: int = Field(0, alias="delayAfterCompletion", ge=0, description="단계 완료 후 지연 시간(초)")
+    repeat_count: int = Field(..., alias="repeatCount", ge=1, description="동작 실행 반복 횟수")
+
+    class Config:
+        allow_population_by_field_name = True
 
 # 2) Parallel 패턴용 Agent DTO
 class ParallelAgent(BaseModel):
-    template_id: int = Field(..., description="템플릿 ID", examples=[1])
-    autonomous_agent_count: int = Field(..., ge=1, description="자율행동체 수", examples=[6])
-    execution_time: int = Field(..., ge=1, description="실행 시간(초)", examples=[7200])
-    repeat_count: int = Field(..., ge=1, description="동작 실행 반복 횟수", examples=[1])
+    template_id: int = Field(..., alias="templateId", description="템플릿 ID")
+    autonomous_agent_count: int = Field(..., alias="autonomousAgentCount", ge=1, description="자율행동체 수")
+    execution_time: int = Field(..., alias="executionTime", ge=1, description="실행 시간(초)")
+    repeat_count: int = Field(..., alias="repeatCount", ge=1, description="동작 실행 반복 횟수")
+
+    class Config:
+        allow_population_by_field_name = True
+
 
 # 4) 패턴 타입 별 패턴 데이터 DTO
 class SequentialPattern(BaseModel):
-    steps: List[SequentialStep] = Field(
-        ..., 
-        description="순차 실행 단계 리스트",
-        examples=[[{
-            "step_order": 1,
-            "template_id": 1,
-            "autonomous_agent_count": 5,
-            "execution_time": 1800,
-            "delay_after_completion": 300,
-            "repeat_count": 2
-        }]]
-    )
+    steps: List[SequentialStep] = Field(..., description="순차 실행 단계 리스트")
+
+    class Config:
+        allow_population_by_field_name = True
 
 class ParallelPattern(BaseModel):
-    agents: List[ParallelAgent] = Field(
-        ..., 
-        description="병렬 실행 에이전트 리스트",
-        examples=[[{
-            "template_id": 1,
-            "autonomous_agent_count": 6,
-            "execution_time": 7200,
-            "repeat_count": 2
-        }]]
-    )
+    agents: List[ParallelAgent] = Field(..., description="병렬 실행 에이전트 리스트")
+
+    class Config:
+        allow_population_by_field_name = True
 
 # 5) 상위 SimulationCreateRequest DTO
 class SimulationCreateRequest(BaseModel):
-    simulation_name: str = Field(..., description="시뮬레이션 이름", examples=["순차 실행 시뮬레이션 테스트"])
-    simulation_description: str = Field(..., description="시뮬레이션 설명", examples=["3단계로 나누어 순차적으로 실행하는 시뮬레이션"])
-    pattern_type: str = Field(..., description="시뮬레이션 패턴 타입 ('sequential' 또는 'parallel')", examples=["sequential"])
-    mec_id: str = Field(..., description="MEC 식별자", examples=["mec-01"])
-    
+    simulation_name: str = Field(..., alias="simulationName", description="시뮬레이션 이름")
+    simulation_description: str = Field(..., alias="simulationDescription", description="시뮬레이션 설명")
+    pattern_type: str = Field(..., alias="patternType", description="시뮬레이션 패턴 타입 ('sequential' 또는 'parallel')")
+    mec_id: str = Field(..., alias="mecId", description="MEC 식별자")
     pattern: Union[SequentialPattern, ParallelPattern] = Field(..., description="패턴별 상세 실행 계획")
+
+    class Config:
+        allow_population_by_field_name = True
 
     @field_validator('pattern')
     @classmethod
     def validate_pattern(cls, v, info):
         values = info.data
-        pattern_type = values.get('pattern_type')
+        pattern_type = values.get('pattern_type') or values.get('patternType')
         if pattern_type == 'sequential' and not isinstance(v, SequentialPattern):
             raise ValueError('pattern_type이 sequential일 때 pattern은 SequentialPattern이어야 합니다.')
         if pattern_type == 'parallel' and not isinstance(v, ParallelPattern):
@@ -82,7 +77,6 @@ class SimulationCreateResponse(BaseSchema):
     mec_id: Optional[str]
     created_at: str
     total_expected_pods: int
-    pod_creation_status: str 
 
 class SimulationCreateResponseModel(GlobalResponseModel):
     model_config = {
@@ -98,8 +92,7 @@ class SimulationCreateResponseModel(GlobalResponseModel):
                     "simulationNamespace": "simulation-8",
                     "mecId": "mec-01",
                     "createdAt": "2025-08-08 04:38:51.022791",
-                    "totalExpectedPods": 4,
-                    "podCreationStatus": "PENDING"
+                    "totalExpectedPods": 4
                 },
                 "message": API.CREATE_SIMULATION.value
             }
