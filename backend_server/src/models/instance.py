@@ -17,7 +17,6 @@ class Instance(Base):
     pod_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     pod_namespace: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     
-    # Instance 상태 추적 (실시간 모니터링용)
     status: Mapped[InstanceStatus] = mapped_column(
         PgEnum(InstanceStatus, name="instance_status_enum", create_constraint=True),
         default=InstanceStatus.PENDING,
@@ -31,10 +30,6 @@ class Instance(Base):
     # Pod 생성 시간 추적 (실시간 모니터링용)
     pod_creation_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     pod_creation_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    
-    # 재시도 정보 (부분 실패 처리용)
-    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    max_retries: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     
     # Step/Group 정보
     step_order: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 순차 실행용
