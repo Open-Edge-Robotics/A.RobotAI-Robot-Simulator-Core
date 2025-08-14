@@ -1,11 +1,14 @@
 from datetime import datetime
 import traceback
+from typing import Tuple, List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy import select, exists, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
 
+from repositories.simulation_repository import SimulationRepository
+from schemas.pagination import PaginationMeta, PaginationParams
 from models.enums import PatternType, SimulationStatus
 from utils.simulation_background import (
     handle_parallel_pattern_background,
@@ -19,22 +22,24 @@ from models.instance import Instance
 from models.simulation import Simulation
 from schemas.simulation import (
     SimulationCreateRequest,
+    SimulationListItem,
     SimulationListResponse,
     SimulationCreateResponse,
     SimulationDeleteResponse,
     SimulationControlResponse,
     SimulationPatternUpdateRequest,
     SimulationPatternUpdateResponse,
+    SimulationOverview
 )
 from utils.my_enum import PodStatus, API
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-
 class SimulationService:
-    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker):
+    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository):
         self.session = session
         self.sessionmaker = sessionmaker
+        self.repository = repository
         self.ros_service = RosService()
         self.pod_service = PodService()
         self.templates_service = TemplateService(session)
@@ -326,7 +331,33 @@ class SimulationService:
                         print(f"시뮬레이션 레코드 정리 완료: {simulation_id}")
         except Exception as e:
             print(f"시뮬레이션 레코드 정리 실패: {e}")
-            raise            
+            raise         
+        
+    async def get_simulations_with_pagination(self, pagination: PaginationParams) -> Tuple[List[SimulationListItem], PaginationMeta]:
+        """페이지네이션된 시뮬레이션 목록 조회"""
+        
+        # Repository에서 데이터 조회
+        simulations, total_count = await self.repository.find_all_with_pagination(pagination)
+        
+        # 페이지네이션 검증
+        self._validate_pagination_params(pagination, total_count)
+ 
+        # 비즈니스 로직: 응답 데이터 변환
+        simulation_items = self._convert_to_list_items(simulations)
+        
+        # 페이지네이션 메타데이터 생성
+        pagination_meta = PaginationMeta.create(
+            page=pagination.page,
+            size=pagination.size,
+            total_items=total_count
+        )
+        
+        return simulation_items, pagination_meta
+    
+    async def get_simulation_overview(self) -> SimulationOverview:
+        overview_data = await self.repository.get_overview()
+        print(overview_data)
+        return SimulationOverview.from_dict(overview_data)
                     
     async def get_all_simulations(self):
         statement = (
@@ -574,3 +605,31 @@ class SimulationService:
             "simulation_name": simulation.name,
             "instances_status": detailed_status,
         }
+    
+    def _validate_pagination_params(self, pagination: PaginationParams, total_count: int) -> None:
+        """페이지네이션 파라미터 검증"""
+        if total_count == 0:
+            return  # 데이터가 없으면 검증 생략
+            
+        max_page = (total_count + pagination.size - 1) // pagination.size
+        if pagination.page > max_page:
+            raise ValueError(f"페이지 번호가 범위를 벗어났습니다. 최대 페이지: {max_page}")
+
+    def _convert_to_list_items(self, simulations: List[Simulation]) -> List[SimulationListItem]:
+        """Simulation 엔티티 리스트를 SimulationListItem 리스트로 변환"""
+        return [self._convert_to_list_item(simulation) for simulation in simulations]
+
+    def _convert_to_list_item(self, sim: Simulation) -> SimulationListItem:
+        """Simulation 엔티티를 SimulationListItem으로 변환 (상태별 데이터 처리)"""
+        
+        sim_dict = {
+            "simulationId": sim.id,
+            "simulationName": sim.name,
+            "patternType": sim.pattern_type.value,
+            "status": sim.status,
+            "mecId": sim.mec_id,
+            "createdAt": sim.created_at,
+            "updatedAt": sim.updated_at
+        }
+        
+        return SimulationListItem(**sim_dict)

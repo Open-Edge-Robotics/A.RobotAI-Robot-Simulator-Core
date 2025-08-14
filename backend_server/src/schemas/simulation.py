@@ -1,7 +1,8 @@
 from datetime import datetime
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any
 from pydantic import BaseModel, Field, field_validator, validator
 
+from .pagination import PaginationMeta
 from .format import GlobalResponseModel
 from settings import BaseSchema
 from utils.my_enum import API
@@ -18,7 +19,7 @@ class SequentialStep(BaseModel):
     repeat_count: int = Field(..., alias="repeatCount", ge=1, description="동작 실행 반복 횟수")
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
 
 # 2) Parallel 패턴용 Agent DTO
 class ParallelAgent(BaseModel):
@@ -28,7 +29,7 @@ class ParallelAgent(BaseModel):
     repeat_count: int = Field(..., alias="repeatCount", ge=1, description="동작 실행 반복 횟수")
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
 
 
 # 4) 패턴 타입 별 패턴 데이터 DTO
@@ -36,13 +37,13 @@ class SequentialPattern(BaseModel):
     steps: List[SequentialStep] = Field(..., description="순차 실행 단계 리스트")
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
 
 class ParallelPattern(BaseModel):
     agents: List[ParallelAgent] = Field(..., description="병렬 실행 에이전트 리스트")
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
 
 # 5) 상위 SimulationCreateRequest DTO
 class SimulationCreateRequest(BaseModel):
@@ -53,7 +54,7 @@ class SimulationCreateRequest(BaseModel):
     pattern: Union[SequentialPattern, ParallelPattern] = Field(..., description="패턴별 상세 실행 계획")
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
 
     @field_validator('pattern')
     @classmethod
@@ -148,6 +149,127 @@ class SimulationListResponseModel(GlobalResponseModel):
 
     pass
 
+class SimulationListItem(BaseModel):
+    """시뮬레이션 목록 아이템"""
+    simulation_id: int = Field(alias="simulationId")
+    simulation_name: str = Field(alias="simulationName")
+    pattern_type: str = Field(alias="patternType")
+    status: str
+    mec_id: Optional[str] = Field(None, alias="mecId")
+    created_at: datetime = Field(alias="createdAt", description="생성 시간 (항상 존재)")
+    updated_at: datetime = Field(alias="updatedAt", description="마지막 업데이트 시간 (항상 존재)")
+
+    class Config:
+        populate_by_name = True
+        
+class SimulationOverview(BaseModel):
+    """시뮬레이션 전체 개요 응답 DTO"""
+    total: int = Field(..., description="전체 시뮬레이션 개수", ge=0)
+    ready: int = Field(..., description="실행 대기 중인 시뮬레이션 개수", ge=0)
+    running: int = Field(..., description="실행 중인 시뮬레이션 개수", ge=0)
+    completed: int = Field(..., description="완료된 시뮬레이션 개수", ge=0)
+    failed: int = Field(..., description="실패한 시뮬레이션 개수", ge=0)
+    
+    class Config:
+        """Pydantic 설정"""
+        json_schema_extra = {
+            "example": {
+                "total": 100,
+                "ready": 0,
+                "running": 25,
+                "completed": 60,
+                "failed": 15
+            }
+        }
+    
+    @classmethod
+    def from_dict(cls, data) -> "SimulationOverview":
+        """딕셔너리에서 DTO 객체 생성"""
+        # 이미 SimulationOverview 인스턴스인 경우 그대로 반환
+        if isinstance(data, cls):
+            return data
+        
+        # 딕셔너리가 아닌 경우 에러
+        if not isinstance(data, dict):
+            raise TypeError(f"Expected dict, got {type(data)}")
+            
+        return cls(**data)
+    
+    def to_dict(self) -> Dict[str, int]:
+        """DTO 객체를 딕셔너리로 변환"""
+        return {
+            "total": self.total,
+            "ready": self.ready,
+            "running": self.running,
+            "completed": self.completed,
+            "failed": self.failed
+        }
+
+class SimulationListData(BaseModel):
+    """시뮬레이션 목록 데이터"""
+    overview: SimulationOverview = Field(..., description="시뮬레이션 전체 개요")
+    simulations: List[SimulationListItem] = Field(..., description="시뮬레이션 목록")
+    pagination: PaginationMeta = Field(..., description="페이지네이션 정보")
+        
+class SimulationListResponse(BaseModel):
+    """시뮬레이션 목록 응답 DTO"""
+    status: str = Field(default="success", description="응답 상태")
+    message: str = Field(..., description="응답 메시지")
+    data: SimulationListData = Field(..., description="응답 데이터")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "success",
+                "message": "시뮬레이션 목록 조회 성공",
+                "data": {
+                    "overview": {
+                        "total": 100,
+                        "ready": 0,
+                        "running": 25,
+                        "completed": 60,
+                        "failed": 15
+                    },
+                    "simulations": [
+                        {
+                            "id": "sim-123",
+                            "name": "테스트 시뮬레이션",
+                            "status": "running",
+                            "created_at": "2024-01-01T00:00:00Z"
+                        }
+                    ],
+                    "pagination": {
+                        "page": 1,
+                        "limit": 20,
+                        "total": 100,
+                        "total_pages": 5,
+                        "hasNext": True,
+                        "hasPrevious": False
+                    }
+                }
+            }
+        }
+
+
+class SimulationListResponseFactory:
+    """시뮬레이션 목록 응답 생성 팩토리"""
+    
+    @staticmethod
+    def create(
+        simulations: List[SimulationListItem],
+        overview_data: SimulationOverview,
+        pagination_meta: PaginationMeta,
+        message: str = "시뮬레이션 목록 조회 성공"
+    ) -> SimulationListResponse:
+        """시뮬레이션 목록 응답 생성"""
+        return SimulationListResponse(
+            message=message,
+            data=SimulationListData(
+                overview=overview_data,
+                simulations=simulations,
+                pagination=pagination_meta
+            )
+        )
 
 ###### 패턴 설정 업데이트 #######
 class SimulationPatternUpdateRequest(BaseSchema):

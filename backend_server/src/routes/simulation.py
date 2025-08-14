@@ -1,13 +1,21 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+import traceback
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from repositories.simulation_repository import SimulationRepository
+from schemas.pagination import PaginationParams
 from crud.simulation import SimulationService
 from database.db_conn import get_db, async_session
 from schemas.simulation import *
 from utils.my_enum import API
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
+
+def get_simulation_service(db: AsyncSession = Depends(get_db)) -> SimulationService:
+    """SimulationService 의존성 주입"""
+    repository = SimulationRepository(db)
+    return SimulationService(db, async_session, repository)
 
 
 @router.post(
@@ -20,10 +28,10 @@ router = APIRouter(prefix="/simulation", tags=["Simulation"])
 async def create_simulation(
     simulation_create_data: SimulationCreateRequest,
     background_tasks: BackgroundTasks, 
-    session: AsyncSession = Depends(get_db)
+    service: SimulationService = Depends(get_simulation_service)
 ):
     """새로운 시뮬레이션 생성 (고도화된 패턴 설정 포함)"""
-    new_simulation = await SimulationService(session, async_session).create_simulation(simulation_create_data, background_tasks)
+    new_simulation = await service.create_simulation(simulation_create_data, background_tasks)
 
     return SimulationCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
@@ -32,18 +40,36 @@ async def create_simulation(
     )
 
 
-@router.get("", response_model=SimulationListResponseModel, status_code=status.HTTP_200_OK)
+@router.get("", response_model=SimulationListResponse, status_code=status.HTTP_200_OK)
 async def get_simulations(
-        session: AsyncSession = Depends(get_db)
+    page: int = Query(1, ge=1, description="페이지 번호 (1부터 시작)"),
+    size: int = Query(20, ge=1, le=100, description="페이지당 항목 수 (1-100)"),
+    service: SimulationService = Depends(get_simulation_service)
 ):
-    """시뮬레이션 목록 조회 (패턴 설정 정보 포함)"""
-    simulation_list = await SimulationService(session).get_all_simulations()
+    """시뮬레이션 목록 조회 (페이지네이션)"""
+    
+    # 페이지네이션 파라미터 생성
+    pagination = PaginationParams(page=page, size=size)
+    
+    try:
+        # Service에서 비즈니스 로직 처리
+        simulation_items, pagination_meta = await service.get_simulations_with_pagination(pagination)
+        overview_data = await service.get_simulation_overview()
+        
+        return SimulationListResponseFactory.create(
+            simulations=simulation_items,
+            overview_data=overview_data,
+            pagination_meta=pagination_meta
+        )
+    except ValueError as e:
+        print(f"[ValueError] {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        print(f"[Exception] {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="시뮬레이션 목록 조회 중 오류가 발생했습니다")
 
-    return SimulationListResponseModel(
-        status_code=status.HTTP_200_OK,
-        data=simulation_list,
-        message=API.GET_SIMULATIONS.value
-    )
 
 
 @router.put("/{simulation_id}/pattern", response_model=SimulationPatternUpdateResponseModel,
@@ -51,10 +77,10 @@ async def get_simulations(
 async def update_simulation_pattern(
         simulation_id: int,
         pattern_data: SimulationPatternUpdateRequest,
-        session: AsyncSession = Depends(get_db)
+        service: SimulationService = Depends(get_simulation_service)
 ):
     """시뮬레이션 패턴 설정 업데이트"""
-    result = await SimulationService(session).update_simulation_pattern(simulation_id, pattern_data)
+    result = await service.update_simulation_pattern(simulation_id, pattern_data)
 
     return SimulationPatternUpdateResponseModel(
         status_code=status.HTTP_200_OK,
@@ -66,10 +92,10 @@ async def update_simulation_pattern(
 @router.get("/{simulation_id}/status")
 async def get_simulation_detailed_status(
         simulation_id: int,
-        session: AsyncSession = Depends(get_db)
+        service: SimulationService = Depends(get_simulation_service)
 ):
     """시뮬레이션 상세 상태 조회"""
-    detailed_status = await SimulationService(session).get_simulation_detailed_status(simulation_id)
+    detailed_status = await service.get_simulation_detailed_status(simulation_id)
 
     return {
         "status_code": status.HTTP_200_OK,
@@ -80,15 +106,15 @@ async def get_simulation_detailed_status(
 
 @router.post("/action", response_model=SimulationControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_simulation(
-        request: SimulationControlRequest, session: AsyncSession = Depends(get_db)
+        request: SimulationControlRequest, service: SimulationService = Depends(get_simulation_service)
 ):
     """시뮬레이션 실행/중지 (고도화된 기능 포함)"""
 
     if request.action == "start":
-        result = await SimulationService(session).start_simulation(request.simulation_id)
+        result = await service.start_simulation(request.simulation_id)
         message = API.RUN_SIMULATION.value
     elif request.action == "stop":
-        result = await SimulationService(session).stop_simulation(request.simulation_id)
+        result = await service.stop_simulation(request.simulation_id)
         message = API.STOP_SIMULATION.value
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
@@ -103,10 +129,10 @@ async def control_simulation(
 
 @router.delete("/{simulation_id}", response_model=SimulationDeleteResponseModel, status_code=status.HTTP_200_OK)
 async def delete_simulation(
-        simulation_id: int, session: AsyncSession = Depends(get_db)
+        simulation_id: int, service: SimulationService = Depends(get_simulation_service)
 ):
     """시뮬레이션 삭제"""
-    data = await SimulationService(session).delete_simulation(simulation_id)
+    data = await service.delete_simulation(simulation_id)
 
     return SimulationDeleteResponseModel(
         status_code=status.HTTP_200_OK,
