@@ -2,6 +2,7 @@ from datetime import datetime
 import traceback
 from typing import Tuple, List, Optional
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy import select, exists, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
@@ -335,17 +336,19 @@ class SimulationService:
         
     async def get_simulations_with_pagination(self, pagination: PaginationParams) -> Tuple[List[SimulationListItem], PaginationMeta]:
         """페이지네이션된 시뮬레이션 목록 조회"""
+        # 1. 전체 데이터 개수 조회 (페이지 범위 검증용)
+        total_count = await self.repository.count_all()
         
-        # Repository에서 데이터 조회
-        simulations, total_count = await self.repository.find_all_with_pagination(pagination)
+        # 2. 페이지 범위 검증
+        self._validate_pagination_range(pagination, total_count)
         
-        # 페이지네이션 검증
-        self._validate_pagination_params(pagination, total_count)
- 
-        # 비즈니스 로직: 응답 데이터 변환
+        # 3. 실제 데이터 조회 (이미 검증된 파라미터로)
+        simulations = await self.repository.find_all_with_pagination(pagination)
+        
+        # 4. 비즈니스 로직: 응답 데이터 변환
         simulation_items = self._convert_to_list_items(simulations)
         
-        # 페이지네이션 메타데이터 생성
+        # 5. 페이지네이션 메타데이터 생성
         pagination_meta = PaginationMeta.create(
             page=pagination.page,
             size=pagination.size,
@@ -605,9 +608,9 @@ class SimulationService:
             "simulation_name": simulation.name,
             "instances_status": detailed_status,
         }
-    
-    def _validate_pagination_params(self, pagination: PaginationParams, total_count: int) -> None:
-        """페이지네이션 파라미터 검증"""
+
+    def _validate_pagination_range(self, pagination: PaginationParams, total_count: int) -> None:
+        """페이지 범위 검증"""
         if total_count == 0:
             return  # 데이터가 없으면 검증 생략
             
@@ -617,6 +620,8 @@ class SimulationService:
 
     def _convert_to_list_items(self, simulations: List[Simulation]) -> List[SimulationListItem]:
         """Simulation 엔티티 리스트를 SimulationListItem 리스트로 변환"""
+        if not simulations:
+            return []
         return [self._convert_to_list_item(simulation) for simulation in simulations]
 
     def _convert_to_list_item(self, sim: Simulation) -> SimulationListItem:
@@ -625,7 +630,7 @@ class SimulationService:
         sim_dict = {
             "simulationId": sim.id,
             "simulationName": sim.name,
-            "patternType": sim.pattern_type.value,
+            "patternType": sim.pattern_type,
             "status": sim.status,
             "mecId": sim.mec_id,
             "createdAt": sim.created_at,

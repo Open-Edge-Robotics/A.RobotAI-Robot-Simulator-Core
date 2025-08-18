@@ -11,12 +11,8 @@ class SimulationRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def find_all_with_pagination(self, pagination: PaginationParams) -> Tuple[List[Simulation], int]:
+    async def find_all_with_pagination(self, pagination: PaginationParams) -> List[Simulation]:
         """페이지네이션된 시뮬레이션 목록 조회"""
-
-        # 총 개수 조회
-        total_count_result = await self.db.execute(select(func.count(Simulation.id)))
-        total_count = total_count_result.scalar_one()
 
         # 페이지네이션된 데이터 조회
         stmt = (
@@ -28,7 +24,7 @@ class SimulationRepository:
         result = await self.db.execute(stmt)
         simulations = result.scalars().unique().all()
 
-        return simulations, total_count
+        return simulations
 
     async def count_all(self) -> int:
         """전체 시뮬레이션 개수 조회"""

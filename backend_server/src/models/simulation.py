@@ -5,7 +5,7 @@ from .simulation_groups import SimulationGroup
 from .simulation_steps import SimulationStep
 
 from .enums import PatternType, SimulationStatus
-from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as PgEnum
+from sqlalchemy import Float, String, DateTime, Integer, ForeignKey, Enum as PgEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.db_conn import Base
