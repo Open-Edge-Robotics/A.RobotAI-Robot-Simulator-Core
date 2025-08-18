@@ -64,7 +64,7 @@ async def get_simulations(
     except ValueError as e:
         print(f"[ValueError] {e}")
         traceback.print_exc()
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         print(f"[Exception] {e}")
         traceback.print_exc()
