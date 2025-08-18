@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Tuple
 from sqlalchemy import case, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import desc
 
 from models.simulation import Simulation
 from models.enums import PatternType, SimulationStatus
@@ -19,11 +20,41 @@ class SimulationRepository:
     ) -> List[Simulation]:
         """페이지네이션된 시뮬레이션 목록 조회"""
         query = select(Simulation)
+        
+        # 필터 적용
         if pattern_type:
             query = query.where(Simulation.pattern_type == pattern_type)
         if status:
             query = query.where(Simulation.status == status)
 
+        # 상태 우선순위
+        status_priority = case(
+            (Simulation.status == "RUNNING", 1),
+            (Simulation.status == "INITIATING", 2),
+            (Simulation.status == "READY", 3),
+            (Simulation.status == "PAUSED", 4),
+            (Simulation.status == "FAILED", 5),
+            (Simulation.status == "CANCELLED", 6),
+            (Simulation.status == "COMPLETED", 7),
+            else_=8
+        )
+        
+        # 상태별 시간 기준
+        time_priority = case(
+            (Simulation.status == "RUNNING", Simulation.started_at),
+            (Simulation.status == "INITIATING", Simulation.created_at),
+            (Simulation.status == "READY", Simulation.created_at),
+            (Simulation.status == "PAUSED", Simulation.updated_at),
+            (Simulation.status == "FAILED", Simulation.updated_at),
+            (Simulation.status == "CANCELLED", Simulation.updated_at),
+            (Simulation.status == "COMPLETED", Simulation.completed_at),
+            else_=Simulation.created_at
+        )
+        
+        # 복합 우선순위 정렬
+        query = query.order_by(status_priority, desc(time_priority))
+
+        # 페이징 적용
         query = query.offset(pagination.offset).limit(pagination.limit)
         result = await self.db.execute(query)
         simulations = result.scalars().unique().all()
