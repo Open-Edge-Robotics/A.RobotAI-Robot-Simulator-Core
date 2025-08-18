@@ -40,7 +40,11 @@ class PaginationMeta(BaseModel):
     @classmethod
     def create(cls, page: int, size: int, total_items: int) -> 'PaginationMeta':
         """페이지네이션 메타데이터 생성"""
-        total_pages = (total_items + size - 1) // size  # 올림 계산
+        
+        # size가 0 또는 None이면 기본값 사용
+        page_size = size if size and size > 0 else 1  # 최소 1로 설정
+        total_pages = (total_items + page_size - 1) // page_size  # 올림 계산
+        
         has_next = page < total_pages
         has_previous = page > 1
         

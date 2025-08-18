@@ -360,7 +360,7 @@ class SimulationService:
         # 5. 페이지네이션 메타데이터 생성
         pagination_meta = PaginationMeta.create(
             page=pagination.page,
-            size=len(simulation_items),
+            size=len(simulation_items) if simulation_items else 0,
             total_items=total_count
         )
         
@@ -622,8 +622,12 @@ class SimulationService:
         """페이지 범위 검증"""
         if total_count == 0:
             return  # 데이터가 없으면 검증 생략
+        
+        # size가 None이면 기본값 사용
+        page_size = pagination.size if pagination.size and pagination.size > 0 else PaginationParams.DEFAULT_SIZE
+        print(f"page_size: {page_size}")
             
-        max_page = (total_count + pagination.size - 1) // pagination.size
+        max_page = (total_count + page_size - 1) // page_size
         if pagination.page > max_page:
             raise ValueError(f"페이지 번호가 범위를 벗어났습니다. 최대 페이지: {max_page}")
 

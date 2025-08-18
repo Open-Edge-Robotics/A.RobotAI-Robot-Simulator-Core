@@ -4,66 +4,12 @@ from types import SimpleNamespace
 from typing import List
 import pytest
 from unittest.mock import AsyncMock, Mock 
+from .conftest import create_mock_simulations
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../'))
-from crud.simulation import SimulationService
-from repositories.simulation_repository import SimulationRepository 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../')) 
 from schemas.pagination import PaginationParams
-
-@pytest.fixture
-def mock_repository():
-    """Repository 모킹"""
-    repository = Mock(spec=SimulationRepository)
-    repository.find_all_with_pagination = AsyncMock()
-    repository.count_all = AsyncMock()
-    return repository
-
-@pytest.fixture
-def service(mock_repository):
-    """의존성이 주입된 SimulationService 인스턴스"""
-    return SimulationService(
-        session=None,
-        sessionmaker=None,
-        repository=mock_repository
-    )
-    
-def create_mock_simulation(
-    sim_id: int = 1,
-    name: str = "Test Simulation",
-    description: str = "Test Simulation Description",
-    pattern_type: str = "sequential",
-    status: str = "READY",
-    mec_id: str = "mec-001",
-    created_at: datetime = None,
-    updated_at: datetime = None
-) -> Mock:
-    """Simulation Mock 객체 팩토리"""
-    return SimpleNamespace(
-        id=sim_id,
-        name=name,
-        description=description,
-        pattern_type=pattern_type,
-        status=status,
-        mec_id=mec_id,
-        created_at=created_at or datetime.now(),
-        updated_at=updated_at or datetime.now()
-    )
-
-def create_mock_simulations(count: int = 2) -> List[Mock]:
-    """여러 Simulation Mock 객체를 생성하는 팩토리"""
-    return [
-        create_mock_simulation(
-            sim_id=i,
-            name=f"Test Simulation {i}",
-            description=f"Test Simulation Description {i}",
-            pattern_type="sequential" if i % 2 == 1 else "parallel",
-            status="READY" if i % 2 == 1 else "RUNNING",
-            mec_id=f"mec-{i:03d}"
-        )
-        for i in range(1, count + 1)
-    ]
 
 class TestSimlutaionService:
     @pytest.mark.asyncio
@@ -99,11 +45,25 @@ class TestSimlutaionService:
         assert meta.total_items == 0
         
     @pytest.mark.asyncio
+    async def test_pagination_size_none(self, service, mock_repository):
+        """pagination.size가 None일 때 기본값으로 안전 처리"""
+        pagination = PaginationParams(page=1, size=None)
+        mock_repository.find_all_with_pagination.return_value = []
+        mock_repository.count_all.return_value = 0
+
+        result, meta = await service.get_simulations_with_pagination(pagination)
+
+        assert result == []
+        assert meta.total_items == 0
+        assert meta.current_page == 1
+        assert meta.page_size == 0  # 실제 조회된 데이터 수
+        
+    @pytest.mark.asyncio
     async def test_예외_케이스_잘못된_페이지_번호(self, service):
         """잘못된 페이지 번호로 인한 검증 실패"""
         # Given
         pagination = PaginationParams(page=2, size=10)
-        total_count=5
+        total_count = 5
         
         
         # When & Then
