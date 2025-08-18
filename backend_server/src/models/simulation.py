@@ -5,7 +5,7 @@ from .simulation_groups import SimulationGroup
 from .simulation_steps import SimulationStep
 
 from .enums import PatternType, SimulationStatus
-from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as PgEnum
+from sqlalchemy import Float, String, DateTime, Integer, ForeignKey, Enum as PgEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database.db_conn import Base
@@ -42,8 +42,8 @@ class Simulation(Base):
     pod_creation_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 실행 통계
-    actual_start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    actual_end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 메타 정보
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable = True)
