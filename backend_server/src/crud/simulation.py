@@ -334,16 +334,25 @@ class SimulationService:
             print(f"시뮬레이션 레코드 정리 실패: {e}")
             raise         
         
-    async def get_simulations_with_pagination(self, pagination: PaginationParams) -> Tuple[List[SimulationListItem], PaginationMeta]:
-        """페이지네이션된 시뮬레이션 목록 조회"""
+    async def get_simulations_with_pagination(
+        self, 
+        pagination: PaginationParams,
+        pattern_type: Optional[PatternType] = None,
+        status: Optional[SimulationStatus] = None
+    ) -> Tuple[List[SimulationListItem], PaginationMeta]:
+        """페이지네이션된 시뮬레이션 목록 조회 (선택적 필터링 지원"""
         # 1. 전체 데이터 개수 조회 (페이지 범위 검증용)
-        total_count = await self.repository.count_all()
+        total_count = await self.repository.count_all(pattern_type=pattern_type, status=status)
         
         # 2. 페이지 범위 검증
         self._validate_pagination_range(pagination, total_count)
         
-        # 3. 실제 데이터 조회 (이미 검증된 파라미터로)
-        simulations = await self.repository.find_all_with_pagination(pagination)
+        # 3. 실제 데이터 조회 (필터 + 페이지 적용)
+        simulations = await self.repository.find_all_with_pagination(
+            pagination,
+            pattern_type=pattern_type,
+            status=status
+        )
         
         # 4. 비즈니스 로직: 응답 데이터 변환
         simulation_items = self._convert_to_list_items(simulations)
@@ -351,7 +360,7 @@ class SimulationService:
         # 5. 페이지네이션 메타데이터 생성
         pagination_meta = PaginationMeta.create(
             page=pagination.page,
-            size=pagination.size,
+            size=len(simulation_items),
             total_items=total_count
         )
         

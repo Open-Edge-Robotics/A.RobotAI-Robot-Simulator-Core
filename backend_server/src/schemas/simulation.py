@@ -2,7 +2,8 @@ from datetime import datetime
 from typing import List, Optional, Union, Dict, Any
 from pydantic import BaseModel, Field, field_validator, validator
 
-from .pagination import PaginationMeta
+from models.enums import PatternType, SimulationStatus
+from .pagination import PaginationMeta, PaginationParams
 from .format import GlobalResponseModel
 from settings import BaseSchema
 from utils.my_enum import API
@@ -104,6 +105,19 @@ class SimulationCreateResponseModel(GlobalResponseModel):
 
 
 ###### 목록 조회 #######
+class SimulationFilterRequest(PaginationParams):
+    """
+    시뮬레이션 필터 요청 DTO
+    - 패턴 타입과 상태값 기준 필터링 가능
+    - PaginationParams를 상속받아 페이징 지원
+    """
+    pattern_type: Optional[PatternType] = Field(
+        None, description="필터링할 시뮬레이션 패턴 타입 (선택)"
+    )
+    status: Optional[SimulationStatus] = Field(
+        None, description="필터링할 시뮬레이션 상태값 (선택)"
+    )
+
 class SimulationListResponse(BaseSchema):
     simulation_id: int
     simulation_name: str

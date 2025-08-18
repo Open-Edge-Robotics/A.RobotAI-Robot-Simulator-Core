@@ -42,18 +42,21 @@ async def create_simulation(
 
 @router.get("", response_model=SimulationListResponse, status_code=status.HTTP_200_OK)
 async def get_simulations(
-    page: int = Query(1, ge=1, description="페이지 번호 (1부터 시작)"),
-    size: int = Query(20, ge=1, le=100, description="페이지당 항목 수 (1-100)"),
+    filter_request: SimulationFilterRequest = Depends(),
     service: SimulationService = Depends(get_simulation_service)
 ):
     """시뮬레이션 목록 조회 (페이지네이션)"""
     
     # 페이지네이션 파라미터 생성
-    pagination = PaginationParams(page=page, size=size)
+    # pagination = PaginationParams(page=page, size=size)
     
     try:
         # Service에서 비즈니스 로직 처리
-        simulation_items, pagination_meta = await service.get_simulations_with_pagination(pagination)
+        simulation_items, pagination_meta = await service.get_simulations_with_pagination(
+            pagination=filter_request,
+            pattern_type=filter_request.pattern_type,
+            status=filter_request.status
+        )
         overview_data = await service.get_simulation_overview()
         
         return SimulationListResponseFactory.create(
