@@ -238,26 +238,38 @@ class SimulationListResponse(BaseModel):
                 "message": "시뮬레이션 목록 조회 성공",
                 "data": {
                     "overview": {
-                        "total": 100,
-                        "ready": 0,
-                        "running": 25,
-                        "completed": 60,
-                        "failed": 15
+                        "total": 2,
+                        "ready": 2,
+                        "running": 0,
+                        "completed": 0,
+                        "failed": 0
                     },
                     "simulations": [
                         {
-                            "id": "sim-123",
-                            "name": "테스트 시뮬레이션",
-                            "status": "running",
-                            "created_at": "2024-01-01T00:00:00Z"
+                            "simulationId": 4,
+                            "simulationName": "병렬 실행 반복 시뮬레이션 테스트",
+                            "patternType": "parallel",
+                            "status": "READY",
+                            "mecId": "mec-02",
+                            "createdAt": "2025-08-18T03:50:54.868749",
+                            "updatedAt": "2025-08-18T03:50:55.371514"
+                        },
+                        {
+                            "simulationId": 2,
+                            "simulationName": "순차 실행 반복 시뮬레이션 테스트",
+                            "patternType": "sequential",
+                            "status": "READY",
+                            "mecId": "mec-01",
+                            "createdAt": "2025-08-18T03:49:01.113675",
+                            "updatedAt": "2025-08-18T03:49:02.000375"
                         }
                     ],
                     "pagination": {
-                        "page": 1,
-                        "limit": 20,
-                        "total": 100,
-                        "total_pages": 5,
-                        "hasNext": True,
+                        "currentPage": 1,
+                        "pageSize": 2,
+                        "totalItems": 2,
+                        "totalPages": 1,
+                        "hasNext": False,
                         "hasPrevious": False
                     }
                 }
