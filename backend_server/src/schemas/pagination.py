@@ -1,22 +1,32 @@
-from typing import List, TypeVar, Generic
-from pydantic import BaseModel, Field
+from typing import ClassVar, List, Optional, TypeVar, Generic
+from pydantic import BaseModel, Field, field_validator, validator
 
 T = TypeVar('T')
 
 class PaginationParams(BaseModel):
     """페이지네이션 요청 파라미터"""
     page: int = Field(default=1, ge=1, description="페이지 번호 (1부터 시작)")
-    size: int = Field(default=20, ge=1, le=100, description="페이지당 항목 수 (1-100)")
+    size: Optional[int] = Field(None, description="페이지 크기 (1 이상, 선택)")
+    
+    DEFAULT_SIZE: ClassVar[int] = 10  # size가 없을 때 기본값
 
     @property
     def offset(self) -> int:
         """SQLAlchemy OFFSET 값 계산"""
-        return (self.page - 1) * self.size
+        effective_size = self.size if self.size is not None else self.DEFAULT_SIZE
+        return (self.page - 1) * effective_size
 
     @property
     def limit(self) -> int:
         """SQLAlchemy LIMIT 값"""
-        return self.size
+        return self.size if self.size is not None else self.DEFAULT_SIZE
+    
+    @field_validator("page")
+    @classmethod
+    def validate_page(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("페이지 번호는 1 이상이어야 합니다.")
+        return v
     
 class PaginationMeta(BaseModel):
     """페이지네이션 메타데이터"""
