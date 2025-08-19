@@ -120,6 +120,22 @@ async def process_single_step(
         session.add(simulation_step)
         await session.commit()
         print(f"시뮬레이션 단계 DB 저장 완료 (StepOrder={step.step_order})")
+        
+    # 시뮬레이션 설정 정보 구성
+    simulation_config = {
+        'bag_file_path': '',  # TODO: 추후 설정 방법 결정 필요
+        'repeat_count': step.repeat_count,
+        'max_execution_time': f"{step.execution_time}s" if step.execution_time else "3600s",
+        'communication_port': 11311,  # ROS 기본 포트
+        'data_format': 'ros-bag',
+        'debug_mode': False,  # TODO: 환경변수나 설정파일에서 가져올 수 있음
+        'log_level': 'INFO',
+        'delay_after_completion': step.delay_after_completion,
+        # Simulation 스키마에서 실제 사용 가능한 필드들
+        'simulation_name': simulation.name,
+        'pattern_type': simulation.pattern_type,
+        'mec_id': simulation.mec_id
+    }
     
     instance_data_list = []
     
@@ -144,6 +160,8 @@ async def process_single_step(
                 'description': instance.description,
                 'pod_namespace': instance.pod_namespace,
                 'simulation_id': instance.simulation_id,
+                'simulation_name': simulation.name,
+                'pattern_type': 'sequential',  # 순차 실행 패턴
                 'template_id': instance.template_id,
                 'step_order': instance.step_order
             }
@@ -156,7 +174,7 @@ async def process_single_step(
     pod_creation_tasks = []
     for instance in instance_data_list:
         task = create_single_pod_with_status(
-            instance, template, status_manager
+            instance, template, status_manager, simulation_config
         )
         pod_creation_tasks.append(task)
     
@@ -190,13 +208,13 @@ async def process_single_step(
     }
 
 
-async def create_single_pod_with_status(instance, template, status_manager):
+async def create_single_pod_with_status(instance, template, status_manager, simulation_config):
     """단일 Pod 생성 및 상태 업데이트"""
     instance_id = instance['id']
     
     try:
         # 실제 Pod 생성
-        pod_name = await PodService.create_pod(instance, template)
+        pod_name = await PodService.create_pod(instance, template, simulation_config)
         
         # 성공 상태 업데이트
         await status_manager.update_instance_status(
@@ -336,7 +354,7 @@ async def cleanup_failed_simulation_pods(simulation_id: int):
 async def handle_parallel_pattern_background(
     sessionmaker,
     simulation_id: int,
-    agents_data: list[ParallelAgent],
+    groups_data: list[ParallelAgent],
     api: str
 ):
     """병렬 패턴 백그라운드 처리"""
@@ -360,16 +378,16 @@ async def handle_parallel_pattern_background(
             print(f"시뮬레이션 정보: 이름='{simulation.name}', 예상 Pod 수={simulation.total_expected_pods}")
         
         # 그룹별 처리
-        print(f"총 {len(agents_data)}개의 그룹 처리 시작")
+        print(f"총 {len(groups_data)}개의 그룹 처리 시작")
         
         # 모든 그룹을 동시에 처리
         group_tasks = []
-        for group_index, agent in enumerate(agents_data):
-            print(f"[그룹 {group_index}] 처리 준비: 템플릿 ID={agent.template_id}, Pod 수={agent.autonomous_agent_count}")
+        for group_index, group in enumerate(groups_data):
+            print(f"[그룹 {group_index}] 처리 준비: 템플릿 ID={group.template_id}, Pod 수={group.autonomous_agent_count}")
             task = process_single_group(
                 sessionmaker,
                 simulation,
-                agent,
+                group,
                 group_index,
                 api,
                 status_manager
@@ -412,7 +430,7 @@ async def handle_parallel_pattern_background(
 async def process_single_group(
     sessionmaker,
     simulation,
-    agent: ParallelAgent,
+    group: ParallelAgent,
     group_index: int,
     api: str,
     status_manager
@@ -426,7 +444,7 @@ async def process_single_group(
     # 템플릿 조회
     async with sessionmaker() as session:
         templates_service = TemplateService(session)
-        template = await templates_service.find_template_by_id(agent.template_id, api)
+        template = await templates_service.find_template_by_id(group.template_id, api)
         print(f"[그룹 {group_index}] 템플릿 조회 완료: ID={template.template_id}, 타입='{template.type}'")
     
     # SimulationGroup DB 저장
@@ -436,10 +454,10 @@ async def process_single_group(
             simulation_id=simulation.id,
             group_name=f"{simulation.name}_group_{group_index}",
             template_id=template.template_id,
-            autonomous_agent_count=agent.autonomous_agent_count,
-            execution_time=agent.execution_time,
+            autonomous_agent_count=group.autonomous_agent_count,
+            execution_time=group.execution_time,
             assigned_area=simulation.namespace,
-            expected_pods_count=agent.autonomous_agent_count,
+            expected_pods_count=group.autonomous_agent_count,
             status=GroupStatus.PENDING
         )
         session.add(simulation_group)
@@ -447,19 +465,36 @@ async def process_single_group(
         group_id = simulation_group.id
         await session.commit()
         print(f"[그룹 {group_index}] SimulationGroup DB 저장 완료 (ID: {group_id})")
+        
+    # 시뮬레이션 설정 정보 구성
+    simulation_config = {
+        'bag_file_path': '',  # TODO: 추후 설정 방법 결정 필요
+        'repeat_count': getattr(group, 'repeat_count', 1),
+        'max_execution_time': f"{group.execution_time}s" if group.execution_time else "3600s",
+        'communication_port': 11311,
+        'data_format': 'ros-bag',
+        'debug_mode': False,
+        'log_level': 'INFO',
+        'pattern_type': simulation.pattern_type,
+        'group_id': group_id,                    
+        'group_index': group_index,                # 부가 정보로 추가
+        'simulation_name': simulation.name,
+        'simulation_description': simulation.description,
+        'mec_id': simulation.mec_id
+    }
     
     instance_data_list = []
     
     # Instance 정보 준비
     async with sessionmaker() as session:
-        for i in range(agent.autonomous_agent_count):
+        for i in range(group.autonomous_agent_count):
             instance = Instance(
                 name=f"{simulation.name}_group{group_index}_agent_{i}",
                 description=f"Group {group_index} - Agent {i}",
                 pod_namespace=simulation.namespace,
                 simulation_id=simulation.id,
                 template_id=template.template_id,
-                group_id=group_id,
+                group_id=group_id, 
             )
             session.add(instance)
             await session.flush() # ID 생성을 위해 flush
@@ -472,7 +507,9 @@ async def process_single_group(
                 'pod_namespace': instance.pod_namespace,
                 'simulation_id': instance.simulation_id,
                 'template_id': instance.template_id,
-                'group_id': instance.group_id
+                'group_id': instance.group_id,      
+                'group_index': group_index,           
+                'pattern_type': 'parallel'          
             }
             instance_data_list.append(instance_data)
         
@@ -483,7 +520,7 @@ async def process_single_group(
     pod_creation_tasks = []
     for instance in instance_data_list:
         task = create_single_pod_with_status(
-            instance, template, status_manager
+            instance, template, status_manager, simulation_config
         )
         pod_creation_tasks.append(task)
     
