@@ -1,8 +1,11 @@
 from typing import Dict, List, Optional, Tuple
 from sqlalchemy import case, select, func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import desc
 
+from models.simulation_groups import SimulationGroup
+from models.simulation_steps import SimulationStep
 from models.simulation import Simulation
 from models.enums import PatternType, SimulationStatus
 from schemas.pagination import PaginationParams
@@ -75,13 +78,13 @@ class SimulationRepository:
         result = await self.db.execute(query)
         return result.scalar_one()
 
-    async def exists_by_id(self, simulation_id: str) -> bool:
+    async def exists_by_id(self, simulation_id: int) -> bool:
         """시뮬레이션 존재 여부 확인"""
         stmt = select(Simulation).filter(Simulation.id == simulation_id)
         result = await self.db.execute(stmt)
         return result.scalars().first() is not None
     
-    async def get_overview(self) -> Dict[str, int]:
+    async def get_overview(self) -> Dict[int, int]:
         """시뮬레이션 전체 개요 조회 - 전체/상태별 개수"""
         stmt = select(
             func.count(Simulation.id).label('total'),
@@ -109,3 +112,35 @@ class SimulationRepository:
             'completed': row.completed or 0,
             'failed': row.failed or 0
         }
+    
+    async def find_by_id(self, simulation_id: int) -> Simulation:
+        """단일 시뮬레이션 조회"""
+        stmt = select(Simulation).where(Simulation.id == simulation_id)
+        result = await self.db.execute(stmt)
+        simulation = result.scalars().first()
+        return simulation
+    
+    async def find_steps_with_template(self, simulation_id: int) -> list[SimulationStep]:
+        """
+        Sequential 패턴용 Step 조회 + Template join
+        """
+        stmt = (
+            select(SimulationStep)
+            .options(selectinload(SimulationStep.template)) 
+            .where(SimulationStep.simulation_id == simulation_id)
+            .order_by(SimulationStep.step_order)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+    
+    async def find_groups_with_template(self, simulation_id: int) -> list[SimulationGroup]:
+        """
+        Parallel 패턴용 Group 조회 + Template join
+        """
+        stmt = (
+            select(SimulationGroup)
+            .options(selectinload(SimulationGroup.template)) 
+            .where(SimulationGroup.simulation_id == simulation_id)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
