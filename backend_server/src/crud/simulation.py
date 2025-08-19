@@ -60,13 +60,18 @@ class SimulationService:
         created_namespace = None
 
         try:
-            # [단계 1] 예상 Pod 수 계산
-            print("\n[단계 1] 예상 Pod 수 계산 시작")
+            # [단계 1] 템플릿 존재 여부 검증
+            print("\n[단계 1] 템플릿 존재 여부 검증 시작")
+            await self._validate_template_existence(simulation_create_data, api)
+            print("모든 템플릿 존재 여부 검증 완료")
+            
+            # [단계 2] 예상 Pod 수 계산
+            print("\n[단계 2] 예상 Pod 수 계산 시작")
             total_expected_pods = self._calculate_expected_pods(simulation_create_data)
             print(f"총 예상 Pod 수: {total_expected_pods}")
 
-            # [단계 2] 트랜잭션으로 시뮬레이션 생성
-            print("\n[단계 2] 시뮬레이션 생성 및 네임스페이스 생성")
+            # [단계 3] 트랜잭션으로 시뮬레이션 생성
+            print("\n[단계 3] 시뮬레이션 생성 및 네임스페이스 생성")
             response_data = await self._create_simulation(
                 simulation_create_data, 
                 total_expected_pods
@@ -77,12 +82,12 @@ class SimulationService:
             
             print(f"시뮬레이션 생성 완료: ID={simulation_id}, namespace={created_namespace}")
             
-            print("\n[단계 3] 상태 관리자 초기화")
+            print("\n[단계 4] 상태 관리자 초기화")
             from utils.status_update_manager import init_status_manager
             init_status_manager(self.sessionmaker)
 
-            # [단계 3] 백그라운드 작업 시작
-            print("\n[단계 4] 패턴 생성 (백그라운드) 처리 시작")
+            # [단계 5] 백그라운드 작업 시작
+            print("\n[단계 5] 패턴 생성 (백그라운드) 처리 시작")
             await self._start_background_pattern_creation(
                 background_tasks, 
                 simulation_create_data, 
@@ -117,6 +122,80 @@ class SimulationService:
                 detail=f"시뮬레이션 생성 중 오류 발생: {str(e)}"
             )
 
+    def _extract_template_ids(self, simulation_create_data: SimulationCreateRequest) -> List[int]:
+        """시뮬레이션 요청에서 모든 templateId 추출"""
+        template_ids = []
+        
+        if simulation_create_data.pattern_type == PatternType.SEQUENTIAL:
+            # 순차 패턴: pattern.steps[].templateId
+            if hasattr(simulation_create_data.pattern, 'steps'):
+                for step in simulation_create_data.pattern.steps:
+                    template_ids.append(step.template_id)
+        elif simulation_create_data.pattern_type == PatternType.PARALLEL:
+            # 병렬 패턴: pattern.groups[].templateId  
+            if hasattr(simulation_create_data.pattern, 'groups'):
+                for group in simulation_create_data.pattern.groups:
+                    template_ids.append(group.template_id)
+        
+        # 중복 제거
+        return list(set(template_ids))
+    
+    async def _validate_template_existence(
+        self, 
+        simulation_create_data: SimulationCreateRequest, 
+        api: str
+    ):
+        """템플릿 존재 여부 검증"""
+        
+        # 1. 모든 templateId 추출
+        template_ids = self._extract_template_ids(simulation_create_data)
+        
+        if not template_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="시뮬레이션 패턴에 템플릿 ID가 지정되지 않았습니다."
+            )
+        
+        print(f"검증할 템플릿 ID 목록: {template_ids}")
+        
+        # 2. 각 템플릿 존재 여부 확인
+        missing_template_ids = []
+        existing_template_ids = []
+        
+        async with self.sessionmaker() as session:
+            templates_service = TemplateService(session)
+            
+            for template_id in template_ids:
+                try:
+                    template = await templates_service.find_template_by_id(template_id, api)
+                    existing_template_ids.append(template.template_id)
+                    print(f"  ✅ 템플릿 ID {template_id}: 존재함 (타입: {template.type})")
+                    
+                except Exception as e:
+                    print(f"  ❌ 템플릿 ID {template_id}: 존재하지 않음 ({str(e)})")
+                    missing_template_ids.append(template_id)
+        
+        # 3. 누락된 템플릿이 있으면 예외 발생
+        if missing_template_ids:
+            missing_str = ", ".join(map(str, missing_template_ids))
+            suggestions = (
+                "템플릿 ID가 올바른지 확인해주세요. "
+                "템플릿이 삭제되었거나 비활성화되었을 수 있습니다. "
+                "템플릿 목록을 다시 조회해서 유효한 ID를 사용해주세요."
+            )
+            message = (
+                f"다음 템플릿 ID를 찾을 수 없습니다: {missing_str}. "
+                f"{suggestions}"
+            )
+
+            raise HTTPException(
+                status_code=400,
+                detail=message
+            )
+        
+        # 4. 검증 완료 로그
+        print(f"✅ 모든 템플릿 검증 완료:")
+
     def _calculate_expected_pods(self, simulation_create_data: SimulationCreateRequest) -> int:
         """예상 Pod 수 계산"""
         total_expected_pods = 0
@@ -126,9 +205,9 @@ class SimulationService:
                 total_expected_pods += step.autonomous_agent_count
                 print(f"Step {step.step_order}: {step.autonomous_agent_count}개 Pod")
         else:  # PARALLEL
-            for agent in simulation_create_data.pattern.agents:
-                total_expected_pods += agent.autonomous_agent_count
-                print(f"Agent {agent.template_id}: {agent.autonomous_agent_count}개 Pod")
+            for group in simulation_create_data.pattern.groups:
+                total_expected_pods += group.autonomous_agent_count
+                print(f"Agent {group.template_id}: {group.autonomous_agent_count}개 Pod")
                 
         return total_expected_pods
 
@@ -260,7 +339,7 @@ class SimulationService:
                 handle_parallel_pattern_background,
                 sessionmaker=self.sessionmaker,
                 simulation_id=simulation_id,
-                agents_data=simulation_create_data.pattern.agents,
+                groups_data=simulation_create_data.pattern.groups,
                 api=api,
             )
         else:
