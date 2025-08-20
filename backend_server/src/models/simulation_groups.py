@@ -11,7 +11,7 @@ class SimulationGroup(Base):
     simulation_id: Mapped[int] = mapped_column(ForeignKey("simulations.id", ondelete="CASCADE"))
 
     group_name: Mapped[str] = mapped_column(String(255))
-    template_id: Mapped[int] = mapped_column(nullable=False)
+    template_id: Mapped[int] = mapped_column(ForeignKey("templates.template_id", ondelete="CASCADE"), nullable=False)
     autonomous_agent_count: Mapped[int] = mapped_column(Integer, nullable=False)
     execution_time: Mapped[int] = mapped_column(Integer, nullable=False)
     assigned_area: Mapped[str] = mapped_column(String(255))
@@ -36,6 +36,12 @@ class SimulationGroup(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    template: Mapped["Template"] = relationship(
+        "Template",
+        uselist=False,
+        lazy="selectin"
+    )
     
     def __repr__(self) -> str:
         return f"SimulationGroup => {self.group_name} ({self.status})"

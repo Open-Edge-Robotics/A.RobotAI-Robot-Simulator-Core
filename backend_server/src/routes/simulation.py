@@ -1,10 +1,10 @@
 import traceback
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from repositories.simulation_repository import SimulationRepository
-from schemas.pagination import PaginationParams
+from schemas.simulation_detail import SimulationResponseModel
 from crud.simulation import SimulationService
 from database.db_conn import get_db, async_session
 from schemas.simulation import *
@@ -35,10 +35,29 @@ async def create_simulation(
 
     return SimulationCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
-        data=new_simulation,
+        data=new_simulation.model_dump(),
         message=API.CREATE_SIMULATION.value
     )
-
+    
+@router.get(
+    "/{simulation_id}", 
+    response_model=SimulationResponseModel,
+    status_code=status.HTTP_200_OK,
+    summary="시뮬레이션 기본정보 조회",
+    description="지정한 시뮬레이션 ID에 해당하는 시뮬레이션의 기본정보를 조회합니다. "
+                "패턴별 ExecutionPlan과 현재 상태 정보를 포함합니다.",
+)
+async def get_simulation(
+    simulation_id: int = Path(..., description = "조회할 시뮬레이션 ID"),
+    service: SimulationService = Depends(get_simulation_service)
+):
+    simulation = await service.get_simulation(simulation_id)
+    
+    return SimulationResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=simulation.model_dump(),
+        message=f"{simulation.simulation_id}번 시뮬레이션 상세 정보 조회 성공"
+    )
 
 @router.get("", response_model=SimulationListResponse, status_code=status.HTTP_200_OK)
 async def get_simulations(

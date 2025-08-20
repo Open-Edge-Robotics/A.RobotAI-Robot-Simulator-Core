@@ -2,12 +2,12 @@ from datetime import datetime
 import traceback
 from typing import Tuple, List, Optional
 from fastapi import HTTPException, status
-from pydantic import ValidationError
 from sqlalchemy import select, exists, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
 
+from schemas.simulation_detail import CurrentStatusInitiating, CurrentStatusReady, ExecutionPlanParallel, ExecutionPlanSequential, GroupModel, ProgressModel, SimulationData, StepModel, TimestampModel
 from repositories.simulation_repository import SimulationRepository
 from schemas.pagination import PaginationMeta, PaginationParams
 from models.enums import PatternType, SimulationStatus
@@ -449,6 +449,83 @@ class SimulationService:
         overview_data = await self.repository.get_overview()
         print(overview_data)
         return SimulationOverview.from_dict(overview_data)
+    
+    async def get_simulation(self, simulation_id: int) -> SimulationData:
+        sim = await self.repository.find_by_id(simulation_id)
+        if not sim:
+            raise HTTPException(status_code=404, detail=f"Simulation {simulation_id} not found")
+        
+        # 패턴별 ExecutionPlan 조회
+        if sim.pattern_type == PatternType.SEQUENTIAL:
+            execution_plan = await self.get_execution_plan_sequential(sim.id)
+        elif sim.pattern_type == PatternType.PARALLEL:  # parallel
+            execution_plan = await self.get_execution_plan_parallel(sim.id)
+            
+        # 상태별 CurrentStatus DTO 생성
+        if sim.status == SimulationStatus.INITIATING:
+            current_status = CurrentStatusInitiating(
+                status=sim.status,
+                timestamps=TimestampModel(
+                    created_at=sim.created_at,
+                    last_updated=sim.updated_at
+                )
+            )
+        elif sim.status == SimulationStatus.READY:
+            current_status = CurrentStatusReady(
+                status=sim.status,
+                progress=ProgressModel(
+                    overall_progress=0.0,
+                    ready_to_start=True
+                ),
+                timestamps=TimestampModel(
+                    created_at=sim.created_at,
+                    last_updated=sim.updated_at
+                )
+            )
+            
+        return SimulationData(
+            simulation_id=sim.id,
+            simulation_name=sim.name,
+            simulation_description=sim.description,
+            pattern_type=sim.pattern_type,
+            mec_id=sim.mec_id,
+            namespace=sim.namespace,
+            created_at=sim.created_at,
+            execution_plan=execution_plan,
+            current_status=current_status
+        )
+        
+    async def get_execution_plan_sequential(self, simulation_id: int) -> ExecutionPlanSequential:
+        steps = await self.repository.find_steps_with_template(simulation_id)
+
+        dto_steps = [
+            StepModel(
+                step_order=s.step_order,
+                template_id=s.template.template_id,
+                template_type=s.template.type,  # join으로 가져온 Template.name
+                agent_count=s.autonomous_agent_count,
+                repeat_count=s.repeat_count,
+                execution_time=s.execution_time,
+                delay_after_completion=s.delay_after_completion
+            )
+            for s in steps
+        ]
+        return ExecutionPlanSequential(steps=dto_steps)
+
+    async def get_execution_plan_parallel(self, simulation_id: int) -> ExecutionPlanParallel:
+        groups = await self.repository.find_groups_with_template(simulation_id)
+
+        dto_groups = [
+            GroupModel(
+                template_id=g.template.teamplte_id,
+                template_type=g.template.type,  # join으로 가져온 Template.name
+                agent_count=g.agent_count,
+                repeat_count=g.repeat_count,
+                execution_time=g.execution_time
+            )
+            for g in groups
+        ]
+        return ExecutionPlanParallel(groups=dto_groups)
                     
     async def get_all_simulations(self):
         statement = (

@@ -12,7 +12,7 @@ class SimulationStep(Base):
     simulation_id: Mapped[int] = mapped_column(ForeignKey("simulations.id", ondelete="CASCADE"))
 
     step_order: Mapped[int] = mapped_column(nullable=False)
-    template_id: Mapped[int] = mapped_column(nullable=False)
+    template_id: Mapped[int] = mapped_column(ForeignKey("templates.template_id", ondelete="CASCADE"), nullable=False)
     autonomous_agent_count: Mapped[int] = mapped_column(Integer, nullable=False)
     execution_time: Mapped[int] = mapped_column(Integer, nullable=False)
     delay_after_completion: Mapped[int] = mapped_column(Integer, default=0)
@@ -37,6 +37,12 @@ class SimulationStep(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    template: Mapped["Template"] = relationship(
+        "Template",
+        uselist=False,
+        lazy="selectin"
+    )
     
     def __repr__(self) -> str:
         return f"SimulationStep => Step {self.step_order} ({self.status})"
