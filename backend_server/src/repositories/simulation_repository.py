@@ -142,5 +142,37 @@ class SimulationRepository:
             .options(selectinload(SimulationGroup.template)) 
             .where(SimulationGroup.simulation_id == simulation_id)
         )
+        
+    async def find_simulation_steps(self, simulation_id: int) -> List[SimulationStep]:
+        """
+        simulation_id로 SimulationStep들을 step_order 순으로 조회
+        
+        Args:
+            simulation_id: 조회할 시뮬레이션 ID
+            
+        Returns:
+            List[SimulationStep]: step_order 순으로 정렬된 SimulationStep 목록
+        """
+        stmt = select(SimulationStep).where(
+            SimulationStep.simulation_id == simulation_id
+        ).order_by(SimulationStep.step_order)
+        
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+    
+    async def find_simulation_groups(self, simulation_id: int) -> List[SimulationGroup]:
+        """
+        simulation_id로 SimulationGroup들을 id 기준 오름차순으로 조회
+        
+        Args:
+            simulation_id: 조회할 시뮬레이션 ID
+            
+        Returns:
+            List[SimulationGroup]: id 기준 오름차순으로 정렬된 SimulationStep 목록
+        """
+        stmt = select(SimulationGroup).where(
+            SimulationGroup.simulation_id == simulation_id
+        ).order_by(SimulationGroup.id)
+        
         result = await self.db.execute(stmt)
         return result.scalars().all()

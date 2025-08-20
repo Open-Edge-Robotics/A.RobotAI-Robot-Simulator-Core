@@ -1,13 +1,15 @@
 from datetime import datetime, timezone
 import logging
 import os
-from typing import Any, Dict, Union
+from typing import Any, Dict, List, Union
 
 import yaml
 from fastapi import HTTPException
 from kubernetes import client, config
+from kubernetes.client import V1Pod
 from kubernetes.client.rest import ApiException
 
+from schemas.pod import GroupIdFilter, StepOrderFilter
 from models.instance import Instance
 from utils.my_enum import PodStatus
 
@@ -515,3 +517,55 @@ class PodService:
             "Unknown": 530,
         }
         return status_code_map.get(pod_status)
+    
+    def get_pods_by_filter(
+        self, 
+        namespace: str, 
+        filter_params: Union[StepOrderFilter, GroupIdFilter]
+    ) -> List[V1Pod]:
+        """
+        패턴에 따라 다른 label 필드로 pod 목록을 조회
+        
+        Args:
+            namespace: Kubernetes 네임스페이스
+            filter_params: step_order 또는 group_id를 포함한 필터 파라미터
+            
+        Returns:
+            List[V1Pod]: 필터링된 pod 목록
+        """
+        # 필터 타입에 따라 label selector 생성
+        if "step_order" in filter_params:
+            label_selector = f"step-order={filter_params['step_order']}"
+        elif "group_id" in filter_params:
+            label_selector = f"group-id={filter_params['group_id']}"
+        else:
+            raise ValueError("Invalid filter parameters. Must contain either 'step_order' or 'group_id'")
+        
+        # Kubernetes API를 통해 pod 목록 조회
+        try:
+            pod_list = pod_client.list_namespaced_pod(
+                namespace=namespace,
+                label_selector=label_selector,
+                _request_timeout=30
+            )
+            return pod_list.items
+        except Exception as e:
+            raise RuntimeError(f"Failed to get pods: {str(e)}")
+    
+    async def get_pods_by_step_order(self, namespace: str, step_order: int) -> List[V1Pod]:
+        """
+        step_order로 pod 목록 조회 (편의 메서드)
+        """
+        return await self.get_pods_by_filter(
+            namespace, 
+            {"step_order": step_order}
+        )
+    
+    async def get_pods_by_group_id(self, namespace: str, group_id: int) -> List[V1Pod]:
+        """
+        group_id로 pod 목록 조회 (편의 메서드)
+        """
+        return await self.get_pods_by_filter(
+            namespace, 
+            {"group_id": group_id}
+        )

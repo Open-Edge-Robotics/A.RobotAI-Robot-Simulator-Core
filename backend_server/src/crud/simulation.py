@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
 
 from schemas.simulation_detail import CurrentStatusInitiating, CurrentStatusReady, ExecutionPlanParallel, ExecutionPlanSequential, GroupModel, ProgressModel, SimulationData, StepModel, TimestampModel
+from schemas.pod import StepOrderFilter
 from repositories.simulation_repository import SimulationRepository
 from schemas.pagination import PaginationMeta, PaginationParams
 from models.enums import PatternType, SimulationStatus
@@ -616,46 +617,113 @@ class SimulationService:
             simulation_id=simulation_id,
             message="패턴 설정이 성공적으로 업데이트되었습니다",
         ).model_dump()
+        
+    async def start_sequential_simulation(self, simulation_id: int):
+        print(f"🚀 시뮬레이션 시작 요청: simulation_id={simulation_id}")
+        
+        # 1. 시뮬레이션 조회
+        simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
+        print(f"✅ 시뮬레이션 조회 완료:")
+        print(f"   - ID: {simulation.id}")
+        print(f"   - 이름: {simulation.name}")
+        print(f"   - 패턴: {simulation.pattern_type}")
+        print(f"   - 네임스페이스: {simulation.namespace}")
+        print(f"   - 상태: {simulation.status}")
+        
+        # 2. 패턴 타입별 분기
+        if simulation.pattern_type == PatternType.SEQUENTIAL:
+            print(f"📋 SEQUENTIAL 패턴 처리 시작")
+            
+            # 3. 시뮬레이션 스텝들 조회
+            steps = await self.repository.find_simulation_steps(simulation_id)
+            print(f"📊 시뮬레이션 스텝 조회 완료: {len(steps)}개 스텝")
+            
+            for i, step in enumerate(steps, 1):
+                print(f"\n🔄 스텝 {i}/{len(steps)} 처리 중:")
+                print(f"   - Step ID: {step.id}")
+                print(f"   - Step Order: {step.step_order}")
+                
+                # 4. 해당 스텝의 Pod 목록 조회
+                namespace = simulation.namespace
+                print(f"🔍 Pod 조회 시작 - 네임스페이스: {namespace}, step_order: {step.step_order}")
+                
+                try:
+                    # PodService 인스턴스 생성 및 조회
+                    pod_list = self.pod_service.get_pods_by_filter(
+                        namespace=namespace,
+                        filter_params={"step_order": step.step_order}
+                    )
+                    
+                    print(f"✅ Pod 조회 완료: {len(pod_list)}개 Pod 발견")
+                    
+                    # Pod 목록 상세 출력
+                    if pod_list:
+                        for j, pod in enumerate(pod_list, 1):
+                            print(f"   📦 Pod {j}: {pod.metadata.name}")
+                            print(f"      - 상태: {pod.status.phase}")
+                            print(f"      - 노드: {pod.spec.node_name}")
+                            if pod.metadata.labels:
+                                relevant_labels = {k: v for k, v in pod.metadata.labels.items() 
+                                                if 'step' in k or 'group' in k}
+                                if relevant_labels:
+                                    print(f"      - 관련 라벨: {relevant_labels}")
+                    else:
+                        print("   ⚠️  해당 step_order에 매칭되는 Pod가 없습니다")
+                    
+                except Exception as e:
+                    print(f"❌ Pod 조회 실패: {str(e)}")
+                    print(f"   네임스페이스: {namespace}")
+                    print(f"   라벨 셀렉터: step-order={step.step_order}")
+                    continue
+                
+                print(f"   ➡️  다음: 해당 스텝의 모든 Pod에 대해 병렬 rosbag 실행 예정")
+                
+        else:
+            print(f"🔄 다른 패턴 타입 처리 예정: {simulation.pattern_type}")
+        
+        print(f"\n🎯 시뮬레이션 {simulation_id} 처리 완료")
 
     async def start_simulation(self, simulation_id: int):
         simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
 
-        # 스케줄된 시작 시간 확인
-        if simulation.scheduled_start_time:
-            current_time = datetime.now()
-            if current_time < simulation.scheduled_start_time:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"시뮬레이션은 {simulation.scheduled_start_time}에 시작할 수 있습니다.",
+        # instances = await self.get_simulation_instances(simulation_id)
+        
+        # 시뮬레이션 실행 패턴에 따라서 동작 방식이 달라짐
+        if simulation.pattern_type == PatternType.SEQUENTIAL:
+            steps = self.repository.find_simulation_steps(simulation_id)
+            
+            for step in steps:
+                # 해당 step의 Pod 목록 조회
+                namespace = simulation.namespace
+                
+                pod_list = await PodService.get_pods_by_filter(
+                    namespace=namespace,
+                    filter_params=StepOrderFilter(step_order=step.step_order)
                 )
+                
+                # 해당 step의 모든 Pod에 대해 병렬 rosbag 실행
+                
+                
+        elif simulation.pattern_type == PatternType.PARALLEL:
+            groups = self.repository.find_simulation_groups(simulation_id)
+            
 
-        # 스케줄된 종료 시간 확인
-        if simulation.scheduled_end_time:
-            current_time = datetime.now()
-            if current_time > simulation.scheduled_end_time:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"시뮬레이션의 예정 종료 시간({simulation.scheduled_end_time})이 지났습니다.",
-                )
+        # for instance in instances:
+        #     object_path = instance.template.bag_file_path
+        #     await self.pod_service.check_pod_status(instance)
+        #     pod_ip = await self.pod_service.get_pod_ip(instance)
 
-        instances = await self.get_simulation_instances(simulation_id)
+        #     # 고도화된 rosbag 실행 파라미터 준비
+        #     rosbag_params = {
+        #         "object_path": object_path,
+        #         "max_loops": simulation.repeat_count,
+        #         "delay_between_loops": simulation.delay_time or 0,
+        #         "execution_duration": simulation.execution_time,
+        #     }
 
-        for instance in instances:
-            object_path = instance.template.bag_file_path
-            await self.pod_service.check_pod_status(instance)
-            pod_ip = await self.pod_service.get_pod_ip(instance)
-
-            # 고도화된 rosbag 실행 파라미터 준비
-            rosbag_params = {
-                "object_path": object_path,
-                "max_loops": simulation.repeat_count,
-                "delay_between_loops": simulation.delay_time or 0,
-                "execution_duration": simulation.execution_time,
-            }
-
-            await self.ros_service.send_post_request(
-                pod_ip, "/rosbag/play", rosbag_params
-            )
+        #     await self.ros_service.send_post_request(
+        #         pod_ip, "/rosbag/play", rosbag_params
+        #     )
 
         return SimulationControlResponse(simulation_id=simulation_id).model_dump()
 

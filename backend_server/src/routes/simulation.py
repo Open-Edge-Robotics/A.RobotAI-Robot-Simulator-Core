@@ -133,7 +133,8 @@ async def control_simulation(
     """시뮬레이션 실행/중지 (고도화된 기능 포함)"""
 
     if request.action == "start":
-        result = await service.start_simulation(request.simulation_id)
+        # result = await service.start_simulation(request.simulation_id)
+        result = await service.start_sequential_simulation(request.simulation_id)
         message = API.RUN_SIMULATION.value
     elif request.action == "stop":
         result = await service.stop_simulation(request.simulation_id)
