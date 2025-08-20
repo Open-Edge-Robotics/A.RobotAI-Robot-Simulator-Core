@@ -30,13 +30,14 @@ except Exception as e:
 
 class PodService:
     @staticmethod
-    async def create_pod(instance: Union[Instance, Dict[str, Any]], template):
+    async def create_pod(instance: Union[Instance, Dict[str, Any]], template, simulation_config: Dict[str, Any] = None):
         """
         Pod를 생성하고 상세한 로깅을 제공하는 메서드
         
         Args:
             instance: Instance 객체 또는 instance 데이터 딕셔너리
             template: Template 객체
+            simulation_config: 시뮬레이션 설정 정보 (bag 파일 경로, 반복 횟수 등)
         
         Returns:
             str: 생성된 Pod 이름
@@ -51,7 +52,6 @@ class PodService:
         try:
             if isinstance(instance, dict):
                 instance_id = instance['id']
-                instance_name = instance['name']
                 simulation_id = instance['simulation_id']
                 pod_namespace = instance['pod_namespace']
                 template_id = instance.get('template_id')
@@ -59,7 +59,6 @@ class PodService:
             else:
                 # Instance 객체인 경우
                 instance_id = instance.id
-                instance_name = instance.name
                 simulation_id = instance.simulation_id
                 pod_namespace = instance.pod_namespace
                 template_id = getattr(instance, 'template_id', None)
@@ -68,16 +67,28 @@ class PodService:
             logging.error(f"❌ [Pod Creation] 필수 instance 데이터 누락: {e}")
             raise ValueError(f"Missing required instance data: {e}")
         
-        pod_name = f"instance-{simulation_id}-{instance_id}"
+        # 실행 패턴 정보 추출
+        pattern_type = simulation_config.get("pattern_type", "sequential")
+        group_id = instance.get('group_id') if isinstance(instance, dict) else getattr(instance, 'group_id', None)
+        
+        if pattern_type == "sequential":
+            # 순차 실행: step 순서 포함
+            pod_name = f"sim-{simulation_id}-step-{step_order or 0}-instance-{instance_id}"
+        else:
+            # 병렬 실행: group ID 포함 (group_id가 없으면 기본 그룹)
+            group_identifier = group_id if group_id is not None else "default"
+            pod_name = f"sim-{simulation_id}-group-{group_identifier}-instance-{instance_id}"
         
         # 2. 시작 로그
         logging.info(f"🚀 [Pod Creation] 시작 - pod_name: {pod_name}")
         logging.info(f"📊 [Pod Creation] 파라미터 정보:")
         logging.info(f"   - instance_id: {instance_id}")
         logging.info(f"   - simulation_id: {simulation_id}")
+        logging.info(f"   - pattern_type: {pattern_type}")
+        logging.info(f"   - step_order: {step_order}")
+        logging.info(f"   - group_id: {group_id}")
         logging.info(f"   - template_type: {getattr(template, 'type', 'Unknown')}")
         logging.info(f"   - namespace: {pod_namespace}")
-        logging.info(f"   - step_order: {step_order}")
         
         try:
             # 3. 기본 검증
@@ -87,8 +98,10 @@ class PodService:
             pod_spec = await PodService._load_and_validate_template()
             
             # 5. Pod 설정 및 메타데이터 구성
-            configured_pod = PodService._configure_pod_metadata(
-                pod_spec, pod_name, template, pod_namespace
+            configured_pod = PodService._configure_pod_metadata_enhanced(
+                pod_spec, pod_name, template, pod_namespace,
+                instance_id, simulation_id, step_order, 
+                simulation_config, pattern_type, group_id
             )
             
             # 6. 기존 Pod 중복 확인 및 처리
@@ -164,6 +177,154 @@ class PodService:
         logging.debug(f"✅ [Pod Creation] 템플릿 검증 완료 - 컨테이너 수: {len(pod_spec['spec']['containers'])}")
         
         return pod_spec
+    
+    # 개선된 Pod 메타데이터 구성
+    @staticmethod
+    def _configure_pod_metadata_enhanced(
+        pod_spec: dict, 
+        pod_name: str, 
+        template, 
+        pod_namespace: str,
+        instance_id: str,
+        simulation_id: str,
+        step_order: int = None,
+        simulation_config: Dict[str, Any] = None,
+        pattern_type: str = 'parallel',
+        group_id: str = None
+    ) -> dict:
+        """Pod 메타데이터 및 설정 구성 (시뮬레이션 모니터링 강화)"""
+        import copy
+        import datetime
+        
+        configured_pod = copy.deepcopy(pod_spec)
+        
+        # 현재 시간 (UTC)
+        creation_time = datetime.datetime.utcnow().isoformat() + "Z"
+        
+        # 시뮬레이션 설정 기본값
+        simulation_config = simulation_config or {}
+        bag_file_path = simulation_config.get('bag_file_path', '')
+        repeat_count = simulation_config.get('repeat_count', 1)
+        max_execution_time = simulation_config.get('max_execution_time', '3600s')
+        
+        # 확장된 Labels - 모니터링 도구가 쉽게 식별할 수 있도록
+        pod_labels = {
+            # 기본 식별 정보
+            "app": "simulation-pod",
+            "component": "simulation-instance",
+            "part-of": "simulation-platform",
+            
+            # 시뮬레이션 관련 정보
+            "simulation-id": str(simulation_id),
+            "instance-id": str(instance_id),
+            
+            # 실행 패턴 및 그룹핑 정보
+            "pattern-type": pattern_type,
+            "step-order": str(step_order) if step_order is not None else "0",
+            "group-id": str(group_id) if group_id is not None else "default",
+            
+            # 템플릿 및 에이전트 타입
+            "agent-type": getattr(template, 'type', 'unknown').lower(),
+            "template-id": str(getattr(template, 'template_id', 'unknown')),
+            
+            # 실행 상태
+            "execution-phase": "initialization",
+            
+            # 모니터링 레이블
+            "monitoring-enabled": "true",
+            "resource-tracking": "enabled",
+            "log-aggregation": "enabled"
+        }
+        
+        # Annotations - 상세 메타데이터 및 시뮬레이션 설정
+        pod_annotations = {
+            # 생성 정보
+            "simulation-platform/created-at": creation_time,
+            "simulation-platform/created-by": "pod-service",
+            
+            # 시뮬레이션 상세 정보
+            "simulation-platform/simulation-id": str(simulation_id),
+            "simulation-platform/instance-id": str(instance_id),
+            
+            # 실행 패턴 상세 정보
+            "simulation-platform/pattern-type": pattern_type,
+            "simulation-platform/step-order": str(step_order) if step_order is not None else "0",
+            "simulation-platform/group-id": str(group_id) if group_id is not None else "default",
+            "simulation-platform/execution-dependency": "none" if pattern_type == 'parallel' else f"step-{step_order - 1}" if step_order and step_order > 0 else "none",
+            
+            # Bag 파일 및 실행 설정
+            "simulation-platform/bag-file-path": bag_file_path,
+            "simulation-platform/repeat-count": str(repeat_count),
+            "simulation-platform/max-execution-time": max_execution_time,
+            "simulation-platform/current-iteration": "0",
+            
+            # 모니터링 설정
+            "simulation-platform/monitoring-endpoint": f"/metrics/{simulation_id}/{pattern_type}/{instance_id}",
+            "simulation-platform/log-stream": f"simulation-{simulation_id}-{pattern_type}-instance-{instance_id}",
+            "simulation-platform/status-endpoint": f"/status/{simulation_id}/{pattern_type}/{instance_id}",
+            
+            # 리소스 관리
+            "simulation-platform/resource-group": f"simulation-{simulation_id}-{pattern_type}",
+            "simulation-platform/cleanup-policy": "auto",
+            "simulation-platform/backup-enabled": "true",
+            
+            # 네트워크 및 통신
+            "simulation-platform/communication-port": str(simulation_config.get('communication_port', 11311)),
+            "simulation-platform/data-exchange-format": simulation_config.get('data_format', 'ros-bag'),
+            
+            # 디버깅 및 개발
+            "simulation-platform/debug-mode": str(simulation_config.get('debug_mode', False)).lower(),
+            "simulation-platform/log-level": simulation_config.get('log_level', 'INFO'),
+            
+            # 템플릿 상세 정보
+            "simulation-platform/template-type": getattr(template, 'type', 'unknown'),
+            "simulation-platform/template-description": getattr(template, 'description', '')
+        }
+        
+        # 메타데이터 적용
+        configured_pod["metadata"]["name"] = pod_name
+        configured_pod["metadata"]["labels"] = pod_labels
+        configured_pod["metadata"]["annotations"] = pod_annotations
+        configured_pod["metadata"]["namespace"] = pod_namespace
+        
+        # 컨테이너 설정
+        if configured_pod["spec"]["containers"]:
+            container = configured_pod["spec"]["containers"][0]
+            container["name"] = pod_name
+            
+            # 환경 변수 추가 - 컨테이너 내에서 시뮬레이션 정보 접근
+            if "env" not in container:
+                container["env"] = []
+            
+            simulation_env_vars = [
+                {"name": "SIMULATION_ID", "value": str(simulation_id)},
+                {"name": "INSTANCE_ID", "value": str(instance_id)},
+                {"name": "PATTERN_TYPE", "value": pattern_type},
+                {"name": "STEP_ORDER", "value": str(step_order) if step_order is not None else "0"},
+                {"name": "GROUP_ID", "value": str(group_id) if group_id is not None else "default"},
+                {"name": "AGENT_TYPE", "value": getattr(template, 'type', 'unknown')},
+                {"name": "BAG_FILE_PATH", "value": bag_file_path},
+                {"name": "REPEAT_COUNT", "value": str(repeat_count)},
+                {"name": "POD_NAME", "value": pod_name},
+                {"name": "POD_NAMESPACE", "value": pod_namespace},
+                {"name": "DEBUG_MODE", "value": str(simulation_config.get('debug_mode', False)).lower()},
+                {"name": "LOG_LEVEL", "value": simulation_config.get('log_level', 'INFO')}
+            ]
+            
+            container["env"].extend(simulation_env_vars)
+        
+        logging.debug(f"📝 [Pod Creation] 개선된 메타데이터 설정 완료")
+        logging.debug(f"   - name: {pod_name}")
+        logging.debug(f"   - simulation-id: {simulation_id}")
+        logging.debug(f"   - pattern-type: {pattern_type}")
+        logging.debug(f"   - step-order: {step_order}")
+        logging.debug(f"   - group-id: {group_id}")
+        logging.debug(f"   - labels count: {len(pod_labels)}")
+        logging.debug(f"   - annotations count: {len(pod_annotations)}")
+        logging.debug(f"   - bag-file-path: {bag_file_path}")
+        logging.debug(f"   - repeat-count: {repeat_count}")
+        
+        return configured_pod
 
     @staticmethod
     def _configure_pod_metadata(pod_spec: dict, pod_name: str, template, pod_namespace: str) -> dict:

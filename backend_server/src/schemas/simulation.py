@@ -41,7 +41,7 @@ class SequentialPattern(BaseModel):
         populate_by_name = True
 
 class ParallelPattern(BaseModel):
-    agents: List[ParallelAgent] = Field(..., description="병렬 실행 에이전트 리스트")
+    groups: List[ParallelAgent] = Field(..., description="병렬 실행 에이전트 리스트")
 
     class Config:
         populate_by_name = True
@@ -69,7 +69,7 @@ class SimulationCreateRequest(BaseModel):
         return v
 
 
-class SimulationCreateResponse(BaseSchema):
+class SimulationCreateResponse(BaseModel):
     simulation_id: int
     simulation_name: str
     simulation_description: str
@@ -79,8 +79,15 @@ class SimulationCreateResponse(BaseSchema):
     mec_id: Optional[str]
     created_at: str
     total_expected_pods: int
+    
+    class Config:
+        populate_by_name = True
 
-class SimulationCreateResponseModel(GlobalResponseModel):
+class SimulationCreateResponseModel(BaseModel):
+    status: str = Field(default="success", description="응답 상태")
+    message: str = Field(..., description="응답 메시지")
+    data: SimulationCreateResponse = Field(..., description="응답 데이터")
+    
     model_config = {
         "json_schema_extra": {
             "example": {
