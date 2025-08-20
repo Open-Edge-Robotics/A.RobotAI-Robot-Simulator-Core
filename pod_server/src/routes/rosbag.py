@@ -1,13 +1,14 @@
 from fastapi import APIRouter
 from starlette import status
 
-from pod_server.src.crud.rosbag import RosbagService
+from pod_server.src.crud.rosbag2 import RosbagService
 
 router = APIRouter(prefix="/rosbag", tags=["Rosbag"])
 
 rosbag_service = RosbagService()
 @router.post("/play", status_code=status.HTTP_202_ACCEPTED)
 async def rosbag_play(object_path: str):
+    print("재생 시작")
     await rosbag_service.play_rosbag(object_path)
     return {"message": "Rosbag play started"}
 

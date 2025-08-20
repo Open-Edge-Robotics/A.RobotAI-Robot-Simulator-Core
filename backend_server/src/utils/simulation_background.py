@@ -123,7 +123,7 @@ async def process_single_step(
         
     # 시뮬레이션 설정 정보 구성
     simulation_config = {
-        'bag_file_path': '',  # TODO: 추후 설정 방법 결정 필요
+        'bag_file_path': template.bag_file_path,
         'repeat_count': step.repeat_count,
         'max_execution_time': f"{step.execution_time}s" if step.execution_time else "3600s",
         'communication_port': 11311,  # ROS 기본 포트
