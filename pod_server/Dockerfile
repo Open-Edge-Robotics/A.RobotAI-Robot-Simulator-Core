@@ -37,6 +37,9 @@ source /opt/ros/humble/setup.bash\n\
 exec "$@"' > /ros_entrypoint.sh && \
 chmod +x /ros_entrypoint.sh
 
+# ⚡ bash 접속 시에도 ROS 환경 적용
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc
+
 # 엔트리포인트 설정
 ENTRYPOINT ["/ros_entrypoint.sh"]
 
