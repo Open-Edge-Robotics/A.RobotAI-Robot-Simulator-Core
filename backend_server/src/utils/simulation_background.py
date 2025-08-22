@@ -468,7 +468,7 @@ async def process_single_group(
         
     # 시뮬레이션 설정 정보 구성
     simulation_config = {
-        'bag_file_path': '',  # TODO: 추후 설정 방법 결정 필요
+        'bag_file_path': template.bag_file_path,
         'repeat_count': getattr(group, 'repeat_count', 1),
         'max_execution_time': f"{group.execution_time}s" if group.execution_time else "3600s",
         'communication_port': 11311,

@@ -8,9 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
 
+from utils.debug_print import debug_print
 from utils.rosbag_executor import RosbagExecutor
 from schemas.simulation_detail import CurrentStatusInitiating, CurrentStatusReady, ExecutionPlanParallel, ExecutionPlanSequential, GroupModel, ProgressModel, SimulationData, StepModel, TimestampModel
-from schemas.pod import StepOrderFilter
+from schemas.pod import GroupIdFilter, StepOrderFilter
 from repositories.simulation_repository import SimulationRepository
 from schemas.pagination import PaginationMeta, PaginationParams
 from models.enums import PatternType, SimulationStatus
@@ -622,32 +623,68 @@ class SimulationService:
             simulation_id=simulation_id,
             message="패턴 설정이 성공적으로 업데이트되었습니다",
         ).model_dump()
-    
-    async def start_sequential_simulation_async(self, simulation_id: int):
+
+    async def start_simulation_async(self, simulation_id: int):
         """
         API 호출용 메서드
-        시뮬레이션 시작 요청을 받고, 메타데이터만 즉시 리턴
+        시뮬레이션 시작 요청을 받고, 패턴 타입에 따라 분기 처리 후 메타데이터만 즉시 리턴
         """
-        print(f"🚀 시뮬레이션 시작 요청: simulation_id={simulation_id}")
+        debug_print("🚀 시뮬레이션 시작 메서드 진입", simulation_id=simulation_id)
+            
+        try:
+            debug_print("📋 시뮬레이션 조회 시작", simulation_id=simulation_id)
+            simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
 
-        # 시뮬레이션 조회
-        simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
-        print(f"✅ 시뮬레이션 조회 완료: ID={simulation.id}, NAME={simulation.name}")
+            simulation_data = {
+                "id": simulation.id,
+                "name": simulation.name,
+                "pattern_type": simulation.pattern_type
+            }
+            
+            debug_print("✅ 시뮬레이션 조회 완료", 
+                    simulation_id=simulation_data["id"], 
+                    name=simulation_data["name"], 
+                    pattern_type=simulation_data["pattern_type"])
 
-        # 상태를 RUNNING으로 먼저 업데이트
-        await self._update_simulation_status_and_log(
-            simulation_id, SimulationStatus.RUNNING, "시뮬레이션 시작"
-        )
+            # 패턴 타입에 따른 분기 처리 (simulation_data 사용)
+            if simulation_data["pattern_type"] == "sequential":
+                pattern_name = "순차"
+                background_task = self._run_sequential_simulation(simulation_id)
+                debug_print("🔄 순차 패턴 선택", simulation_id=simulation_id)
+            elif simulation_data["pattern_type"] == "parallel":
+                pattern_name = "병렬"
+                background_task = self._run_parallel_simulation(simulation_id)
+                debug_print("🔄 병렬 패턴 선택", simulation_id=simulation_id)
+            else:
+                debug_print("❌ 지원하지 않는 패턴 타입", pattern_type=simulation_data["pattern_type"])
+                raise ValueError(f"지원하지 않는 패턴 타입: {simulation_data['pattern_type']}")
 
-        # 백그라운드 Task로 실제 시뮬레이션 실행
-        asyncio.create_task(self._run_sequential_simulation(simulation_id))
+            debug_print("📝 시뮬레이션 상태 업데이트 시작 (RUNNING)", simulation_id=simulation_id)
+            await self._update_simulation_status_and_log(
+                simulation_id, SimulationStatus.RUNNING, f"{pattern_name} 시뮬레이션 시작"
+            )
+            debug_print("✅ 시뮬레이션 상태 업데이트 완료", simulation_id=simulation_id, status="RUNNING")
 
-        # 메타데이터만 리턴
-        return {
-            "simulation_id": simulation_id,
-            "status": "RUNNING",
-            "message": "시뮬레이션 실행을 시작했습니다."
-        }
+            debug_print("🎯 백그라운드 태스크 생성 시작", simulation_id=simulation_id)
+            task = asyncio.create_task(background_task)
+            task.set_name(f"simulation_{simulation_id}_{pattern_name}")
+            debug_print("✅ 백그라운드 태스크 생성 완료", 
+                    simulation_id=simulation_id, 
+                    task_name=task.get_name(),
+                    task_id=id(task))
+
+            debug_print("📤 API 응답 반환", simulation_id=simulation_id)
+            return {
+                "simulation_id": simulation_id,
+                "status": "RUNNING",
+                "pattern_type": simulation_data["pattern_type"],
+                "message": f"{pattern_name} 시뮬레이션 실행을 시작했습니다."
+            }
+            
+        except Exception as e:
+            traceback.print_stack()
+            debug_print("💥 시뮬레이션 시작 중 예외 발생", simulation_id=simulation_id, error=str(e), error_type=type(e).__name__)
+            raise
     
     async def _run_sequential_simulation(self, simulation_id: int):
         """
@@ -771,7 +808,226 @@ class SimulationService:
         print(f"🎉 시뮬레이션 {simulation_id} 완료")
         return total_execution_summary    
     
+    async def _run_parallel_simulation(self, simulation_id: int):
+        """
+        병렬 패턴 시뮬레이션 실행 로직
+        모든 그룹을 병렬 실행하며, 각 그룹 내 Pod들도 병렬 실행
+        """
+        debug_print("🚀 병렬 시뮬레이션 백그라운드 실행 시작", simulation_id=simulation_id)
+        
+        try:
+            # 1. 시뮬레이션 조회
+            debug_print("📋 백그라운드에서 시뮬레이션 재조회 시작", simulation_id=simulation_id)
+            simulation = await self.find_simulation_by_id(simulation_id, "background parallel run")
+            debug_print("✅ 백그라운드 시뮬레이션 조회 완료", simulation_id=simulation.id)
+            
+            debug_print("📋 그룹 조회 시작", simulation_id=simulation_id)
+            groups = await self.repository.find_simulation_groups(simulation_id)
+            debug_print("✅ 그룹 조회 완료", simulation_id=simulation_id, group_count=len(groups))
+
+            total_execution_summary = {
+                "total_groups": len(groups),
+                "completed_groups": 0,
+                "failed_groups": 0,
+                "total_pods_executed": 0,
+                "total_success_pods": 0,
+                "total_failed_pods": 0,
+                "group_results": [],
+                "simulation_status": "RUNNING",
+                "failure_reason": None
+            }
+
+            # 모든 그룹을 병렬로 실행
+            debug_print("🎯 그룹 병렬 태스크 생성 시작", simulation_id=simulation_id, total_groups=len(groups))
+            group_tasks = []
+            for i, group in enumerate(groups):
+                debug_print("🔧 그룹 태스크 생성", simulation_id=simulation_id, group_id=group.id, group_index=i)
+                task = asyncio.create_task(self._execute_single_group(simulation, group))
+                task.set_name(f"group_{group.id}_sim_{simulation_id}")
+                group_tasks.append((group, task))
+                debug_print("✅ 그룹 태스크 생성 완료", 
+                        simulation_id=simulation_id, 
+                        group_id=group.id, 
+                        task_name=task.get_name(),
+                        task_id=id(task))
+
+            debug_print("🚀 모든 그룹 병렬 실행 시작", simulation_id=simulation_id, total_tasks=len(group_tasks))
+
+            # 모든 그룹 완료 대기
+            for i, (group, task) in enumerate(group_tasks):
+                debug_print("⏳ 그룹 태스크 완료 대기 시작", 
+                        simulation_id=simulation_id, 
+                        group_id=group.id, 
+                        task_index=i,
+                        task_name=task.get_name())
+                
+                try:
+                    group_result = await task
+                    debug_print("✅ 그룹 태스크 완료", 
+                            simulation_id=simulation_id, 
+                            group_id=group.id, 
+                            status=group_result["status"],
+                            success_pods=group_result["success_pod_count"],
+                            failed_pods=group_result["failed_pod_count"])
+                    
+                    total_execution_summary["group_results"].append(group_result)
+                    
+                    if group_result["status"] == "success":
+                        total_execution_summary["completed_groups"] += 1
+                        total_execution_summary["total_success_pods"] += group_result["success_pod_count"]
+                        debug_print("✅ 그룹 성공 처리 완료", simulation_id=simulation_id, group_id=group.id)
+                    else:
+                        total_execution_summary["failed_groups"] += 1
+                        total_execution_summary["total_failed_pods"] += group_result["failed_pod_count"]
+                        
+                        if not total_execution_summary["failure_reason"]:
+                            total_execution_summary["failure_reason"] = group_result["failure_reason"]
+                        
+                        debug_print("❌ 그룹 실패 처리 완료", 
+                                simulation_id=simulation_id, 
+                                group_id=group.id,
+                                failure_reason=group_result["failure_reason"])
+                    
+                    total_execution_summary["total_pods_executed"] += group_result["total_pod_count"]
+                    
+                except Exception as e:
+                    debug_print("💥 그룹 태스크 실행 중 예외 발생", 
+                            simulation_id=simulation_id, 
+                            group_id=group.id,
+                            error=str(e),
+                            error_type=type(e).__name__)
+                    
+                    failure_reason = f"그룹 {group.id} 실행 중 예외 발생: {str(e)}"
+                    total_execution_summary["failed_groups"] += 1
+                    
+                    if not total_execution_summary["failure_reason"]:
+                        total_execution_summary["failure_reason"] = failure_reason
+
+            debug_print("📊 모든 그룹 결과 수집 완료", 
+                    simulation_id=simulation_id,
+                    completed_groups=total_execution_summary["completed_groups"],
+                    failed_groups=total_execution_summary["failed_groups"])
+
+            # 최종 실행 결과 평가
+            if total_execution_summary["failed_groups"] > 0:
+                debug_print("❌ 시뮬레이션 실패로 판정", simulation_id=simulation_id, failed_groups=total_execution_summary["failed_groups"])
+                total_execution_summary["simulation_status"] = "FAILED"
+                failure_reason = total_execution_summary["failure_reason"] or f"{total_execution_summary['failed_groups']}개 그룹 실패"
+                
+                debug_print("📝 실패 상태 업데이트 시작", simulation_id=simulation_id, reason=failure_reason)
+                await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
+                debug_print("✅ 실패 상태 업데이트 완료", simulation_id=simulation_id)
+            else:
+                debug_print("✅ 시뮬레이션 성공으로 판정", simulation_id=simulation_id)
+                total_execution_summary["simulation_status"] = "COMPLETED"
+                
+                debug_print("📝 완료 상태 업데이트 시작", simulation_id=simulation_id)
+                await self._update_simulation_status_and_log(simulation_id, "COMPLETED", "모든 그룹 완료")
+                debug_print("✅ 완료 상태 업데이트 완료", simulation_id=simulation_id)
+
+            debug_print("🎉 병렬 시뮬레이션 백그라운드 실행 완료", simulation_id=simulation_id)
+            return total_execution_summary
+
+        except Exception as e:
+            debug_print("💥 병렬 시뮬레이션 실행 중 치명적 예외 발생", 
+                    simulation_id=simulation_id, 
+                    error=str(e),
+                    error_type=type(e).__name__)
+            raise
+
+        
+    async def _execute_single_group(self, simulation, group):
+        """
+        단일 그룹을 실행하는 헬퍼 메서드
+        그룹에 소속된 모든 Pod들을 병렬로 실행
+        """
+        debug_print("🔸 그룹 실행 시작", group_id=group.id, simulation_id=simulation.id)
     
+        group_start_time = datetime.now(timezone.utc)
+        
+        try:
+            debug_print("🔍 그룹 Pod 조회 시작", group_id=group.id, namespace=simulation.namespace)
+            pod_list = self.pod_service.get_pods_by_filter(
+                namespace=simulation.namespace,
+                filter_params=GroupIdFilter(group_id=group.id)
+            )
+            debug_print("✅ 그룹 Pod 조회 완료", group_id=group.id, pod_count=len(pod_list) if pod_list else 0)
+
+            if not pod_list:
+                failure_reason = f"그룹 {group.id}에서 Pod를 찾을 수 없음"
+                debug_print("❌ Pod 없음으로 그룹 실패", group_id=group.id, reason=failure_reason)
+                return {
+                    "group_id": group.id,
+                    "status": "failed",
+                    "execution_time": (datetime.now(timezone.utc) - group_start_time).total_seconds(),
+                    "total_pod_count": 0,
+                    "success_pod_count": 0,
+                    "failed_pod_count": 0,
+                    "failure_reason": failure_reason
+                }
+
+            debug_print("🎯 RosbagExecutor 병렬 실행 시작", group_id=group.id, pod_count=len(pod_list))
+            execution_results = await self.rosbag_executor.execute_rosbag_parallel_pods(
+                pods=pod_list,
+                simulation=simulation,
+                group=group
+            )
+            debug_print("✅ RosbagExecutor 병렬 실행 완료", group_id=group.id, result_count=len(execution_results))
+
+            execution_summary = self.rosbag_executor.get_execution_summary(execution_results)
+            group_execution_time = (datetime.now(timezone.utc) - group_start_time).total_seconds()
+
+            failed_pod_count = execution_summary['failed_count'] + execution_summary['timeout_count']
+
+            if failed_pod_count > 0:
+                failure_details = [
+                    f"{r.pod_name}({r.message})"
+                    for r in execution_results if r.pod_name in execution_summary['failed_pods']
+                ]
+                failure_reason = f"그룹 {group.id}에서 {failed_pod_count}개 Pod 실패: {', '.join(failure_details)}"
+                debug_print("❌ 그룹 실행 실패", group_id=group.id, failed_pod_count=failed_pod_count, reason=failure_reason)
+
+                return {
+                    "group_id": group.id,
+                    "status": "failed",
+                    "execution_time": group_execution_time,
+                    "total_pod_count": len(pod_list),
+                    "success_pod_count": execution_summary['success_count'],
+                    "failed_pod_count": failed_pod_count,
+                    "failure_reason": failure_reason,
+                    "execution_summary": execution_summary
+                }
+
+            debug_print("✅ 그룹 실행 성공", 
+                    group_id=group.id, 
+                    pod_count=len(pod_list),
+                    execution_time=group_execution_time)
+            return {
+                "group_id": group.id,
+                "status": "success",
+                "execution_time": group_execution_time,
+                "total_pod_count": len(pod_list),
+                "success_pod_count": execution_summary['success_count'],
+                "failed_pod_count": 0,
+                "execution_summary": execution_summary
+            }
+
+        except Exception as e:
+            debug_print("💥 그룹 실행 중 예외 발생", 
+                    group_id=group.id, 
+                    error=str(e),
+                    error_type=type(e).__name__)
+            failure_reason = f"그룹 {group.id} 실행 중 예외 발생: {str(e)}"
+            return {
+                "group_id": group.id,
+                "status": "failed",
+                "execution_time": (datetime.now(timezone.utc) - group_start_time).total_seconds(),
+                "total_pod_count": 0,
+                "success_pod_count": 0,
+                "failed_pod_count": 0,
+                "failure_reason": failure_reason
+            }
+
         
     async def start_sequential_simulation(self, simulation_id: int):
         print(f"🚀 시뮬레이션 시작 요청: simulation_id={simulation_id}")
@@ -1028,51 +1284,6 @@ class SimulationService:
             print(f"⚠️  시뮬레이션 상태 업데이트 실패: {str(update_error)}")
             print(f"   시도한 상태: {status}")
             print(f"   사유: {reason}")
-    
-    
-    async def start_simulation(self, simulation_id: int):
-        simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
-
-        # instances = await self.get_simulation_instances(simulation_id)
-        
-        # 시뮬레이션 실행 패턴에 따라서 동작 방식이 달라짐
-        if simulation.pattern_type == PatternType.SEQUENTIAL:
-            steps = self.repository.find_simulation_steps(simulation_id)
-            
-            for step in steps:
-                # 해당 step의 Pod 목록 조회
-                namespace = simulation.namespace
-                
-                pod_list = await PodService.get_pods_by_filter(
-                    namespace=namespace,
-                    filter_params=StepOrderFilter(step_order=step.step_order)
-                )
-                
-                # 해당 step의 모든 Pod에 대해 병렬 rosbag 실행
-                
-                
-        elif simulation.pattern_type == PatternType.PARALLEL:
-            groups = self.repository.find_simulation_groups(simulation_id)
-            
-
-        # for instance in instances:
-        #     object_path = instance.template.bag_file_path
-        #     await self.pod_service.check_pod_status(instance)
-        #     pod_ip = await self.pod_service.get_pod_ip(instance)
-
-        #     # 고도화된 rosbag 실행 파라미터 준비
-        #     rosbag_params = {
-        #         "object_path": object_path,
-        #         "max_loops": simulation.repeat_count,
-        #         "delay_between_loops": simulation.delay_time or 0,
-        #         "execution_duration": simulation.execution_time,
-        #     }
-
-        #     await self.ros_service.send_post_request(
-        #         pod_ip, "/rosbag/play", rosbag_params
-        #     )
-
-        return SimulationControlResponse(simulation_id=simulation_id).model_dump()
 
     async def stop_simulation(self, simulation_id: int):
         instances = await self.get_simulation_instances(simulation_id)
@@ -1128,7 +1339,6 @@ class SimulationService:
     async def find_simulation_by_id(self, simulation_id: int, api: str):
         query = (
             select(Simulation)
-            .options(selectinload(Simulation.instances))
             .where(Simulation.id == simulation_id)
         )
         result = await self.session.execute(query)
