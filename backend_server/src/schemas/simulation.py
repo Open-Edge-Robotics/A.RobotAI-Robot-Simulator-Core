@@ -69,7 +69,7 @@ class SimulationCreateRequest(BaseModel):
         return v
 
 
-class SimulationCreateResponse(BaseModel):
+class SimulationCreateResponse(BaseSchema):
     simulation_id: int
     simulation_name: str
     simulation_description: str
@@ -79,15 +79,8 @@ class SimulationCreateResponse(BaseModel):
     mec_id: Optional[str]
     created_at: str
     total_expected_pods: int
-    
-    class Config:
-        populate_by_name = True
 
-class SimulationCreateResponseModel(BaseModel):
-    status: str = Field(default="success", description="응답 상태")
-    message: str = Field(..., description="응답 메시지")
-    data: SimulationCreateResponse = Field(..., description="응답 데이터")
-    
+class SimulationCreateResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -154,7 +147,7 @@ class SimulationListResponseModel(GlobalResponseModel):
                         "simulationCreatedAt": "2024-11-18 09:41:31.405853",
                         "simulationStatus": "Active",
                         "templateId": 1,
-                        "autonomousAgentCount": 5,
+                        "agentCount": 5,
                         "executionTime": 300,
                         "delayTime": 10,
                         "repeatCount": 3,
