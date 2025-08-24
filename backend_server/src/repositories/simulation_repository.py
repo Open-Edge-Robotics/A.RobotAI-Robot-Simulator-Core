@@ -1,6 +1,8 @@
-from typing import Dict, List, Optional, Tuple
-from sqlalchemy import case, select, func
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
+from sqlalchemy import case, select, func, update
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import desc
 
@@ -142,5 +144,111 @@ class SimulationRepository:
             .options(selectinload(SimulationGroup.template)) 
             .where(SimulationGroup.simulation_id == simulation_id)
         )
+        
+    async def find_simulation_steps(self, simulation_id: int) -> List[SimulationStep]:
+        """
+        simulation_id로 SimulationStep들을 step_order 순으로 조회
+        
+        Args:
+            simulation_id: 조회할 시뮬레이션 ID
+            
+        Returns:
+            List[SimulationStep]: step_order 순으로 정렬된 SimulationStep 목록
+        """
+        stmt = select(SimulationStep).where(
+            SimulationStep.simulation_id == simulation_id
+        ).order_by(SimulationStep.step_order)
+        
         result = await self.db.execute(stmt)
         return result.scalars().all()
+    
+    async def find_simulation_groups(self, simulation_id: int) -> List[SimulationGroup]:
+        """
+        simulation_id로 SimulationGroup들을 id 기준 오름차순으로 조회
+        
+        Args:
+            simulation_id: 조회할 시뮬레이션 ID
+            
+        Returns:
+            List[SimulationGroup]: id 기준 오름차순으로 정렬된 SimulationStep 목록
+        """
+        stmt = select(SimulationGroup).where(
+            SimulationGroup.simulation_id == simulation_id
+        ).order_by(SimulationGroup.id)
+        
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+    
+    async def update_simulation_status(self, simulation_id: int, status: str, failure_reason: Optional[str] = None):
+        """
+        simulation_id로 시뮬레이션의 상태를 업데이트
+        
+        Args:
+            simulation_id: 업데이트할 시뮬레이션 ID
+            status: 변경할 상태 값 (예: 'RUNNING', 'COMPLETED', 'FAILED')
+            failure_reason: 실패 시 실패 원인 (선택적)
+            
+        Returns:
+            bool: 업데이트 성공 여부
+            
+        Raises:
+            ValueError: 시뮬레이션을 찾을 수 없는 경우
+            SQLAlchemyError: 데이터베이스 오류 발생 시
+        """
+        try:
+            # 현재 시간 설정
+            current_time = datetime.now(timezone.utc)
+            
+            # 업데이트할 데이터 준비
+            update_data = {
+                "status": status
+            }
+            
+            # 상태별 추가 필드 설정
+            if status == "RUNNING":
+                update_data["started_at"] = current_time
+            elif status in ["COMPLETED", "FAILED"]:
+                update_data["completed_at"] = current_time
+                
+            # 실패 원인이 있는 경우 추가
+            #if failure_reason:
+            #    update_data["failure_reason"] = failure_reason
+            
+            # 시뮬레이션 상태 업데이트 실행
+            stmt = (
+                update(Simulation)
+                .where(Simulation.id == simulation_id)
+                .values(**update_data)
+            )
+            
+            result = await self.db.execute(stmt)
+            
+            # 업데이트된 행이 있는지 확인
+            if result.rowcount == 0:
+                raise ValueError(f"시뮬레이션 ID {simulation_id}를 찾을 수 없습니다.")
+            
+            # 변경사항 커밋
+            await self.db.commit()
+            
+            print(f"✅ 시뮬레이션 {simulation_id} 상태 업데이트 완료: {status}")
+            if failure_reason:
+                print(f"   실패 원인: {failure_reason}")
+                
+            return True
+            
+        except ValueError:
+            # 시뮬레이션을 찾을 수 없는 경우 롤백 후 재발생
+            await self.db.rollback()
+            raise
+            
+        except SQLAlchemyError as e:
+            # 데이터베이스 오류 발생 시 롤백
+            await self.db.rollback()
+            print(f"❌ 데이터베이스 오류로 시뮬레이션 상태 업데이트 실패: {str(e)}")
+            raise
+            
+        except Exception as e:
+            # 기타 예상치 못한 오류 발생 시 롤백
+            await self.db.rollback()
+            print(f"❌ 예상치 못한 오류로 시뮬레이션 상태 업데이트 실패: {str(e)}")
+            raise SQLAlchemyError(f"시뮬레이션 상태 업데이트 중 오류 발생: {str(e)}")
