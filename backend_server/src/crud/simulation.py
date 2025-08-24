@@ -489,6 +489,15 @@ class SimulationService:
                     last_updated=sim.updated_at
                 )
             )
+        else:
+            # 예상하지 못한 상태에 대한 기본 처리
+            current_status = CurrentStatusInitiating(
+                status=sim.status,
+                timestamps=TimestampModel(
+                    created_at=sim.created_at,
+                    last_updated=sim.updated_at
+                )
+            )
             
         return SimulationData(
             simulation_id=sim.id,
@@ -510,7 +519,7 @@ class SimulationService:
                 step_order=s.step_order,
                 template_id=s.template.template_id,
                 template_type=s.template.type,  # join으로 가져온 Template.name
-                agent_count=s.autonomous_agent_count,
+                autonomous_agent_count=s.autonomous_agent_count,
                 repeat_count=s.repeat_count,
                 execution_time=s.execution_time,
                 delay_after_completion=s.delay_after_completion
@@ -524,9 +533,9 @@ class SimulationService:
 
         dto_groups = [
             GroupModel(
-                template_id=g.template.teamplte_id,
+                template_id=g.template.template_id,
                 template_type=g.template.type,  # join으로 가져온 Template.name
-                agent_count=g.agent_count,
+                autonomous_agent_count=g.autonomous_agent_count,
                 repeat_count=g.repeat_count,
                 execution_time=g.execution_time
             )
