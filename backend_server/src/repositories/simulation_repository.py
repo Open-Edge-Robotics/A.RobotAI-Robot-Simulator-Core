@@ -1,6 +1,8 @@
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional
-from sqlalchemy import case, select, func, desc
+from sqlalchemy import case, select, func, desc, update
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
@@ -236,6 +238,56 @@ class SimulationRepository:
         except Exception as e:
             logger.error(f"시뮬레이션 그룹 조회 중 오류: {str(e)}")
             return []
+
+    async def find_simulation_steps(self, simulation_id: int) -> List[SimulationStep]:
+        """simulation_id로 SimulationStep들을 step_order 순으로 조회"""
+        stmt = (
+            select(SimulationStep)
+            .where(SimulationStep.simulation_id == simulation_id)
+            .order_by(SimulationStep.step_order)
+        )
+        result = await self.db_session.execute(stmt)
+        return result.scalars().all()
+    
+    async def find_simulation_groups(self, simulation_id: int) -> List[SimulationGroup]:
+        """simulation_id로 SimulationGroup들을 id 기준 오름차순으로 조회"""
+        stmt = (
+            select(SimulationGroup)
+            .where(SimulationGroup.simulation_id == simulation_id)
+            .order_by(SimulationGroup.id)
+        )
+        result = await self.db_session.execute(stmt)
+        return result.scalars().all()
+    
+    async def update_simulation_status(
+        self, simulation_id: int, status: str, failure_reason: Optional[str] = None
+    ) -> bool:
+        """시뮬레이션 상태 업데이트"""
+        try:
+            current_time = datetime.now(timezone.utc)
+            update_data = {"status": status}
+            
+            if status == "RUNNING":
+                update_data["started_at"] = current_time
+            elif status in ["COMPLETED", "FAILED"]:
+                update_data["completed_at"] = current_time
+            
+            stmt = (
+                update(Simulation)
+                .where(Simulation.id == simulation_id)
+                .values(**update_data)
+            )
+            result = await self.db_session.execute(stmt)
+            if result.rowcount == 0:
+                raise ValueError(f"시뮬레이션 ID {simulation_id}를 찾을 수 없습니다.")
+            await self.db_session.commit()
+            return True
+            
+        except Exception as e:
+            await self.db_session.rollback()
+            logger.error(f"시뮬레이션 상태 업데이트 실패: {str(e)}")
+            raise
+
 
 # 의존성 주입을 위한 팩토리 함수
 def create_simulation_repository(db_session: Optional[AsyncSession] = None) -> SimulationRepository:

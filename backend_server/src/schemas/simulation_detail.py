@@ -30,7 +30,7 @@ class StepModel(BaseSchema):
     step_order: int
     template_id: int
     template_type: str
-    agent_count: int
+    autonomous_agent_count: int
     repeat_count: int
     execution_time: int
     delay_after_completion: Optional[int] = 0
@@ -38,7 +38,7 @@ class StepModel(BaseSchema):
 class GroupModel(BaseSchema):
     template_id: int
     template_type: str
-    agent_count: int
+    autonomous_agent_count: int
     repeat_count: int
     execution_time: int
 

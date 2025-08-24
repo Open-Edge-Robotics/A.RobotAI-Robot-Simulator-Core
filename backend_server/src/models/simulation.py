@@ -47,8 +47,8 @@ class Simulation(Base):
 
     # 메타 정보
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable = True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
 
     # 관계
     steps: Mapped[Optional[List["SimulationStep"]]] = relationship(
