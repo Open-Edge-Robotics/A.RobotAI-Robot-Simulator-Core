@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database.db_conn import init_db, close_db
 from exception.exception_handler import *
-from routes import template, instance, simulation
+from routes import template, instance, simulation, dashboard
 from settings import settings
 
 
@@ -38,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-routers = [template.router, instance.router, simulation.router]
+routers = [template.router, instance.router, simulation.router, dashboard.router]
 for router in routers:
     app.include_router(router, prefix=settings.API_STR)
 
