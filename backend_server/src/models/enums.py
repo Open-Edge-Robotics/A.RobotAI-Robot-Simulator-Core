@@ -1,5 +1,11 @@
 from enum import Enum
 
+class ExecutionStatus(Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+    STOPPED = "stopped"
 
 class PatternType(str, Enum):
     SEQUENTIAL = "sequential"

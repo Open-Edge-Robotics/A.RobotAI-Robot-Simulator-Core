@@ -9,13 +9,14 @@ from crud.simulation import SimulationService
 from database.db_conn import get_db, async_session
 from schemas.simulation import *
 from utils.my_enum import API
+from state import simulation_state
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 def get_simulation_service(db: AsyncSession = Depends(get_db)) -> SimulationService:
     """SimulationService 의존성 주입"""
-    repository = SimulationRepository(db)
-    return SimulationService(db, async_session, repository)
+    repository = SimulationRepository(async_session)
+    return SimulationService(db, async_session, repository, simulation_state)
 
 
 @router.post(
@@ -65,10 +66,6 @@ async def get_simulations(
     service: SimulationService = Depends(get_simulation_service)
 ):
     """시뮬레이션 목록 조회 (페이지네이션)"""
-    
-    # 페이지네이션 파라미터 생성
-    # pagination = PaginationParams(page=page, size=size)
-    
     try:
         # Service에서 비즈니스 로직 처리
         simulation_items, pagination_meta = await service.get_simulations_with_pagination(
@@ -135,8 +132,8 @@ async def control_simulation(
     if request.action == "start":
         result = await service.start_simulation_async(request.simulation_id)
         message = API.RUN_SIMULATION.value
-    elif request.action == "stop":
-        result = await service.stop_simulation(request.simulation_id)
+    elif request.action == "stop": # 정지
+        result = await service.stop_simulation_async(request.simulation_id)
         message = API.STOP_SIMULATION.value
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
