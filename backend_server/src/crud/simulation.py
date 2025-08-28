@@ -38,7 +38,8 @@ from schemas.simulation import (
     SimulationControlResponse,
     SimulationPatternUpdateRequest,
     SimulationPatternUpdateResponse,
-    SimulationOverview
+    SimulationOverview,
+    SimulationSummaryItem
 )
 from utils.my_enum import PodStatus, API
 from fastapi import BackgroundTasks
@@ -1312,6 +1313,22 @@ class SimulationService:
         
         return SimulationListItem(**sim_dict)
     
+
+    async def get_simulation_summary_list(self) -> List[SimulationSummaryItem]:
+        try:
+            summary_tuples = await self.repository.find_summary_list()
+            
+            # DTO로 변환
+            return [
+                SimulationSummaryItem(
+                    simulation_id=sim_id,
+                    simulation_name=sim_name
+                )
+                for sim_id, sim_name in summary_tuples
+            ]
+        except Exception as e:
+            raise
+
     async def stop_simulation_async(self, simulation_id: int) -> Dict[str, Any]:
         """
         🔑 통합 시뮬레이션 중지 메서드 (라우트에서 호출)
@@ -1707,4 +1724,3 @@ class SimulationService:
             await asyncio.sleep(poll_interval)
 
         return "COMPLETED", pod_status_dict
-
