@@ -297,6 +297,33 @@ class SimulationListResponseFactory:
             )
         )
 
+###### 시뮬레이션 요약 목록 #######        
+class SimulationSummaryItem(BaseSchema):
+    """시뮬레이션 목록 아이템"""
+    simulation_id: int = Field(alias="simulationId")
+    simulation_name: str = Field(alias="simulationName")
+
+class SimulationSummaryResponse(GlobalResponseModel):
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "success",
+                "message": "시뮬레이션 목록 조회 성공",
+                "data": {
+                    "simulations": [
+                        {
+                            "simulationId": 4,
+                            "simulationName": "병렬 실행 반복 시뮬레이션 테스트"
+                        },
+                        {
+                            "simulationId": 2,
+                            "simulationName": "순차 실행 반복 시뮬레이션 테스트"
+                        }
+                    ]
+                }
+            }
+        }
+
 ###### 패턴 설정 업데이트 #######
 class SimulationPatternUpdateRequest(BaseSchema):
     template_id: Optional[int] = Field(None, description="템플릿 ID")
