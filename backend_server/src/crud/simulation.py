@@ -1228,7 +1228,7 @@ class SimulationService:
         if not simulation:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"{api}: 존재하지 않는 시뮬레이션id 입니다.",
+                detail=f"존재하지 않는 시뮬레이션 ID",
             )
         return simulation
 
