@@ -492,6 +492,12 @@ class PodService:
     async def get_pod_ip(instance: Instance):
         pod = pod_client.read_namespaced_pod(name=instance.pod_name, namespace=instance.pod_namespace)
         return pod.status.pod_ip
+    
+    @staticmethod
+    def get_v1pod_ip(pod: V1Pod) -> str:
+        """Pod 객체에서 IP 반환"""
+        return pod.status.pod_ip or "unknown"
+    
 
     async def is_pod_ready(self, instance: Instance):
         pod_status = await self.get_pod_status(instance.pod_name, instance.pod_namespace)
@@ -499,6 +505,12 @@ class PodService:
 
     async def check_pod_status(self, instance: Instance):
         pod_status = await self.get_pod_status(instance.pod_name, instance.pod_namespace)
+        code = await self.get_pod_status_code(pod_status)
+        if code != 200:
+            raise HTTPException(status_code=code, detail=f"Pod Status: {pod_status}")
+        
+    async def check_v1pod_status(self, pod: V1Pod):
+        pod_status = pod.status.phase
         code = await self.get_pod_status_code(pod_status)
         if code != 200:
             raise HTTPException(status_code=code, detail=f"Pod Status: {pod_status}")
