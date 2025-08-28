@@ -3,6 +3,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Qu
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from models.enums import ViewType
+from schemas.dashboard import SimulationDashboardResponseModel
 from repositories.simulation_repository import SimulationRepository
 from schemas.simulation_detail import SimulationResponseModel
 from crud.simulation import SimulationService
@@ -49,15 +51,23 @@ async def create_simulation(
 )
 async def get_simulation(
     simulation_id: int = Path(..., description = "조회할 시뮬레이션 ID"),
+    view: Optional[ViewType] = Query(ViewType.DETAIL, description="응답 뷰 타입"),
     service: SimulationService = Depends(get_simulation_service)
 ):
-    simulation = await service.get_simulation(simulation_id)
-    
-    return SimulationResponseModel(
-        status_code=status.HTTP_200_OK,
-        data=simulation.model_dump(),
-        message=f"{simulation.simulation_id}번 시뮬레이션 상세 정보 조회 성공"
-    )
+    if view == ViewType.DASHBOARD:
+        dashboard_data = await service.get_dashboard_data(simulation_id)
+        return SimulationDashboardResponseModel(
+            statusCode="200",
+            data=dashboard_data.model_dump(by_alias=True),
+            message="시뮬레이션 대시보드 정보 조회 성공"
+        )
+    else:
+        detail_data = await service.get_simulation(simulation_id)
+        return SimulationResponseModel(
+            statusCode="200",
+            data=detail_data,
+            message=f"{simulation_id}번 시뮬레이션 상세정보 조회 성공"
+        )
 
 @router.get("", response_model=SimulationListResponse, status_code=status.HTTP_200_OK)
 async def get_simulations(
