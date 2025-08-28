@@ -15,4 +15,4 @@ def debug_print(message, **kwargs):
     """디버깅용 print 함수"""
     debug_info = get_debug_info()
     extra_info = f" | {kwargs}" if kwargs else ""
-    print(f"🔍 [{debug_info['timestamp']}] [Thread:{debug_info['thread_id']}] [Task:{debug_info['task_name']}({debug_info['task_id']})] {message}{extra_info}")
+    print(f"🔍 [{debug_info['timestamp']}] [Thread:{debug_info['thread_id']}] [Task:{debug_info['task_name']}({debug_info['task_id']})] {message}{extra_info}", flush=True)

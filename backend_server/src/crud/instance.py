@@ -160,7 +160,7 @@ class InstanceService:
     async def get_instance_running_status(self, instance):
         if await self.pod_service.is_pod_ready(instance):
             pod_ip = await self.pod_service.get_pod_ip(instance)
-            return await self.ros_service.send_get_request(pod_ip)
+            return await self.ros_service.get_pod_status(pod_ip)
 
         return PodStatus.STOPPED.value
 

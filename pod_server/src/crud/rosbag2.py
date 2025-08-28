@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 import logging
 import os
@@ -421,15 +422,14 @@ class EnhancedRosbagService:
             args=(bag_directory_path, max_loops, delay_between_loops, execution_duration)
         )
         self.play_thread.start()
+        
+        time.sleep(0.1)  # 스레드 시작 시간 대기
+        if not self.play_thread.is_alive():
+            raise Exception("Failed to start rosbag thread")
 
         return {
             "status": "started",
-            "bag_directory": bag_directory_path,
-            "max_loops": max_loops,
-            "delay_between_loops": delay_between_loops,
-            "execution_duration": execution_duration,
-            "downloaded": should_download,
-            "start_time": self.start_time.isoformat() if self.start_time else None
+            "message": "Rosbag playback started successfully"
         }
 
     def validate_bag_structure(self, bag_directory: str) -> bool:
@@ -587,6 +587,36 @@ class EnhancedRosbagService:
         except Exception as e:
             self.logger.error(f"Error stopping rosbag: {e}")
             self.is_playing = False
+            
+    async def get_status_v2(self):
+        """
+        현재 rosbag 상태를 RosService.send_get_request가 요구하는 dict 형태로 반환
+        """
+        try:
+            if self.is_playing:
+                is_playing = True
+                current_loop = self.current_loop_count
+                max_loops = self.max_loop_count or 0
+            else:
+                is_playing = False
+                current_loop = self.current_loop_count if hasattr(self, "current_loop_count") else 0
+                max_loops = self.max_loop_count if hasattr(self, "max_loop_count") else 0
+
+            return {
+                "isPlaying": is_playing,
+                "current_loop": current_loop,
+                "max_loops": max_loops
+            }
+
+        except Exception as e:
+            # 상태 조회 실패 시
+            return {
+                "isPlaying": False,
+                "current_loop": 0,
+                "max_loops": 0,
+                "error": str(e)
+            }
+
 
     async def get_status(self):
         """현재 rosbag 상태 반환"""
