@@ -14,7 +14,7 @@ from database.db_conn import get_db
 logger = logging.getLogger(__name__)
 
 # 라우터 생성
-router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 # 응답 모델 (필요에 따라 별도 models.py로 분리 가능)
 from pydantic import BaseModel
