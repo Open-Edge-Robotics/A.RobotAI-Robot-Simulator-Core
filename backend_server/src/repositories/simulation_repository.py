@@ -57,10 +57,9 @@ class SimulationRepository:
                     (Simulation.status == "RUNNING", 1),
                     (Simulation.status == "INITIATING", 2),
                     (Simulation.status == "READY", 3),
-                    (Simulation.status == "PAUSED", 4),
+                    (Simulation.status == "STOPPED", 4),
                     (Simulation.status == "FAILED", 5),
-                    (Simulation.status == "CANCELLED", 6),
-                    (Simulation.status == "COMPLETED", 7),
+                    (Simulation.status == "COMPLETED", 6),
                     else_=8
                 )
                 
@@ -68,9 +67,8 @@ class SimulationRepository:
                     (Simulation.status == "RUNNING", Simulation.started_at),
                     (Simulation.status == "INITIATING", Simulation.created_at),
                     (Simulation.status == "READY", Simulation.created_at),
-                    (Simulation.status == "PAUSED", Simulation.updated_at),
+                    (Simulation.status == "STOPPED", Simulation.updated_at),
                     (Simulation.status == "FAILED", Simulation.updated_at),
-                    (Simulation.status == "CANCELLED", Simulation.updated_at),
                     (Simulation.status == "COMPLETED", Simulation.completed_at),
                     else_=Simulation.created_at
                 )

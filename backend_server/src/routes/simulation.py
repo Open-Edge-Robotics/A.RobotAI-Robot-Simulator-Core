@@ -137,7 +137,7 @@ async def control_simulation(
         message = API.STOP_SIMULATION.value
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f'{API.STOP_SIMULATION.value}: action 요청 값을 확인해주세요')
+                            detail=f"지원하지 않는 시뮬레이션 액션: '{request.action}'. action 값은 'start' 또는 'stop'만 허용됩니다.")
 
     return SimulationControlResponseModel(
         status_code=status.HTTP_200_OK,

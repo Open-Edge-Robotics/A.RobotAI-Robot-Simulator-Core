@@ -15,10 +15,9 @@ class SimulationStatus(str, Enum):
     INITIATING = "INITIATING"  # 생성/환경 구성 중
     READY = "READY"            # 실행 대기
     RUNNING = "RUNNING"        # 실행 중
-    PAUSED = "PAUSED"          # 일시 중지
+    STOPPED = "STOPPED"        # 정지
     COMPLETED = "COMPLETED"    # 정상 완료
     FAILED = "FAILED"          # 오류 발생
-    CANCELLED = "CANCELLED"    # 사용자 취소
 
 class StepStatus(str, Enum):
     PENDING = "PENDING"

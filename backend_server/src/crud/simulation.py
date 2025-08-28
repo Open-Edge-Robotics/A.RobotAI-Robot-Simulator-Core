@@ -648,6 +648,13 @@ class SimulationService:
         try:
             debug_print("📋 시뮬레이션 조회 시작", simulation_id=simulation_id)
             simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
+            
+            # 이미 실행 중이면 409 Conflict
+            if simulation.status == SimulationStatus.RUNNING:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"이미 실행 중인 시뮬레이션입니다 (ID: {simulation_id})"
+                )
 
             simulation_data = {
                 "id": simulation.id,
@@ -702,16 +709,21 @@ class SimulationService:
 
             debug_print("📤 API 응답 반환", simulation_id=simulation_id)
             return {
-                "simulation_id": simulation_id,
+                "simulationId": simulation_id,
                 "status": "RUNNING",
-                "pattern_type": simulation_data["pattern_type"],
-                "message": f"{pattern_name} 시뮬레이션 실행을 시작했습니다."
+                "patternType": simulation_data["pattern_type"],
+                "startedAt": datetime.now(timezone.utc)
             }
             
-        except Exception as e:
-            traceback.print_stack()
-            debug_print("💥 시뮬레이션 시작 중 예외 발생", simulation_id=simulation_id, error=str(e), error_type=type(e).__name__)
+        except HTTPException:
             raise
+        except Exception as e:
+            failure_reason = f"시뮬레이션 시작 중 예상치 못한 오류: {str(e)}"
+            print(f"❌ {failure_reason}")
+            raise HTTPException(
+                status_code=500,
+                detail="시뮬레이션 시작 중 내부 오류가 발생했습니다"
+            )
 
     def _cleanup_simulation(self, simulation_id: int):
         """시뮬레이션 완료/취소 후 정리"""
@@ -1211,12 +1223,7 @@ class SimulationService:
         return SimulationDeleteResponse(simulation_id=simulation_id).model_dump()
 
     async def find_simulation_by_id(self, simulation_id: int, api: str):
-        query = (
-            select(Simulation)
-            .where(Simulation.id == simulation_id)
-        )
-        result = await self.session.execute(query)
-        simulation = result.scalar_one_or_none()
+        simulation = await self.repository.find_by_id(simulation_id)
 
         if not simulation:
             raise HTTPException(
@@ -1317,15 +1324,33 @@ class SimulationService:
         try:
             # 1. 시뮬레이션 조회 및 RUNNING 상태 확인
             simulation = await self.find_simulation_by_id(simulation_id, "stop")
-            if simulation.status != SimulationStatus.RUNNING:
+            
+            # 2. 상태별 처리
+            if simulation.status == SimulationStatus.STOPPED:
+                # 이미 중지된 시뮬레이션
+                raise HTTPException(
+                    status_code=409,  # Conflict
+                    detail=f"이미 중지된 시뮬레이션입니다 (현재 상태: {simulation.status})"
+                )
+            elif simulation.status != SimulationStatus.RUNNING:
+                # 실행 중이 아닌 상태
                 raise HTTPException(
                     status_code=400,
-                    detail=f"시뮬레이션이 실행 중이 아님 (현재 상태: {simulation.status})"
+                    detail=f"시뮬레이션을 중지할 수 없는 상태입니다 (현재 상태: {simulation.status})"
+                )
+                
+            # 3. 중지 진행 중인 경우 확인
+            running_info = self.state.running_simulations.get(simulation_id)
+            if running_info and running_info.get("is_stopping", False):
+                # 이미 중지 진행 중
+                raise HTTPException(
+                    status_code=409,
+                    detail="중지 요청이 이미 진행 중입니다. 완료될 때까지 기다려주세요."
                 )
 
             print(f"📊 시뮬레이션 패턴: {simulation.pattern_type}")
 
-            # 2. 패턴 타입에 따라 중지 메서드 호출
+            # 4. 패턴 타입에 따라 중지 메서드 호출
             if simulation.pattern_type == PatternType.SEQUENTIAL:
                 print(f"🔄 순차 패턴 중지 처리 시작")
                 result = await self._stop_sequential_simulation_via_polling(simulation_id)
@@ -1405,7 +1430,7 @@ class SimulationService:
                 await self._update_simulation_status_and_log(simulation_id, SimulationStatus.FAILED, "중지 처리 타임아웃")
                 raise HTTPException(status_code=500, detail="중지 처리 타임아웃")
     
-            await self._update_simulation_status_and_log(simulation_id, SimulationStatus.CANCELLED, "사용자 요청에 의해 중지됨")
+            await self._update_simulation_status_and_log(simulation_id, SimulationStatus.STOPPED, "사용자 요청에 의해 중지됨")
 
             # 4. 최종 상태 확인 및 결과 반환
             try:
@@ -1425,9 +1450,8 @@ class SimulationService:
             # 결과 반환
             return {
                 "simulationId": simulation_id,
-                "status": "stopped",
-                "message": "순차 시뮬레이션이 안전하게 중지됨",
-                "stoppedAt": datetime.now(timezone.utc).isoformat()
+                "status": SimulationStatus.STOPPED,
+                "stoppedAt": datetime.now(timezone.utc)
             }
 
         except HTTPException:
@@ -1478,14 +1502,13 @@ class SimulationService:
                 raise HTTPException(status_code=500, detail="중지 처리 타임아웃")
 
             # STOPPED 상태 업데이트
-            await self._update_simulation_status_and_log(simulation_id, SimulationStatus.CANCELLED, "polling 로직 완료")
+            await self._update_simulation_status_and_log(simulation_id, SimulationStatus.STOPPED, "polling 로직 완료")
 
             # 결과 반환
             return {
                 "simulationId": simulation_id,
-                "status": "stopped",
-                "message": "병렬 시뮬레이션이 안전하게 중지됨",
-                "stoppedAt": datetime.now(timezone.utc).isoformat()
+                "status": SimulationStatus.STOPPED,
+                "stoppedAt": datetime.now(timezone.utc)
             }
 
         except HTTPException:
@@ -1538,7 +1561,7 @@ class SimulationService:
                 failed_pods += sum(1 for r in stop_results if r.status in ["failed", "timeout"])
             
             # 상태 업데이트
-            final_status = "PAUSED" if failed_pods == 0 else "FAILED"
+            final_status = "STOPPED" if failed_pods == 0 else "FAILED"
             await self._update_simulation_status_and_log(
                 simulation_id, final_status, f"직접 순차 중지 완료 - 총 {total_pods}개 Pod"
             )
@@ -1546,7 +1569,7 @@ class SimulationService:
             return {
                 "simulationId": simulation_id,
                 "patternType": simulation.pattern_type,
-                "status": "stopped_directly",
+                "status": SimulationStatus.STOPPED,
                 "message": "순차 시뮬레이션 직접 중지 완료",
                 "totalPods": total_pods,
                 "stoppedPods": stopped_pods,
@@ -1598,7 +1621,7 @@ class SimulationService:
             failed_count = sum(1 for r in stop_results if r.status in ["failed", "timeout"])
             
             # 상태 업데이트
-            final_status = "PAUSED" if failed_count == 0 else "FAILED"
+            final_status = "STOPPED" if failed_count == 0 else "FAILED"
             await self._update_simulation_status_and_log(
                 simulation_id, final_status, f"직접 병렬 중지 완료 - 총 {len(all_pods)}개 Pod"
             )
@@ -1606,7 +1629,7 @@ class SimulationService:
             return {
                 "simulationId": simulation_id,
                 "patternType": simulation.pattern_type,
-                "status": "stopped_directly",
+                "status": SimulationStatus.STOPPED,
                 "message": "병렬 시뮬레이션 직접 중지 완료",
                 "totalPods": len(all_pods),
                 "stoppedPods": stopped_count,
