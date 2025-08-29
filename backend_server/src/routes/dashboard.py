@@ -8,7 +8,7 @@ from repositories.mec_repository import create_mec_repository
 from repositories.instance_repository import create_instance_repository
 from crud.dashboard import DashboardService, create_dashboard_service
 from crud.simulation import AsyncSession
-from database.db_conn import get_db
+from database.db_conn import get_db, async_session
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ async def get_dashboard_service(
     db_session: Optional[AsyncSession] = Depends(get_db)
 ) -> DashboardService:
     """대시보드 서비스 의존성 주입"""
-    simulation_repo = create_simulation_repository(db_session)
+    simulation_repo = create_simulation_repository(async_session)
     mec_repo = create_mec_repository(db_session)
     instance_repo = create_instance_repository(db_session)
     
