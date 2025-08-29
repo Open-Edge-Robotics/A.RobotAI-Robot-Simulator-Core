@@ -7,17 +7,19 @@ from sqlalchemy import select, exists, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
+from kubernetes.client import V1Pod
 
 from crud.metrics_collector import MetricsCollector
 from schemas.dashboard import DashboardData
 from utils.simulation_utils import extract_simulation_dashboard_data
+from state import SimulationState
 from utils.debug_print import debug_print
 from utils.rosbag_executor import RosbagExecutor
 from schemas.simulation_detail import CurrentStatusInitiating, CurrentStatusReady, ExecutionPlanParallel, ExecutionPlanSequential, GroupModel, ProgressModel, SimulationData, StepModel, TimestampModel
 from schemas.pod import GroupIdFilter, StepOrderFilter
 from repositories.simulation_repository import SimulationRepository
 from schemas.pagination import PaginationMeta, PaginationParams
-from models.enums import PatternType, SimulationStatus
+from models.enums import ExecutionStatus, PatternType, SimulationStatus
 from utils.simulation_background import (
     handle_parallel_pattern_background,
     handle_sequential_pattern_background,
@@ -28,6 +30,8 @@ from .pod import PodService
 from .rosbag import RosService
 from models.instance import Instance
 from models.simulation import Simulation
+from models.simulation_groups import SimulationGroup
+from models.simulation_steps import SimulationStep
 from schemas.simulation import (
     SimulationCreateRequest,
     SimulationListItem,
@@ -37,17 +41,19 @@ from schemas.simulation import (
     SimulationControlResponse,
     SimulationPatternUpdateRequest,
     SimulationPatternUpdateResponse,
-    SimulationOverview
+    SimulationOverview,
+    SimulationSummaryItem
 )
 from utils.my_enum import PodStatus, API
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 class SimulationService:
-    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository):
+    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository, state: SimulationState):
         self.session = session
         self.sessionmaker = sessionmaker
         self.repository = repository
+        self.state = state
         self.ros_service = RosService()
         self.pod_service = PodService()
         self.templates_service = TemplateService(session)
@@ -647,6 +653,13 @@ class SimulationService:
         try:
             debug_print("📋 시뮬레이션 조회 시작", simulation_id=simulation_id)
             simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
+            
+            # 이미 실행 중이면 409 Conflict
+            if simulation.status == SimulationStatus.RUNNING:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"이미 실행 중인 시뮬레이션입니다 (ID: {simulation_id})"
+                )
 
             simulation_data = {
                 "id": simulation.id,
@@ -658,15 +671,18 @@ class SimulationService:
                     simulation_id=simulation_data["id"], 
                     name=simulation_data["name"], 
                     pattern_type=simulation_data["pattern_type"])
+            
+            # 중지 이벤트 생성
+            stop_event = asyncio.Event()
 
             # 패턴 타입에 따른 분기 처리 (simulation_data 사용)
             if simulation_data["pattern_type"] == "sequential":
                 pattern_name = "순차"
-                background_task = self._run_sequential_simulation(simulation_id)
+                background_task = self._run_sequential_simulation(simulation_id, stop_event)
                 debug_print("🔄 순차 패턴 선택", simulation_id=simulation_id)
             elif simulation_data["pattern_type"] == "parallel":
                 pattern_name = "병렬"
-                background_task = self._run_parallel_simulation(simulation_id)
+                background_task = self._run_parallel_simulation_with_progress(simulation_id, stop_event)
                 debug_print("🔄 병렬 패턴 선택", simulation_id=simulation_id)
             else:
                 debug_print("❌ 지원하지 않는 패턴 타입", pattern_type=simulation_data["pattern_type"])
@@ -685,51 +701,72 @@ class SimulationService:
                     simulation_id=simulation_id, 
                     task_name=task.get_name(),
                     task_id=id(task))
+            
+            # 실행 중 시뮬레이션 등록
+            self.state.running_simulations[simulation_id] = {
+                "task": task,
+                "stop_event": stop_event,
+                "pattern_type": simulation_data["pattern_type"],
+                "stop_handler": None,  # 중지 처리 담당자
+                "is_stopping": False   # 중지 진행 중 플래그
+            }
+            debug_print(f"{self.state.running_simulations[simulation_id]}")
 
             debug_print("📤 API 응답 반환", simulation_id=simulation_id)
             return {
-                "simulation_id": simulation_id,
+                "simulationId": simulation_id,
                 "status": "RUNNING",
-                "pattern_type": simulation_data["pattern_type"],
-                "message": f"{pattern_name} 시뮬레이션 실행을 시작했습니다."
+                "patternType": simulation_data["pattern_type"],
+                "startedAt": datetime.now(timezone.utc)
             }
             
-        except Exception as e:
-            traceback.print_stack()
-            debug_print("💥 시뮬레이션 시작 중 예외 발생", simulation_id=simulation_id, error=str(e), error_type=type(e).__name__)
+        except HTTPException:
             raise
-    
-    async def _run_sequential_simulation(self, simulation_id: int):
+        except Exception as e:
+            failure_reason = f"시뮬레이션 시작 중 예상치 못한 오류: {str(e)}"
+            print(f"❌ {failure_reason}")
+            raise HTTPException(
+                status_code=500,
+                detail="시뮬레이션 시작 중 내부 오류가 발생했습니다"
+            )
+
+    def _cleanup_simulation(self, simulation_id: int):
+        """시뮬레이션 완료/취소 후 정리"""
+        if simulation_id in self.state.running_simulations:
+            print(f"시뮬레이션 {simulation_id} 정리 완료")
+            del self.state.running_simulations[simulation_id]
+   
+    async def _run_sequential_simulation(self, simulation_id: int, stop_event: asyncio.Event):
         """
-        기존 start_sequential_simulation() 로직을 그대로 사용하되,
-        각 스텝 실행을 비동기 Task로 처리
+        순차 패턴 시뮬레이션 실행
+        - 각 스텝을 순차적으로 처리
+        - 1초 단위 Pod 진행상황 모니터링
         """
-        print(f"백그라운드에서 시뮬레이션 실행 시작: {simulation_id}")
-        
+        try:
+            debug_print(f"백그라운드에서 시뮬레이션 실행 시작: {simulation_id}")
 
-        # 1. 스텝 조회
-        simulation = await self.find_simulation_by_id(simulation_id, "background run")
-        steps = await self.repository.find_simulation_steps(simulation_id)
-        print(f"📊 스텝 조회 완료: {len(steps)}개")
+            # 1️⃣ 스텝 조회
+            simulation = await self.find_simulation_by_id(simulation_id, "background run")
+            steps = await self.repository.find_simulation_steps(simulation_id)
+            debug_print(f"📊 스텝 조회 완료: {len(steps)}개")
 
-        total_execution_summary = {
-            "total_steps": len(steps),
-            "completed_steps": 0,
-            "failed_steps": 0,
-            "total_pods_executed": 0,
-            "total_success_pods": 0,
-            "total_failed_pods": 0,
-            "step_results": [],
-            "simulation_status": "RUNNING",
-            "failure_reason": None
-        }
+            total_execution_summary = {
+                "total_steps": len(steps),
+                "completed_steps": 0,
+                "failed_steps": 0,
+                "total_pods_executed": 0,
+                "total_success_pods": 0,
+                "total_failed_pods": 0,
+                "step_results": [],
+                "simulation_status": "RUNNING",
+                "failure_reason": None
+            }
 
-        for i, step in enumerate(steps, 1):
-            print(f"\n🔄 스텝 {i}/{len(steps)} 처리 시작 - Step ID: {step.id}")
+            # 2️⃣ 각 스텝 처리
+            for i, step in enumerate(steps, 1):
+                debug_print(f"\n🔄 스텝 {i}/{len(steps)} 처리 시작 - Step ID: {step.id}")
+                step_start_time = datetime.now(timezone.utc)
 
-            step_start_time = datetime.now(timezone.utc)
-
-            try:
                 # Pod 조회
                 pod_list = self.pod_service.get_pods_by_filter(
                     namespace=simulation.namespace,
@@ -738,61 +775,95 @@ class SimulationService:
 
                 if not pod_list:
                     failure_reason = f"스텝 {step.step_order}에서 Pod를 찾을 수 없음"
-                    print(f"❌ {failure_reason}")
-                    total_execution_summary["failed_steps"] += 1
-                    total_execution_summary["simulation_status"] = "FAILED"
-                    total_execution_summary["failure_reason"] = failure_reason
-                    await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
-                    return total_execution_summary
-
-                # RosbagExecutor 실행
-                execution_results = await self.rosbag_executor.execute_rosbag_parallel_pods(
-                    pods=pod_list,
-                    simulation=simulation,
-                    step=step
-                )
-
-                execution_summary = self.rosbag_executor.get_execution_summary(execution_results)
-                step_execution_time = (datetime.now(timezone.utc) - step_start_time).total_seconds()
-
-                failed_pod_count = execution_summary['failed_count'] + execution_summary['timeout_count']
-
-                if failed_pod_count > 0:
-                    failure_details = [
-                        f"{r.pod_name}({r.message})"
-                        for r in execution_results if r.pod_name in execution_summary['failed_pods']
-                    ]
-                    failure_reason = f"스텝 {step.step_order}에서 {failed_pod_count}개 Pod 실패: {', '.join(failure_details)}"
-                    print(f"❌ {failure_reason}")
-
+                    debug_print(f"❌ {failure_reason}")
                     total_execution_summary.update({
-                        "total_pods_executed": execution_summary['total_pods'],
-                        "total_success_pods": execution_summary['success_count'],
-                        "total_failed_pods": failed_pod_count,
-                        "failed_steps": total_execution_summary['failed_steps'] + 1,
+                        "failed_steps": total_execution_summary["failed_steps"] + 1,
                         "simulation_status": "FAILED",
                         "failure_reason": failure_reason
                     })
-
-                    total_execution_summary["step_results"].append({
-                        "step_id": step.id,
-                        "step_order": step.step_order,
-                        "status": "failed",
-                        "execution_summary": execution_summary,
-                        "execution_time": step_execution_time,
-                        "pod_count": len(pod_list),
-                        "failure_reason": failure_reason
-                    })
-
                     await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
                     return total_execution_summary
 
-                # 성공 처리
-                print(f"✅ 스텝 {step.step_order} 완료")
-                total_execution_summary["completed_steps"] += 1
-                total_execution_summary["total_pods_executed"] += execution_summary['total_pods']
-                total_execution_summary["total_success_pods"] += execution_summary['success_count']
+                # Pod Task 생성
+                pod_tasks = {
+                    asyncio.create_task(self.rosbag_executor.execute_single_pod(pod, simulation, step=step)): pod.metadata.name
+                    for pod in pod_list
+                }
 
+                completed_pods = set()
+                poll_interval = 1  # 1초 단위 진행상황
+
+                # 3️⃣ Pod 진행상황 루프
+                while pod_tasks:
+                    done_tasks = [t for t in pod_tasks if t.done()]
+
+                    # 완료된 Pod 처리
+                    for task in done_tasks:
+                        pod_name = pod_tasks.pop(task)
+                        try:
+                            result = task.result()
+                            completed_pods.add(result.pod_name)
+                            debug_print(f"✅ Pod 완료: {result.pod_name} ({len(completed_pods)}/{len(pod_list)})")
+                        except asyncio.CancelledError:
+                            debug_print(f"🛑 Pod CancelledError 감지: {pod_name}")
+                        except Exception as e:
+                            debug_print(f"💥 Pod 실행 실패: {pod_name}: {e}")
+
+                    # 진행 중 Pod 상태 확인 및 로그
+                    total_progress = 0.0
+                    running_info = []
+
+                    status_tasks = {
+                        pod.metadata.name: asyncio.create_task(self.rosbag_executor._check_pod_rosbag_status(pod))
+                        for pod in pod_list
+                    }
+
+                    pod_statuses = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
+
+                    for pod_name, status in zip(status_tasks.keys(), pod_statuses):
+                        if pod_name in completed_pods:
+                            pod_progress = 1.0
+                            running_info.append(f"{pod_name}(완료)")
+                        elif isinstance(status, dict):
+                            is_playing = status.get("isPlaying", True)
+                            current_loop = status.get("current_loop", 0)
+                            max_loops = max(status.get("max_loops", 1), 1)
+                            pod_progress = min(current_loop / max_loops, 1.0)
+                            if is_playing:
+                                running_info.append(f"{pod_name}({current_loop}/{max_loops})")
+                            else:
+                                pod_progress = 1.0
+                                running_info.append(f"{pod_name}(종료)")
+                        else:
+                            pod_progress = 0.0
+                            running_info.append(f"{pod_name}(상태체크실패)")
+
+                        total_progress += pod_progress
+
+                    group_progress = (total_progress / len(pod_list)) * 100
+                    debug_print(f"⏳ Step {step.step_order} 진행률: {group_progress:.1f}% ({len(completed_pods)}/{len(pod_list)}) | 진행중: {', '.join(running_info)}")
+
+                    # stop_event 감지
+                    if stop_event.is_set():
+                        debug_print(f"⏹️ 중지 이벤트 감지 - 스텝 {step.step_order} 즉시 종료")
+                        for t in pod_tasks.keys():
+                            t.cancel()
+                        await asyncio.gather(*pod_tasks.keys(), return_exceptions=True)
+                        total_execution_summary["simulation_status"] = "CANCELLED"
+                        return total_execution_summary
+
+                    await asyncio.sleep(poll_interval)
+
+                # 스텝 완료 처리
+                step_execution_time = (datetime.now(timezone.utc) - step_start_time).total_seconds()
+                execution_summary = self.rosbag_executor.get_execution_summary([
+                    task.result() for task in done_tasks if not isinstance(task.result(), Exception)
+                ])
+                total_execution_summary.update({
+                    "completed_steps": total_execution_summary["completed_steps"] + 1,
+                    "total_pods_executed": total_execution_summary["total_pods_executed"] + execution_summary['total_pods'],
+                    "total_success_pods": total_execution_summary["total_success_pods"] + execution_summary['success_count']
+                })
                 total_execution_summary["step_results"].append({
                     "step_id": step.id,
                     "step_order": step.step_order,
@@ -806,485 +877,292 @@ class SimulationService:
                 if i < len(steps) and step.delay_after_completion:
                     await asyncio.sleep(step.delay_after_completion)
 
-            except Exception as e:
-                failure_reason = f"스텝 {step.step_order} 처리 중 오류: {str(e)}"
-                print(f"❌ {failure_reason}")
-                total_execution_summary["failed_steps"] += 1
-                total_execution_summary["simulation_status"] = "FAILED"
-                total_execution_summary["failure_reason"] = failure_reason
-                await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
-                return total_execution_summary
-
-        # 모든 스텝 성공
-        total_execution_summary["simulation_status"] = "COMPLETED"
-        await self._update_simulation_status_and_log(simulation_id, "COMPLETED", "모든 스텝 성공")
-        print(f"🎉 시뮬레이션 {simulation_id} 완료")
-        return total_execution_summary    
-    
-    async def _run_parallel_simulation(self, simulation_id: int):
-        """
-        병렬 패턴 시뮬레이션 실행 로직
-        모든 그룹을 병렬 실행하며, 각 그룹 내 Pod들도 병렬 실행
-        """
-        debug_print("🚀 병렬 시뮬레이션 백그라운드 실행 시작", simulation_id=simulation_id)
-        
-        try:
-            # 1. 시뮬레이션 조회
-            debug_print("📋 백그라운드에서 시뮬레이션 재조회 시작", simulation_id=simulation_id)
-            simulation = await self.find_simulation_by_id(simulation_id, "background parallel run")
-            debug_print("✅ 백그라운드 시뮬레이션 조회 완료", simulation_id=simulation.id)
-            
-            debug_print("📋 그룹 조회 시작", simulation_id=simulation_id)
-            groups = await self.repository.find_simulation_groups(simulation_id)
-            debug_print("✅ 그룹 조회 완료", simulation_id=simulation_id, group_count=len(groups))
-
-            total_execution_summary = {
-                "total_groups": len(groups),
-                "completed_groups": 0,
-                "failed_groups": 0,
-                "total_pods_executed": 0,
-                "total_success_pods": 0,
-                "total_failed_pods": 0,
-                "group_results": [],
-                "simulation_status": "RUNNING",
-                "failure_reason": None
-            }
-
-            # 모든 그룹을 병렬로 실행
-            debug_print("🎯 그룹 병렬 태스크 생성 시작", simulation_id=simulation_id, total_groups=len(groups))
-            group_tasks = []
-            for i, group in enumerate(groups):
-                debug_print("🔧 그룹 태스크 생성", simulation_id=simulation_id, group_id=group.id, group_index=i)
-                task = asyncio.create_task(self._execute_single_group(simulation, group))
-                task.set_name(f"group_{group.id}_sim_{simulation_id}")
-                group_tasks.append((group, task))
-                debug_print("✅ 그룹 태스크 생성 완료", 
-                        simulation_id=simulation_id, 
-                        group_id=group.id, 
-                        task_name=task.get_name(),
-                        task_id=id(task))
-
-            debug_print("🚀 모든 그룹 병렬 실행 시작", simulation_id=simulation_id, total_tasks=len(group_tasks))
-
-            # 모든 그룹 완료 대기
-            for i, (group, task) in enumerate(group_tasks):
-                debug_print("⏳ 그룹 태스크 완료 대기 시작", 
-                        simulation_id=simulation_id, 
-                        group_id=group.id, 
-                        task_index=i,
-                        task_name=task.get_name())
-                
-                try:
-                    group_result = await task
-                    debug_print("✅ 그룹 태스크 완료", 
-                            simulation_id=simulation_id, 
-                            group_id=group.id, 
-                            status=group_result["status"],
-                            success_pods=group_result["success_pod_count"],
-                            failed_pods=group_result["failed_pod_count"])
-                    
-                    total_execution_summary["group_results"].append(group_result)
-                    
-                    if group_result["status"] == "success":
-                        total_execution_summary["completed_groups"] += 1
-                        total_execution_summary["total_success_pods"] += group_result["success_pod_count"]
-                        debug_print("✅ 그룹 성공 처리 완료", simulation_id=simulation_id, group_id=group.id)
-                    else:
-                        total_execution_summary["failed_groups"] += 1
-                        total_execution_summary["total_failed_pods"] += group_result["failed_pod_count"]
-                        
-                        if not total_execution_summary["failure_reason"]:
-                            total_execution_summary["failure_reason"] = group_result["failure_reason"]
-                        
-                        debug_print("❌ 그룹 실패 처리 완료", 
-                                simulation_id=simulation_id, 
-                                group_id=group.id,
-                                failure_reason=group_result["failure_reason"])
-                    
-                    total_execution_summary["total_pods_executed"] += group_result["total_pod_count"]
-                    
-                except Exception as e:
-                    debug_print("💥 그룹 태스크 실행 중 예외 발생", 
-                            simulation_id=simulation_id, 
-                            group_id=group.id,
-                            error=str(e),
-                            error_type=type(e).__name__)
-                    
-                    failure_reason = f"그룹 {group.id} 실행 중 예외 발생: {str(e)}"
-                    total_execution_summary["failed_groups"] += 1
-                    
-                    if not total_execution_summary["failure_reason"]:
-                        total_execution_summary["failure_reason"] = failure_reason
-
-            debug_print("📊 모든 그룹 결과 수집 완료", 
-                    simulation_id=simulation_id,
-                    completed_groups=total_execution_summary["completed_groups"],
-                    failed_groups=total_execution_summary["failed_groups"])
-
-            # 최종 실행 결과 평가
-            if total_execution_summary["failed_groups"] > 0:
-                debug_print("❌ 시뮬레이션 실패로 판정", simulation_id=simulation_id, failed_groups=total_execution_summary["failed_groups"])
-                total_execution_summary["simulation_status"] = "FAILED"
-                failure_reason = total_execution_summary["failure_reason"] or f"{total_execution_summary['failed_groups']}개 그룹 실패"
-                
-                debug_print("📝 실패 상태 업데이트 시작", simulation_id=simulation_id, reason=failure_reason)
-                await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
-                debug_print("✅ 실패 상태 업데이트 완료", simulation_id=simulation_id)
-            else:
-                debug_print("✅ 시뮬레이션 성공으로 판정", simulation_id=simulation_id)
-                total_execution_summary["simulation_status"] = "COMPLETED"
-                
-                debug_print("📝 완료 상태 업데이트 시작", simulation_id=simulation_id)
-                await self._update_simulation_status_and_log(simulation_id, "COMPLETED", "모든 그룹 완료")
-                debug_print("✅ 완료 상태 업데이트 완료", simulation_id=simulation_id)
-
-            debug_print("🎉 병렬 시뮬레이션 백그라운드 실행 완료", simulation_id=simulation_id)
+            # 모든 스텝 성공
+            total_execution_summary["simulation_status"] = "COMPLETED"
+            await self._update_simulation_status_and_log(simulation_id, "COMPLETED", "모든 스텝 성공")
+            debug_print(f"🎉 시뮬레이션 {simulation_id} 완료")
             return total_execution_summary
 
-        except Exception as e:
-            debug_print("💥 병렬 시뮬레이션 실행 중 치명적 예외 발생", 
-                    simulation_id=simulation_id, 
-                    error=str(e),
-                    error_type=type(e).__name__)
+        except asyncio.CancelledError:
+            debug_print(f"🛑 시뮬레이션 {simulation_id} 태스크 취소됨")
+            await self._handle_simulation_stop(simulation_id, "태스크 취소로 인한 중지")
             raise
+        except Exception as e:
+            debug_print(f"❌ 시뮬레이션 {simulation_id} 실행 중 예외: {e}")
+            await self._update_simulation_status_and_log(simulation_id, "FAILED", str(e))
+            raise
+        finally:
+            self._cleanup_simulation(simulation_id)
 
-        
-    async def _execute_single_group(self, simulation, group):
+      
+    
+    async def _run_parallel_simulation_with_progress(self, simulation_id: int, stop_event: asyncio.Event):
         """
-        단일 그룹을 실행하는 헬퍼 메서드
-        그룹에 소속된 모든 Pod들을 병렬로 실행
+        병렬 패턴 시뮬레이션 실행 - 즉시 취소 + 실시간 진행상황
+        """
+        debug_print("🚀 병렬 시뮬레이션 실행 시작", simulation_id=simulation_id)
+
+        # 1️⃣ 시뮬레이션 조회
+        simulation = await self.find_simulation_by_id(simulation_id, "background parallel run")
+        debug_print("✅ 시뮬레이션 조회 완료", simulation_id=simulation.id)
+
+        groups = await self.repository.find_simulation_groups(simulation_id)
+        debug_print("✅ 그룹 조회 완료", simulation_id=simulation_id, group_count=len(groups))
+
+        total_summary = {
+            "total_groups": len(groups),
+            "completed_groups": 0,
+            "failed_groups": 0,
+            "total_pods_executed": 0,
+            "total_success_pods": 0,
+            "total_failed_pods": 0,
+            "group_results": [],
+            "simulation_status": "RUNNING",
+            "failure_reason": None
+        }
+
+        # 2️⃣ 모든 그룹 병렬 실행
+        group_tasks = [
+            asyncio.create_task(self._execute_single_group_with_progress(simulation, group))
+            for group in groups
+        ]
+
+        debug_print("🎯 모든 그룹 병렬 실행 시작", simulation_id=simulation_id, total_groups=len(groups))
+
+        # 3️⃣ 실행 중 진행상황 감시 + 즉시 취소 처리
+        poll_interval = 1.0
+        while group_tasks:
+            done, pending = await asyncio.wait(group_tasks, timeout=poll_interval, return_when=asyncio.ALL_COMPLETED)
+
+            # 완료된 그룹 처리
+            for t in done:
+                try:
+                    group_result = t.result()
+                except asyncio.CancelledError:
+                    debug_print("🛑 그룹 CancelledError 감지")
+                    group_result = {
+                        "group_id": getattr(t, "group_id", None),
+                        "status": "cancelled",
+                        "total_pod_count": 0,
+                        "success_pod_count": 0,
+                        "failed_pod_count": 0,
+                        "failure_reason": "사용자 요청으로 중지"
+                    }
+
+                total_summary["group_results"].append(group_result)
+
+                if group_result["status"] == "success":
+                    total_summary["completed_groups"] += 1
+                    total_summary["total_success_pods"] += group_result["success_pod_count"]
+                elif group_result["status"] == "failed":
+                    total_summary["failed_groups"] += 1
+                    total_summary["total_failed_pods"] += group_result.get("failed_pod_count", 0)
+                    if not total_summary["failure_reason"]:
+                        total_summary["failure_reason"] = group_result.get("failure_reason")
+                elif group_result["status"] == "cancelled":
+                    debug_print("🛑 그룹 취소 감지", group_id=group_result["group_id"])
+
+                total_summary["total_pods_executed"] += group_result["total_pod_count"]
+                group_tasks.remove(t)
+
+            # stop_event 감지 시 남은 모든 그룹 취소
+            if stop_event.is_set():
+                debug_print("🛑 시뮬레이션 중지 감지, 남은 그룹 취소 시작",
+                            pending_groups=len(pending),
+                            total_groups=len(group_tasks) + len(done))
+                
+                # pending에 남아 있는 그룹 태스크 리스트 확인
+                tasks_to_cancel = list(pending)
+                debug_print(f"⚡ cancel 대상 그룹 태스크: {len(tasks_to_cancel)}개",
+                            task_ids=[id(t) for t in tasks_to_cancel],
+                            task_names=[getattr(t, 'get_name', lambda: 'unnamed')() for t in tasks_to_cancel])
+                
+                # 각 그룹 태스크 cancel 호출
+                for t in tasks_to_cancel:
+                    t.cancel()
+                    debug_print(f"🔹 그룹 태스크 cancel 호출: id={id(t)} name={getattr(t, 'get_name', lambda: 'unnamed')()}")
+
+                # 모든 cancel 호출 완료 후 gather로 안전하게 종료 대기
+                if tasks_to_cancel:
+                    debug_print("⏳ asyncio.gather로 남은 그룹 태스크 종료 대기 중...")
+                    await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+                    debug_print("✅ 모든 그룹 태스크 cancel 완료")
+
+                # 시뮬레이션 상태 갱신
+                total_summary["simulation_status"] = "CANCELLED"
+                debug_print("🛑 시뮬레이션 stop_event 처리 완료, total_summary 상태 업데이트", 
+                            completed_groups=total_summary["completed_groups"],
+                            failed_groups=total_summary["failed_groups"],
+                            total_pods_executed=total_summary["total_pods_executed"])
+                
+                # ✅ _cleanup_simulation 호출
+                sim_state = self.state.running_simulations.get(simulation_id)
+                debug_print("🧹 _cleanup_simulation 호출 전 상태 확인", simulation_id=simulation_id, running_simulation_entry=sim_state)
+                self._cleanup_simulation(simulation_id)
+                sim_state_after = self.state.running_simulations.get(simulation_id)
+                debug_print("🧹 _cleanup_simulation 호출 후 상태 확인", simulation_id=simulation_id, running_simulation_entry=sim_state_after)
+                
+                break  # while 루프 종료
+
+
+            # 실시간 진행상황 로그
+            running_groups = len(group_tasks)
+            debug_print(f"📊 진행상황: 완료 {total_summary['completed_groups']}/{len(groups)}, 남은 그룹 {running_groups}")
+
+        # 4️⃣ 최종 상태 결정
+        if total_summary["simulation_status"] != "CANCELLED":
+            if total_summary["failed_groups"] > 0:
+                total_summary["simulation_status"] = "FAILED"
+                reason = total_summary["failure_reason"] or f"{total_summary['failed_groups']}개 그룹 실패"
+                await self._update_simulation_status_and_log(simulation_id, "FAILED", reason)
+            else:
+                total_summary["simulation_status"] = "COMPLETED"
+                await self._update_simulation_status_and_log(simulation_id, "COMPLETED", "모든 그룹 완료")
+
+        debug_print("🎉 병렬 시뮬레이션 실행 완료", simulation_id=simulation_id)
+        return total_summary
+
+    async def _execute_single_group_with_progress(self, simulation, group):
+        """
+        단일 그룹 실행 - 실시간 1초 단위 진행상황 출력 + stop_event 즉시 취소
+        - Pod별 반복 횟수(current_loop/max_loops) 반영
+        - 그룹 진행률 계산 및 표시
         """
         debug_print("🔸 그룹 실행 시작", group_id=group.id, simulation_id=simulation.id)
-    
-        group_start_time = datetime.now(timezone.utc)
-        
+        start_time = datetime.now(timezone.utc)
+
         try:
-            debug_print("🔍 그룹 Pod 조회 시작", group_id=group.id, namespace=simulation.namespace)
+            # 1️⃣ 그룹 Pod 조회
             pod_list = self.pod_service.get_pods_by_filter(
                 namespace=simulation.namespace,
                 filter_params=GroupIdFilter(group_id=group.id)
             )
-            debug_print("✅ 그룹 Pod 조회 완료", group_id=group.id, pod_count=len(pod_list) if pod_list else 0)
+            debug_print("✅ 그룹 Pod 조회 완료", group_id=group.id, pod_count=len(pod_list))
 
             if not pod_list:
                 failure_reason = f"그룹 {group.id}에서 Pod를 찾을 수 없음"
-                debug_print("❌ Pod 없음으로 그룹 실패", group_id=group.id, reason=failure_reason)
                 return {
                     "group_id": group.id,
                     "status": "failed",
-                    "execution_time": (datetime.now(timezone.utc) - group_start_time).total_seconds(),
+                    "execution_time": (datetime.now(timezone.utc) - start_time).total_seconds(),
                     "total_pod_count": 0,
                     "success_pod_count": 0,
                     "failed_pod_count": 0,
                     "failure_reason": failure_reason
                 }
 
-            debug_print("🎯 RosbagExecutor 병렬 실행 시작", group_id=group.id, pod_count=len(pod_list))
-            execution_results = await self.rosbag_executor.execute_rosbag_parallel_pods(
-                pods=pod_list,
-                simulation=simulation,
-                group=group
-            )
-            debug_print("✅ RosbagExecutor 병렬 실행 완료", group_id=group.id, result_count=len(execution_results))
+            # 2️⃣ Pod 실행
+            pod_tasks = {}
+            for pod in pod_list:
+                task = asyncio.create_task(self.rosbag_executor.execute_single_pod(pod, simulation, group))
+                task.latest_status = {}  # 최신 상태 저장용
+                pod_tasks[task] = pod.metadata.name
 
-            execution_summary = self.rosbag_executor.get_execution_summary(execution_results)
-            group_execution_time = (datetime.now(timezone.utc) - group_start_time).total_seconds()
+            total_pods = len(pod_tasks)
+            completed_pods = set()
+            poll_interval = 1  # 1초 단위 진행상황 확인
 
-            failed_pod_count = execution_summary['failed_count'] + execution_summary['timeout_count']
+            # 3️⃣ Pod 진행상황 루프
+            while pod_tasks:
+                done_tasks = [t for t in pod_tasks if t.done()]
 
-            if failed_pod_count > 0:
-                failure_details = [
-                    f"{r.pod_name}({r.message})"
-                    for r in execution_results if r.pod_name in execution_summary['failed_pods']
-                ]
-                failure_reason = f"그룹 {group.id}에서 {failed_pod_count}개 Pod 실패: {', '.join(failure_details)}"
-                debug_print("❌ 그룹 실행 실패", group_id=group.id, failed_pod_count=failed_pod_count, reason=failure_reason)
+                # 3-1️⃣ 완료된 Pod 처리
+                for task in done_tasks:
+                    pod_name = pod_tasks.pop(task)
+                    try:
+                        result = task.result()
+                        completed_pods.add(result.pod_name)
+                        debug_print(f"✅ Pod 완료: {result.pod_name} ({len(completed_pods)}/{total_pods})")
+                    except asyncio.CancelledError:
+                        debug_print(f"🛑 Pod CancelledError 감지: {pod_name}")
+                    except Exception as e:
+                        debug_print(f"💥 Pod 실행 실패: {pod_name}: {e}")
 
-                return {
-                    "group_id": group.id,
-                    "status": "failed",
-                    "execution_time": group_execution_time,
-                    "total_pod_count": len(pod_list),
-                    "success_pod_count": execution_summary['success_count'],
-                    "failed_pod_count": failed_pod_count,
-                    "failure_reason": failure_reason,
-                    "execution_summary": execution_summary
+                # 3-2️⃣ 진행 중 Pod 상태 체크 및 그룹 진행률 계산
+                total_progress = 0.0
+                running_info = []
+
+                # 전체 Pod 기준으로 상태 조회
+                status_tasks = {
+                    pod.metadata.name: asyncio.create_task(self.rosbag_executor._check_pod_rosbag_status(pod))
+                    for pod in pod_list
                 }
 
-            debug_print("✅ 그룹 실행 성공", 
-                    group_id=group.id, 
-                    pod_count=len(pod_list),
-                    execution_time=group_execution_time)
+                # 상태 조회 완료
+                pod_statuses = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
+
+                for pod_name, status in zip(status_tasks.keys(), pod_statuses):
+                    if pod_name in completed_pods:
+                        pod_progress = 1.0
+                        running_info.append(f"{pod_name}(완료)")
+                    elif isinstance(status, dict):
+                        is_playing = status.get("isPlaying", True)
+                        current_loop = status.get("current_loop", 0)
+                        max_loops = max(status.get("max_loops", 1), 1)
+                        pod_progress = min(current_loop / max_loops, 1.0)
+                        if is_playing:
+                            running_info.append(f"{pod_name}({current_loop}/{max_loops})")
+                        else:
+                            pod_progress = 1.0
+                            running_info.append(f"{pod_name}(종료)")
+                    else:
+                        pod_progress = 0.0
+                        running_info.append(f"{pod_name}(상태체크실패)")
+
+                    total_progress += pod_progress
+
+                # 그룹 전체 진행률 계산
+                group_progress = (total_progress / total_pods) * 100
+                debug_print(f"⏳ 그룹 진행률: {group_progress:.1f}% | 완료 {len(completed_pods)}/{total_pods} | 진행중: {', '.join(running_info)}")
+
+                await asyncio.sleep(poll_interval)
+
+
+            # 4️⃣ 모든 Pod 완료 시 summary
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            success_count = len(completed_pods)
+            failed_count = total_pods - success_count
+            status = "success" if failed_count == 0 else "failed"
+
             return {
                 "group_id": group.id,
-                "status": "success",
-                "execution_time": group_execution_time,
-                "total_pod_count": len(pod_list),
-                "success_pod_count": execution_summary['success_count'],
-                "failed_pod_count": 0,
-                "execution_summary": execution_summary
+                "status": status,
+                "execution_time": execution_time,
+                "total_pod_count": total_pods,
+                "success_pod_count": success_count,
+                "failed_pod_count": failed_count,
+            }
+
+        except asyncio.CancelledError:
+            debug_print(f"🛑 그룹 Task CancelledError 감지", group_id=group.id)
+
+            # 남은 Pod Task cancel + gather
+            for t in pod_tasks.keys():
+                t.cancel()
+            await asyncio.gather(*pod_tasks.keys(), return_exceptions=True)
+
+            # cancelled 결과 반환
+            return {
+                "group_id": group.id,
+                "status": "cancelled",
+                "execution_time": (datetime.now(timezone.utc) - start_time).total_seconds(),
+                "total_pod_count": total_pods,
+                "success_pod_count": len(completed_pods),
+                "failed_pod_count": len(pod_tasks),
+                "failure_reason": "사용자 요청으로 중지"
             }
 
         except Exception as e:
-            debug_print("💥 그룹 실행 중 예외 발생", 
-                    group_id=group.id, 
-                    error=str(e),
-                    error_type=type(e).__name__)
-            failure_reason = f"그룹 {group.id} 실행 중 예외 발생: {str(e)}"
+            debug_print(f"💥 그룹 실행 중 예외 발생: {e}", group_id=group.id)
             return {
                 "group_id": group.id,
                 "status": "failed",
-                "execution_time": (datetime.now(timezone.utc) - group_start_time).total_seconds(),
+                "execution_time": (datetime.now(timezone.utc) - start_time).total_seconds(),
                 "total_pod_count": 0,
                 "success_pod_count": 0,
                 "failed_pod_count": 0,
-                "failure_reason": failure_reason
+                "failure_reason": str(e)
             }
-
-        
-    async def start_sequential_simulation(self, simulation_id: int):
-        print(f"🚀 시뮬레이션 시작 요청: simulation_id={simulation_id}")
-        
-        # 1. 시뮬레이션 조회
-        simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
-        print(f"✅ 시뮬레이션 조회 완료:")
-        print(f"   - ID: {simulation.id}")
-        print(f"   - 이름: {simulation.name}")
-        print(f"   - 패턴: {simulation.pattern_type}")
-        print(f"   - 네임스페이스: {simulation.namespace}")
-        print(f"   - 상태: {simulation.status}")
-        
-        # 2. 패턴 타입별 분기
-        if simulation.pattern_type == PatternType.SEQUENTIAL:
-            print(f"📋 SEQUENTIAL 패턴 처리 시작")
-            print(f"⚠️  실패 정책: Pod 1개라도 실패 시 즉시 시뮬레이션 중단")
-            
-            # 3. 시뮬레이션 스텝들 조회
-            steps = await self.repository.find_simulation_steps(simulation_id)
-            print(f"📊 시뮬레이션 스텝 조회 완료: {len(steps)}개 스텝")
-            
-            # 전체 시뮬레이션 실행 결과 추적
-            total_execution_summary = {
-                "total_steps": len(steps),
-                "completed_steps": 0,
-                "failed_steps": 0,
-                "total_pods_executed": 0,
-                "total_success_pods": 0,
-                "total_failed_pods": 0,
-                "step_results": [],
-                "simulation_status": "RUNNING",
-                "failure_reason": None
-            }
-            
-            # 4. 각 스텝 순차 실행
-            for i, step in enumerate(steps, 1):
-                print(f"\n🔄 스텝 {i}/{len(steps)} 처리 중:")
-                print(f"   - Step ID: {step.id}")
-                print(f"   - Step Order: {step.step_order}")
-                print(f"   - Repeat Count: {step.repeat_count}")
-                print(f"   - Execution Time: {step.execution_time}")
-                
-                step_start_time = datetime.now(timezone.utc)
-                
-                # 5. 해당 스텝의 Pod 목록 조회
-                namespace = simulation.namespace
-                print(f"🔍 Pod 조회 시작 - 네임스페이스: {namespace}, step_order: {step.step_order}")
-                
-                try:
-                    # PodService 인스턴스 생성 및 조회
-                    pod_list = self.pod_service.get_pods_by_filter(
-                        namespace=namespace,
-                        filter_params=StepOrderFilter(step_order=step.step_order)
-                    )
-                    
-                    print(f"✅ Pod 조회 완료: {len(pod_list)}개 Pod 발견")
-                    
-                    # Pod 목록 상세 출력
-                    if pod_list:
-                        for j, pod in enumerate(pod_list, 1):
-                            print(f"   📦 Pod {j}: {pod.metadata.name}")
-                            print(f"      - 상태: {pod.status.phase}")
-                            print(f"      - IP: {pod.status.pod_ip or 'N/A'}")
-                            print(f"      - 노드: {pod.spec.node_name}")
-                            if pod.metadata.labels:
-                                relevant_labels = {k: v for k, v in pod.metadata.labels.items() 
-                                                if 'step' in k or 'group' in k}
-                                if relevant_labels:
-                                    print(f"      - 관련 라벨: {relevant_labels}")
-                    else:
-                        # Pod가 없는 경우 즉시 실패 처리
-                        step_execution_time = datetime.now(timezone.utc) - step_start_time
-                        failure_reason = f"스텝 {step.step_order}에서 Pod를 찾을 수 없음"
-                        
-                        print(f"❌ 시뮬레이션 즉시 실패: {failure_reason}")
-                        
-                        total_execution_summary["failed_steps"] += 1
-                        total_execution_summary["simulation_status"] = "FAILED"
-                        total_execution_summary["failure_reason"] = failure_reason
-                        total_execution_summary["step_results"].append({
-                            "step_id": step.id,
-                            "step_order": step.step_order,
-                            "status": "failed",
-                            "reason": "no_pods_found",
-                            "execution_time": step_execution_time
-                        })
-                        
-                        # 시뮬레이션 상태 업데이트
-                        await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
-                        return total_execution_summary
-                    
-                    # 6. RosbagExecutor를 사용하여 병렬 실행
-                    print(f"\n🎯 스텝 {step.step_order}에서 {len(pod_list)}개 Pod 병렬 rosbag 실행 시작")
-                    
-                    try:
-                        # RosbagExecutor 인스턴스 사용
-                        execution_results = await self.rosbag_executor.execute_rosbag_parallel_pods(
-                            pods=pod_list,
-                            simulation=simulation,
-                            step=step
-                        )
-                        
-                        # 7. 실행 결과 처리 - 실패 즉시 감지
-                        execution_summary = self.rosbag_executor.get_execution_summary(execution_results)
-                        step_execution_time = (datetime.now(timezone.utc)- step_start_time).total_seconds()
-                        
-                        print(f"📊 스텝 {step.step_order} 실행 결과:")
-                        print(f"   - 총 Pod 수: {execution_summary['total_pods']}")
-                        print(f"   - 성공: {execution_summary['success_count']}")
-                        print(f"   - 실패: {execution_summary['failed_count']}")
-                        print(f"   - 타임아웃: {execution_summary['timeout_count']}")
-                        print(f"   - 평균 실행 시간: {execution_summary['average_execution_time']}초")
-                        
-                        # 🚨 중요: Pod 1개라도 실패하면 즉시 시뮬레이션 중단
-                        failed_pod_count = execution_summary['failed_count'] + execution_summary['timeout_count']
-                        
-                        if failed_pod_count > 0:
-                            # 실패한 Pod 상세 정보 출력
-                            print(f"❌ 실패한 Pod 목록:")
-                            failure_details = []
-                            for failed_pod in execution_summary['failed_pods']:
-                                failed_result = next((r for r in execution_results if r.pod_name == failed_pod), None)
-                                if failed_result:
-                                    print(f"   - {failed_pod}: {failed_result.message}")
-                                    failure_details.append(f"{failed_pod}({failed_result.message})")
-                            
-                            failure_reason = f"스텝 {step.step_order}에서 {failed_pod_count}개 Pod 실행 실패: {', '.join(failure_details)}"
-                            
-                            print(f"\n🛑 시뮬레이션 즉시 중단: Pod 실행 실패 감지")
-                            print(f"   실패 원인: {failure_reason}")
-                            
-                            # 전체 요약에 현재까지 결과 추가
-                            total_execution_summary["total_pods_executed"] += execution_summary['total_pods']
-                            total_execution_summary["total_success_pods"] += execution_summary['success_count']
-                            total_execution_summary["total_failed_pods"] += failed_pod_count
-                            total_execution_summary["failed_steps"] += 1
-                            total_execution_summary["simulation_status"] = "FAILED"
-                            total_execution_summary["failure_reason"] = failure_reason
-                            
-                            total_execution_summary["step_results"].append({
-                                "step_id": step.id,
-                                "step_order": step.step_order,
-                                "status": "failed",
-                                "execution_summary": execution_summary,
-                                "execution_time": step_execution_time,
-                                "pod_count": len(pod_list),
-                                "failure_reason": failure_reason
-                            })
-                            
-                            # 시뮬레이션 상태 업데이트 및 즉시 종료
-                            await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
-                            return total_execution_summary
-                        
-                        # 모든 Pod가 성공한 경우
-                        print(f"✅ 스텝 {step.step_order} 실행 성공 ({step_execution_time:.2f}초)")
-                        print(f"   🎉 모든 {execution_summary['total_pods']}개 Pod 성공적으로 완료")
-                        
-                        # 전체 요약에 추가
-                        total_execution_summary["total_pods_executed"] += execution_summary['total_pods']
-                        total_execution_summary["total_success_pods"] += execution_summary['success_count']
-                        total_execution_summary["completed_steps"] += 1
-                        
-                        total_execution_summary["step_results"].append({
-                            "step_id": step.id,
-                            "step_order": step.step_order,
-                            "status": "success",
-                            "execution_summary": execution_summary,
-                            "execution_time": step_execution_time,
-                            "pod_count": len(pod_list)
-                        })
-                        
-                        # 8. 스텝 간 지연 시간 적용 (마지막 스텝이 아닌 경우)
-                        if i < len(steps) and step.delay_after_completion and step.delay_after_completion > 0:
-                            print(f"⏱️  다음 스텝까지 {step.delay_after_completion}초 대기...")
-                            await asyncio.sleep(step.delay_after_completion)
-                    
-                    except Exception as rosbag_error:
-                        step_execution_time = (datetime.now(timezone.utc) - step_start_time).total_seconds()
-                        failure_reason = f"스텝 {step.step_order}에서 rosbag 실행 오류: {str(rosbag_error)}"
-                        
-                        print(f"❌ 시뮬레이션 즉시 실패: {failure_reason}")
-                        
-                        total_execution_summary["failed_steps"] += 1
-                        total_execution_summary["simulation_status"] = "FAILED"
-                        total_execution_summary["failure_reason"] = failure_reason
-                        total_execution_summary["step_results"].append({
-                            "step_id": step.id,
-                            "step_order": step.step_order,
-                            "status": "error",
-                            "error_message": str(rosbag_error),
-                            "execution_time": step_execution_time,
-                            "pod_count": len(pod_list) if 'pod_list' in locals() else 0
-                        })
-                        
-                        # 시뮬레이션 상태 업데이트 및 즉시 종료
-                        await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
-                        return total_execution_summary
-                    
-                except Exception as pod_error:
-                    step_execution_time = (datetime.now(timezone.utc) - step_start_time).total_seconds()
-                    failure_reason = f"스텝 {step.step_order}에서 Pod 조회 실패: {str(pod_error)}"
-                    
-                    print(f"❌ 시뮬레이션 즉시 실패: {failure_reason}")
-                    print(f"   네임스페이스: {namespace}")
-                    print(f"   라벨 셀렉터: step-order={step.step_order}")
-                    
-                    total_execution_summary["failed_steps"] += 1
-                    total_execution_summary["simulation_status"] = "FAILED"
-                    total_execution_summary["failure_reason"] = failure_reason
-                    total_execution_summary["step_results"].append({
-                        "step_id": step.id,
-                        "step_order": step.step_order,
-                        "status": "error",
-                        "error_message": f"Pod 조회 실패: {str(pod_error)}",
-                        "execution_time": step_execution_time
-                    })
-                    
-                    # 시뮬레이션 상태 업데이트 및 즉시 종료
-                    await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
-                    return total_execution_summary
-            
-            # 9. 모든 스텝이 성공적으로 완료된 경우
-            total_execution_summary["simulation_status"] = "COMPLETED"
-            
-            print(f"\n🎉 SEQUENTIAL 시뮬레이션 {simulation_id} 성공적으로 완료!")
-            print(f"📊 최종 실행 요약:")
-            print(f"   - 총 스텝 수: {total_execution_summary['total_steps']}")
-            print(f"   - 완료된 스텝: {total_execution_summary['completed_steps']}")
-            print(f"   - 실패한 스텝: {total_execution_summary['failed_steps']}")
-            print(f"   - 총 실행 Pod 수: {total_execution_summary['total_pods_executed']}")
-            print(f"   - 총 성공 Pod 수: {total_execution_summary['total_success_pods']}")
-            print(f"   - 총 실패 Pod 수: {total_execution_summary['total_failed_pods']}")
-            print(f"   🏆 모든 Pod가 성공적으로 실행되었습니다!")
-            
-            # 시뮬레이션 상태 업데이트
-            await self._update_simulation_status_and_log(simulation_id, "COMPLETED", "모든 스텝 성공적으로 완료")
-            
-            return total_execution_summary
-            
-        else:
-            print(f"🔄 다른 패턴 타입 처리 예정: {simulation.pattern_type}")
-            print(f"   현재 SEQUENTIAL 패턴만 지원됩니다.")
-            raise NotImplementedError(f"패턴 타입 {simulation.pattern_type}는 아직 구현되지 않았습니다.")
 
     async def _update_simulation_status_and_log(self, simulation_id: int, status: str, reason: str):
         """시뮬레이션 상태 업데이트 및 로깅"""
@@ -1350,17 +1228,12 @@ class SimulationService:
         return SimulationDeleteResponse(simulation_id=simulation_id).model_dump()
 
     async def find_simulation_by_id(self, simulation_id: int, api: str):
-        query = (
-            select(Simulation)
-            .where(Simulation.id == simulation_id)
-        )
-        result = await self.session.execute(query)
-        simulation = result.scalar_one_or_none()
+        simulation = await self.repository.find_by_id(simulation_id)
 
         if not simulation:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"{api}: 존재하지 않는 시뮬레이션id 입니다.",
+                detail=f"존재하지 않는 시뮬레이션 ID",
             )
         return simulation
 
@@ -1372,7 +1245,7 @@ class SimulationService:
 
         for instance in instances:
             pod_ip = await self.pod_service.get_pod_ip(instance)
-            pod_status = await self.ros_service.send_get_request(pod_ip)
+            pod_status = await self.ros_service.get_pod_status(pod_ip)
 
             if pod_status == PodStatus.RUNNING.value:
                 return SimulationStatus.ACTIVE.value
@@ -1393,9 +1266,7 @@ class SimulationService:
         for instance in instances:
             try:
                 pod_ip = await self.pod_service.get_pod_ip(instance)
-                status_response = await self.ros_service.send_get_request(
-                    pod_ip, "/rosbag/status"
-                )
+                status_response = await self.ros_service.get_pod_status(pod_ip)
                 detailed_status.append(
                     {
                         "instance_id": instance.id,
@@ -1527,3 +1398,415 @@ class SimulationService:
                 resource_usage=collector._get_default_resource_usage(),
                 pod_status=collector._get_default_pod_status()
             )
+    
+
+    async def get_simulation_summary_list(self) -> List[SimulationSummaryItem]:
+        try:
+            summary_tuples = await self.repository.find_summary_list()
+            
+            # DTO로 변환
+            return [
+                SimulationSummaryItem(
+                    simulation_id=sim_id,
+                    simulation_name=sim_name
+                )
+                for sim_id, sim_name in summary_tuples
+            ]
+        except Exception as e:
+            raise
+
+    async def stop_simulation_async(self, simulation_id: int) -> Dict[str, Any]:
+        """
+        🔑 통합 시뮬레이션 중지 메서드 (라우트에서 호출)
+        - 시뮬레이션 패턴 타입 감지 후 적절한 중지 전략 선택
+        - 순차 패턴: polling 로직 위임
+        - 병렬 패턴: polling 로직 위임
+        """
+        print(f"🛑 시뮬레이션 중지 요청: {simulation_id}")
+
+        try:
+            # 1. 시뮬레이션 조회 및 RUNNING 상태 확인
+            simulation = await self.find_simulation_by_id(simulation_id, "stop")
+            
+            # 2. 상태별 처리
+            if simulation.status == SimulationStatus.STOPPED:
+                # 이미 중지된 시뮬레이션
+                raise HTTPException(
+                    status_code=409,  # Conflict
+                    detail=f"이미 중지된 시뮬레이션입니다 (현재 상태: {simulation.status})"
+                )
+            elif simulation.status != SimulationStatus.RUNNING:
+                # 실행 중이 아닌 상태
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"시뮬레이션을 중지할 수 없는 상태입니다 (현재 상태: {simulation.status})"
+                )
+                
+            # 3. 중지 진행 중인 경우 확인
+            running_info = self.state.running_simulations.get(simulation_id)
+            if running_info and running_info.get("is_stopping", False):
+                # 이미 중지 진행 중
+                raise HTTPException(
+                    status_code=409,
+                    detail="중지 요청이 이미 진행 중입니다. 완료될 때까지 기다려주세요."
+                )
+
+            print(f"📊 시뮬레이션 패턴: {simulation.pattern_type}")
+
+            # 4. 패턴 타입에 따라 중지 메서드 호출
+            if simulation.pattern_type == PatternType.SEQUENTIAL:
+                print(f"🔄 순차 패턴 중지 처리 시작")
+                result = await self._stop_sequential_simulation_via_polling(simulation_id)
+
+            elif simulation.pattern_type == PatternType.PARALLEL:
+                print(f"⚡ 병렬 패턴 중지 처리 시작")
+                result = await self._stop_parallel_simulation_via_polling(simulation_id)
+
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"지원하지 않는 패턴 타입: {simulation.pattern_type}"
+                )
+
+            print(f"✅ 시뮬레이션 {simulation_id} 중지 완료")
+            return result
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            failure_reason = f"시뮬레이션 중지 중 예상치 못한 오류: {str(e)}"
+            print(f"❌ {failure_reason}")
+            raise HTTPException(
+                status_code=500,
+                detail="시뮬레이션 중지 중 내부 오류가 발생했습니다"
+            )
+    
+    async def _stop_sequential_simulation_via_polling(self, simulation_id: int) -> Dict[str, Any]:
+        """
+        순차 시뮬레이션 중지
+        """
+        print(f"🔄 순차 시뮬레이션 중지 (polling 위임): {simulation_id}")
+
+        try:
+            sim_info = self.state.running_simulations[simulation_id]
+            print(f"현재 실행 중인 시뮬레이션 정보: {sim_info}")
+        except KeyError as e:
+            print(f"❌ 실행 중인 시뮬레이션을 찾을 수 없음: {e}")
+            return await self._direct_sequential_stop(simulation_id)
+        except Exception as e:
+            print(f"❌ 시뮬레이션 정보 조회 중 알 수 없는 오류: {e}")
+            raise
+
+        try:
+            # 1. 실행 중인 시뮬레이션 확인
+            if simulation_id not in self.state.running_simulations:
+                print(f"⚠️ 백그라운드 실행 중이 아님, 직접 중지 처리")
+                return await self._direct_sequential_stop(simulation_id)
+
+            if sim_info.get("is_stopping"):
+                print(f"⚠️ 이미 중지 처리 진행 중")
+                raise HTTPException(
+                    status_code=400,
+                    detail="이미 중지 처리가 진행 중입니다"
+                )
+
+            # 2. 중지 처리 플래그 설정 및 신호 전송
+            sim_info["is_stopping"] = True
+            sim_info["stop_handler"] = "api_sequential"
+
+            stop_event = sim_info["stop_event"]
+            stop_event.set()
+            print(f"✅ 시뮬레이션 {simulation_id} 중지 신호 전송 (polling이 순차 중지 처리)")
+
+            # 3. polling 로직의 중지 완료 대기
+            max_wait_time = 120
+            start_wait = datetime.now(timezone.utc)
+
+            while (datetime.now(timezone.utc) - start_wait).total_seconds() < max_wait_time:
+                if simulation_id not in self.state.running_simulations:
+                    print(f"✅ polling 로직에 의한 중지 완료 확인")
+                    break
+                await asyncio.sleep(1)
+            else:
+                print(f"⏰ 중지 처리 타임아웃 ({max_wait_time}초)")
+                # 타임아웃 시 FAILED 상태 업데이트
+                await self._update_simulation_status_and_log(simulation_id, SimulationStatus.FAILED, "중지 처리 타임아웃")
+                raise HTTPException(status_code=500, detail="중지 처리 타임아웃")
+    
+            await self._update_simulation_status_and_log(simulation_id, SimulationStatus.STOPPED, "사용자 요청에 의해 중지됨")
+
+            # 4. 최종 상태 확인 및 결과 반환
+            try:
+                final_simulation = await self.find_simulation_by_id(simulation_id, "stop result")
+                print(f"📌 최종 시뮬레이션 상태: {final_simulation.status}")
+            except Exception as e:
+                print(f"❌ 최종 상태 조회 실패: {e}")
+                raise
+
+            try:
+                steps = await self.repository.find_simulation_steps(simulation_id)
+                print(f"📌 스텝 개수 조회 성공: {len(steps)}")
+            except Exception as e:
+                print(f"❌ 스텝 조회 실패: {e}")
+                steps = []
+
+            # 결과 반환
+            return {
+                "simulationId": simulation_id,
+                "status": SimulationStatus.STOPPED,
+                "stoppedAt": datetime.now(timezone.utc)
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"❌ 중지 처리 중 알 수 없는 오류 발생: {e}")
+            try:
+                await self._update_simulation_status_and_log(simulation_id, SimulationStatus.FAILED, f"중지 처리 오류: {str(e)}")
+            except:
+                pass
+            raise
+
+    async def _stop_parallel_simulation_via_polling(self, simulation_id: int) -> Dict[str, Any]:
+        """
+        ⚡ 병렬 시뮬레이션 중지
+        """
+        print(f"⚡ 병렬 시뮬레이션 중지 (polling 위임): {simulation_id}")
+
+        try:
+            sim_info = self.state.running_simulations.get(simulation_id)
+            if not sim_info:
+                print(f"⚠️ 백그라운드 실행 중이 아님, 직접 중지 처리")
+                return await self._direct_parallel_stop(simulation_id)
+
+            if sim_info.get("is_stopping"):
+                print(f"⚠️ 이미 중지 처리 진행 중")
+                raise HTTPException(status_code=400, detail="이미 중지 처리가 진행 중입니다")
+
+            # 중지 플래그 설정 및 stop_event 신호 전송
+            sim_info["is_stopping"] = True
+            sim_info["stop_handler"] = "api_parallel"
+            stop_event = sim_info["stop_event"]
+            stop_event.set()
+            print(f"✅ 시뮬레이션 {simulation_id} 중지 신호 전송 (polling이 병렬 중지 처리)")
+
+            # polling으로 중지 완료 대기
+            max_wait_time = 120
+            start_wait = datetime.now(timezone.utc)
+            while (datetime.now(timezone.utc) - start_wait).total_seconds() < max_wait_time:
+                if simulation_id not in self.state.running_simulations:
+                    print(f"✅ polling 로직에 의한 중지 완료 확인")
+                    break
+                await asyncio.sleep(1)
+            else:
+                print(f"⏰ 중지 처리 타임아웃 ({max_wait_time}초)")
+                # 타임아웃 시 FAILED 상태 업데이트
+                await self._update_simulation_status_and_log(simulation_id, SimulationStatus.FAILED, "중지 처리 타임아웃")
+                raise HTTPException(status_code=500, detail="중지 처리 타임아웃")
+
+            # STOPPED 상태 업데이트
+            await self._update_simulation_status_and_log(simulation_id, SimulationStatus.STOPPED, "polling 로직 완료")
+
+            # 결과 반환
+            return {
+                "simulationId": simulation_id,
+                "status": SimulationStatus.STOPPED,
+                "stoppedAt": datetime.now(timezone.utc)
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            traceback.print_stack()
+            print(f"❌ 중지 처리 중 알 수 없는 오류 발생: {e}")
+            try:
+                await self._update_simulation_status_and_log(simulation_id, SimulationStatus.FAILED, f"중지 처리 오류: {str(e)}")
+            except:
+                pass
+            raise
+
+    async def _direct_sequential_stop(self, simulation_id: int) -> Dict[str, Any]:
+        """
+        직접 순차 중지 처리 (백그라운드 실행 중이 아닌 경우)
+        """
+        print(f"🔧 직접 순차 중지 처리: {simulation_id}")
+        
+        try:
+            # 스텝 역순 조회
+            simulation = await self.find_simulation_by_id(simulation_id, "direct sequential stop")
+            steps = await self.repository.find_simulation_steps(simulation_id)
+            steps_reversed = sorted(steps, key=lambda x: x.step_order, reverse=True)
+            
+            total_pods = 0
+            stopped_pods = 0
+            failed_pods = 0
+            
+            # 각 스텝별로 역순 처리
+            for step in steps_reversed:
+                pod_list = self.pod_service.get_pods_by_filter(
+                    namespace=simulation.namespace,
+                    filter_params=StepOrderFilter(step_order=step.step_order)
+                )
+                
+                if not pod_list:
+                    continue
+                
+                total_pods += len(pod_list)
+                
+                # 스텝별 Pod 중지
+                stop_results = await self.rosbag_executor.stop_rosbag_parallel_pods(
+                    pods=pod_list,
+                    step_order=step.step_order
+                )
+                
+                # 결과 집계
+                stopped_pods += sum(1 for r in stop_results if r.status == "stopped")
+                failed_pods += sum(1 for r in stop_results if r.status in ["failed", "timeout"])
+            
+            # 상태 업데이트
+            final_status = "STOPPED" if failed_pods == 0 else "FAILED"
+            await self._update_simulation_status_and_log(
+                simulation_id, final_status, f"직접 순차 중지 완료 - 총 {total_pods}개 Pod"
+            )
+            
+            return {
+                "simulationId": simulation_id,
+                "patternType": simulation.pattern_type,
+                "status": SimulationStatus.STOPPED,
+                "message": "순차 시뮬레이션 직접 중지 완료",
+                "totalPods": total_pods,
+                "stoppedPods": stopped_pods,
+                "failedPods": failed_pods,
+                "stoppedAt": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            traceback.print_stack()
+            error_msg = f"직접 순차 중지 실패: {str(e)}"
+            print(f"❌ {error_msg}")
+            await self._update_simulation_status_and_log(simulation_id, "FAILED", error_msg)
+            raise
+
+    async def _direct_parallel_stop(self, simulation_id: int) -> Dict[str, Any]:
+        """
+        직접 병렬 중지 처리 (백그라운드 실행 중이 아닌 경우)
+        """
+        print(f"🔧 직접 병렬 중지 처리: {simulation_id}")
+        
+        try:
+            # 모든 그룹의 Pod 수집
+            simulation = await self.find_simulation_by_id(simulation_id, "direct parallel stop")
+            groups = await self.repository.find_simulation_groups(simulation_id)
+            all_pods = []
+            
+            for group in groups:
+                pod_list = self.pod_service.get_pods_by_filter(
+                    namespace=simulation.namespace,
+                    filter_params=GroupIdFilter(group_id=group.id)
+                )
+                all_pods.extend(pod_list)
+            
+            if not all_pods:
+                return {
+                    "simulationId": simulation_id,
+                    "patternType": simulation.pattern_type,
+                    "status": "no_pods",
+                    "message": "중지할 Pod가 없음"
+                }
+            
+            # 모든 Pod 동시 중지
+            stop_results = await self.rosbag_executor.stop_rosbag_parallel_all_pods(
+                pods=all_pods
+            )
+            
+            # 결과 집계
+            stopped_count = sum(1 for r in stop_results if r.status == "stopped")
+            failed_count = sum(1 for r in stop_results if r.status in ["failed", "timeout"])
+            
+            # 상태 업데이트
+            final_status = "STOPPED" if failed_count == 0 else "FAILED"
+            await self._update_simulation_status_and_log(
+                simulation_id, final_status, f"직접 병렬 중지 완료 - 총 {len(all_pods)}개 Pod"
+            )
+            
+            return {
+                "simulationId": simulation_id,
+                "patternType": simulation.pattern_type,
+                "status": SimulationStatus.STOPPED,
+                "message": "병렬 시뮬레이션 직접 중지 완료",
+                "totalPods": len(all_pods),
+                "stoppedPods": stopped_count,
+                "failedPods": failed_count,
+                "stoppedAt": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            error_msg = f"직접 병렬 중지 실패: {str(e)}"
+            print(f"❌ {error_msg}")
+            await self._update_simulation_status_and_log(simulation_id, "FAILED", error_msg)
+            raise
+        
+    async def _monitor_pod_progress(
+        self, pods: list, rosbag_executor, stop_event: asyncio.Event, execution_context: str, poll_interval: float = 1.0
+    ):
+        """
+        Pod 진행 상황 모니터링
+        - pods: V1Pod 리스트
+        - rosbag_executor: execute_single_pod / _check_pod_rosbag_status 제공 객체
+        - stop_event: 중지 이벤트
+        - execution_context: 로그 prefix
+        """
+        pod_tasks = {asyncio.create_task(rosbag_executor.execute_single_pod(pod)): pod.metadata.name for pod in pods}
+        completed_pods = set()
+        pod_status_dict = {pod.metadata.name: {"progress": 0.0, "status": "pending"} for pod in pods}
+
+        while pod_tasks:
+            done_tasks = [t for t in pod_tasks if t.done()]
+
+            # 완료된 Pod 처리
+            for task in done_tasks:
+                pod_name = pod_tasks.pop(task)
+                try:
+                    result = task.result()
+                    pod_status_dict[pod_name]["progress"] = 1.0
+                    pod_status_dict[pod_name]["status"] = "completed"
+                    completed_pods.add(result.pod_name)
+                except asyncio.CancelledError:
+                    pod_status_dict[pod_name]["status"] = "cancelled"
+                except Exception:
+                    pod_status_dict[pod_name]["status"] = "failed"
+
+            # 진행 중 Pod 상태 확인
+            status_tasks = {
+                pod.metadata.name: asyncio.create_task(rosbag_executor._check_pod_rosbag_status(pod))
+                for pod in pods
+                if pod_status_dict[pod.metadata.name]["status"] == "pending"
+            }
+            pod_statuses = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
+
+            for pod_name, status in zip(status_tasks.keys(), pod_statuses):
+                if isinstance(status, dict):
+                    current_loop = status.get("current_loop", 0)
+                    max_loops = max(status.get("max_loops", 1), 1)
+                    is_playing = status.get("isPlaying", True)
+                    pod_status_dict[pod_name]["progress"] = min(current_loop / max_loops, 1.0)
+                    pod_status_dict[pod_name]["status"] = "playing" if is_playing else "done"
+                else:
+                    pod_status_dict[pod_name]["status"] = "failed"
+
+            # 전체 진행률 로그
+            total_progress = sum(s["progress"] for s in pod_status_dict.values()) / len(pods)
+            running_info = [f"{n}({int(s['progress']*100)}%/{s['status']})" for n, s in pod_status_dict.items()]
+            debug_print(f"{execution_context} ⏳ 진행률: {total_progress*100:.1f}% ({len(completed_pods)}/{len(pods)}) | {', '.join(running_info)}")
+
+            # stop_event 감지 시 즉시 종료
+            if stop_event.is_set():
+                debug_print(f"{execution_context} ⏹️ 중지 이벤트 감지 - 모든 Pod 즉시 종료")
+                for t in pod_tasks.keys():
+                    t.cancel()
+                await asyncio.gather(*pod_tasks.keys(), return_exceptions=True)
+                return "CANCELLED", pod_status_dict
+
+            await asyncio.sleep(poll_interval)
+
+        return "COMPLETED", pod_status_dict

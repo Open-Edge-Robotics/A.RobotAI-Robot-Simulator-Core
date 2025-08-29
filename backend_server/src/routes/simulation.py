@@ -11,13 +11,14 @@ from crud.simulation import SimulationService
 from database.db_conn import get_db, async_session
 from schemas.simulation import *
 from utils.my_enum import API
+from state import simulation_state
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
 def get_simulation_service(db: AsyncSession = Depends(get_db)) -> SimulationService:
     """SimulationService 의존성 주입"""
-    repository = SimulationRepository(db)
-    return SimulationService(db, async_session, repository)
+    repository = SimulationRepository(async_session)
+    return SimulationService(db, async_session, repository, simulation_state)
 
 
 @router.post(
@@ -40,6 +41,48 @@ async def create_simulation(
         data=new_simulation.model_dump(),
         message=API.CREATE_SIMULATION.value
     )
+    
+@router.get(
+    "/summary",
+    response_model=SimulationSummaryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="시뮬레이션 요약 목록 조회",
+    description="""
+    드롭다운 메뉴에서 사용할 시뮬레이션의 ID와 이름 목록을 조회합니다.
+    
+    **주요 특징:**
+    - 모든 시뮬레이션의 ID와 이름만 반환하여 성능 최적화
+    - 최신 생성순으로 정렬하여 반환
+    - 드롭다운 메뉴, 선택 리스트 등 UI 컴포넌트에서 활용
+    
+    **사용 예시:**
+    - 대시보드 시뮬레이션 선택 드롭다운
+    - 시뮬레이션 비교 화면에서 선택 옵션
+    - 리포트 생성 시 대상 시뮬레이션 선택
+    """,
+    tags=["Simulations"],
+    operation_id="getSimulationSummaryList"
+)
+async def get_simulations(
+    service: SimulationService = Depends(get_simulation_service)
+):
+    """시뮬레이션 요약 목록 조회"""
+    try:
+        print("시뮬레이션 요약 목록 조회 요청")
+        simulation_summary_list = await service.get_simulation_summary_list()
+        
+        print(f"시뮬레이션 요약 목록 조회 완료: {len(simulation_summary_list)}")
+        return SimulationSummaryResponse(
+            status_code=status.HTTP_200_OK,
+            data=simulation_summary_list,
+            message=f"시뮬레이션 요약 목록 조회 성공"
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="서버 오류가 발생했습니다."
+        )
     
 @router.get(
     "/{simulation_id}", 
@@ -75,10 +118,6 @@ async def get_simulations(
     service: SimulationService = Depends(get_simulation_service)
 ):
     """시뮬레이션 목록 조회 (페이지네이션)"""
-    
-    # 페이지네이션 파라미터 생성
-    # pagination = PaginationParams(page=page, size=size)
-    
     try:
         # Service에서 비즈니스 로직 처리
         simulation_items, pagination_meta = await service.get_simulations_with_pagination(
@@ -101,8 +140,6 @@ async def get_simulations(
         print(f"[Exception] {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="시뮬레이션 목록 조회 중 오류가 발생했습니다")
-
-
 
 @router.put("/{simulation_id}/pattern", response_model=SimulationPatternUpdateResponseModel,
             status_code=status.HTTP_200_OK)
@@ -145,12 +182,12 @@ async def control_simulation(
     if request.action == "start":
         result = await service.start_simulation_async(request.simulation_id)
         message = API.RUN_SIMULATION.value
-    elif request.action == "stop":
-        result = await service.stop_simulation(request.simulation_id)
+    elif request.action == "stop": # 정지
+        result = await service.stop_simulation_async(request.simulation_id)
         message = API.STOP_SIMULATION.value
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f'{API.STOP_SIMULATION.value}: action 요청 값을 확인해주세요')
+                            detail=f"지원하지 않는 시뮬레이션 액션: '{request.action}'. action 값은 'start' 또는 'stop'만 허용됩니다.")
 
     return SimulationControlResponseModel(
         status_code=status.HTTP_200_OK,

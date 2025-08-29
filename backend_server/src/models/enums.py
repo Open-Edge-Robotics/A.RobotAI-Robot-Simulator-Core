@@ -4,6 +4,12 @@ class ViewType(str, Enum):
     """API 응답 뷰 타입"""
     DETAIL = "detail"
     DASHBOARD = "dashboard"
+class ExecutionStatus(Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+    STOPPED = "stopped"
 
 class PatternType(str, Enum):
     SEQUENTIAL = "sequential"
@@ -13,9 +19,9 @@ class SimulationStatus(str, Enum):
     INITIATING = "INITIATING"  # 생성/환경 구성 중
     READY = "READY"            # 실행 대기
     RUNNING = "RUNNING"        # 실행 중
+    STOPPED = "STOPPED"        # 정지
     COMPLETED = "COMPLETED"    # 정상 완료
     FAILED = "FAILED"          # 오류 발생
-    CANCELLED = "CANCELLED"    # 사용자의 시뮬레이션 중지에 의해 중단 성공
 
 class StepStatus(str, Enum):
     PENDING = "PENDING"
