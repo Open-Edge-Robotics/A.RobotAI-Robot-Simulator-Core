@@ -1,5 +1,9 @@
 from enum import Enum
 
+class ViewType(str, Enum):
+    """API 응답 뷰 타입"""
+    DETAIL = "detail"
+    DASHBOARD = "dashboard"
 class ExecutionStatus(Enum):
     SUCCESS = "success"
     FAILED = "failed"

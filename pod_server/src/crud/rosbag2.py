@@ -52,6 +52,10 @@ class EnhancedRosbagService:
         self.output_queue = queue.Queue()
         self.output_thread = None
         
+        # 상태 구분을 위한 플래그
+        self.is_stopped = False
+        self.stop_reason = None # 정확한 종료 사유 ("completed", "user_stopped", "failed", None)
+        
         self.logger.info("EnhancedRosbagService initialized")
         
     def _setup_logging(self):
@@ -124,6 +128,8 @@ class EnhancedRosbagService:
 
             # 상태 변수 설정
             self.is_playing = True
+            self.is_stopped = False
+            self.stop_reason = None  # 재생 시작 시 초기화
             self.current_loop_count = 0
             self.max_loop_count = max_loops
             self.delay_between_loops = delay_between_loops
@@ -268,21 +274,63 @@ class EnhancedRosbagService:
                         break
 
             self.logger.info("===== EXITED MAIN LOOP =====")
+            self.logger.debug(f"[DEBUG] Current loop count: {self.current_loop_count}, Max loops: {max_loops}")
+            self.logger.debug(f"[DEBUG] Stop event set: {self.stop_event.is_set()}")
+            self.logger.debug(f"[DEBUG] End time: {self.end_time}, Current time: {datetime.now(timezone.utc)}")
+            self.logger.debug(f"[DEBUG] Is playing before exit: {self.is_playing}")
+            self.logger.debug(f"[DEBUG] Total elapsed time so far: {self.total_elapsed_time:.2f}s")
+
+            # 종료 사유 판단
+            if self.stop_event.is_set():
+                # 사용자 중지 요청
+                self.stop_reason = "user_stopped"
+                self.is_stopped = True
+                self.logger.info("Rosbag stopped by user request (stop_event triggered)")
+            elif self.current_loop_count >= max_loops:
+                # 정상 완료 (최대 루프 수 도달)
+                self.stop_reason = "completed"
+                self.is_stopped = True
+                self.logger.info(f"Rosbag completed normally (reached max loops: {max_loops})")
+            elif self.end_time and datetime.now(timezone.utc) >= self.end_time:
+                # 정상 완료 (시간 제한 도달)
+                self.stop_reason = "completed"
+                self.is_stopped = True
+                self.logger.info(f"Rosbag completed normally (time limit reached: end_time={self.end_time})")
+            else:
+                # 기타 정상 완료
+                self.stop_reason = "completed"
+                self.is_stopped = True
+                self.logger.info("Rosbag completed normally (other reasons)")
+
+            # 상태 업데이트
             self.is_playing = False
             if hasattr(self, 'progress'):
                 self.progress.is_playing = False
-                
-            self.logger.info(f"===== METHOD END ===== Rosbag playback stopped. Total loops: {self.current_loop_count}, Total time: {self.total_elapsed_time:.2f}s")
-            
+
+            # 최종 상태 로그
+            self.logger.info(f"===== METHOD END ===== Rosbag playback stopped.")
+            self.logger.info(f"Stop reason: {self.stop_reason}")
+            self.logger.info(f"Is stopped: {self.is_stopped}")
+            self.logger.info(f"Total loops executed: {self.current_loop_count}")
+            self.logger.info(f"Total elapsed time: {self.total_elapsed_time:.2f}s")
+
+            # 추가 디버깅: 루프별 상태 확인
+            for i, loop_time in enumerate(getattr(self, "loop_times", []), 1):
+                self.logger.debug(f"[DEBUG] Loop {i}: duration {loop_time:.2f}s")
+
         except Exception as global_e:
             self.logger.critical(f"Global exception in play_loop_with_realtime_output: {global_e}")
             self.logger.critical(f"Exception type: {type(global_e).__name__}")
             import traceback
             self.logger.critical(f"Traceback: {traceback.format_exc()}")
-            
+    
+            # 예외로 인한 실패
             self.is_playing = False
+            self.is_stopped = False  # failed 상태
+            self.stop_reason = "failed"  # 실패 사유
             if hasattr(self, 'progress'):
                 self.progress.is_playing = False
+            self.logger.error(f"Rosbag failed due to exception: {self.stop_reason}")
         
         finally:
             self.logger.info("===== FINALLY BLOCK ===== Ensuring cleanup...")
@@ -416,6 +464,8 @@ class EnhancedRosbagService:
         # 새로운 실행 시작
         self.stop_event.clear()
         self.pause_event.set()
+        self.is_stopped = False # 새로운 재생 시작 시 초기화
+        self.stop_reason = None
 
         self.play_thread = Thread(
             target=self.play_loop_with_realtime_output,
@@ -583,27 +633,41 @@ class EnhancedRosbagService:
                     self.logger.warning("Play thread did not stop gracefully")
 
             self.is_playing = False
+            self.is_stopped = True
+            # stop_reason은 play_loop_with_realtime_output에서 "user_stopped"로 설정됨
             self.logger.info("Rosbag playback stopped successfully")
         except Exception as e:
             self.logger.error(f"Error stopping rosbag: {e}")
             self.is_playing = False
-            
+            self.is_stopped = False # 중단 처리 중 실패
+            self.stop_reason = "failed"
+    
     async def get_status_v2(self):
         """
-        현재 rosbag 상태를 RosService.send_get_request가 요구하는 dict 형태로 반환
+        현재 rosbag 상태를 반환 - 4가지 상태 구분 가능
+        1) 재생 중: isPlaying=True, stopReason=None
+        2) 정상 완료: isPlaying=False, stopReason="completed"
+        3) 사용자 중지: isPlaying=False, stopReason="user_stopped"
+        4) 실패: isPlaying=False, stopReason="failed"
         """
         try:
             if self.is_playing:
                 is_playing = True
                 current_loop = self.current_loop_count
                 max_loops = self.max_loop_count or 0
+                is_stopped = False
+                stop_reason = None  # 재생 중일 때는 None
             else:
                 is_playing = False
                 current_loop = self.current_loop_count if hasattr(self, "current_loop_count") else 0
                 max_loops = self.max_loop_count if hasattr(self, "max_loop_count") else 0
+                is_stopped = getattr(self, 'is_stopped', False)
+                stop_reason = getattr(self, 'stop_reason', None)
 
             return {
                 "isPlaying": is_playing,
+                "isStopped": is_stopped,  # 기존 호환성 유지 (stopped vs failed 구분)
+                "stopReason": stop_reason,  # 추가: 정확한 종료 사유
                 "current_loop": current_loop,
                 "max_loops": max_loops
             }
@@ -612,6 +676,8 @@ class EnhancedRosbagService:
             # 상태 조회 실패 시
             return {
                 "isPlaying": False,
+                "isStopped": False,
+                "stopReason": "failed",  # 상태 조회 실패도 failed로 간주
                 "current_loop": 0,
                 "max_loops": 0,
                 "error": str(e)

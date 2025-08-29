@@ -9,6 +9,9 @@ from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
 from kubernetes.client import V1Pod
 
+from crud.metrics_collector import MetricsCollector
+from schemas.dashboard import DashboardData
+from utils.simulation_utils import extract_simulation_dashboard_data
 from state import SimulationState
 from utils.debug_print import debug_print
 from utils.rosbag_executor import RosbagExecutor
@@ -56,7 +59,8 @@ class SimulationService:
         self.templates_service = TemplateService(session)
         
         # RosbagExecutor 초기화 (pod_service와 ros_service 의존성 주입)
-        self.rosbag_executor = RosbagExecutor(self.pod_service, self.ros_service)   
+        self.rosbag_executor = RosbagExecutor(self.pod_service, self.ros_service)
+        self.collector = MetricsCollector()   
 
     async def create_simulation(
         self,
@@ -1312,6 +1316,88 @@ class SimulationService:
         }
         
         return SimulationListItem(**sim_dict)
+
+    async def get_dashboard_data(self, simulation_id: int) -> DashboardData:
+        # 1️⃣ 시뮬레이션 조회
+        sim = await self.repository.find_by_id(simulation_id)
+        if not sim:
+            raise HTTPException(status_code=404, detail=f"Simulation {simulation_id} not found")
+
+        # 2️⃣ 패턴별 ExecutionPlan 조회
+        if sim.pattern_type == PatternType.SEQUENTIAL:
+            execution_plan = await self.get_execution_plan_sequential(sim.id)
+        elif sim.pattern_type == PatternType.PARALLEL:
+            execution_plan = await self.get_execution_plan_parallel(sim.id)
+        else:
+            execution_plan = None  # 필요 시 기본 처리
+
+        # 3️⃣ 상태 DTO 구성
+        if sim.status == SimulationStatus.INITIATING:
+            current_status = CurrentStatusInitiating(
+                status=sim.status,
+                timestamps=TimestampModel(
+                    created_at=sim.created_at,
+                    last_updated=sim.updated_at
+                )
+            )
+        elif sim.status == SimulationStatus.READY:
+            current_status = CurrentStatusReady(
+                status=sim.status,
+                progress=ProgressModel(
+                    overall_progress=0.0,
+                    ready_to_start=True
+                ),
+                timestamps=TimestampModel(
+                    created_at=sim.created_at,
+                    last_updated=sim.updated_at
+                )
+            )
+        else:
+            # 예외 상태 기본 처리
+            current_status = CurrentStatusInitiating(
+                status=sim.status,
+                timestamps=TimestampModel(
+                    created_at=sim.created_at,
+                    last_updated=sim.updated_at
+                )
+            )
+
+        # 4️⃣ SimulationData 생성
+        simulation_data = SimulationData(
+            simulation_id=sim.id,
+            simulation_name=sim.name,
+            simulation_description=sim.description,
+            pattern_type=sim.pattern_type,
+            mec_id=sim.mec_id,
+            namespace=sim.namespace,
+            created_at=sim.created_at,
+            execution_plan=execution_plan,
+            current_status=current_status
+        )
+
+        try:
+            # 5️⃣ 기본 데이터 추출
+            base_data: Dict[str, Any] = extract_simulation_dashboard_data(simulation_data)
+            
+            # 6️⃣ 메트릭 수집
+            metrics_data = await self.collector.collect_dashboard_metrics(simulation_data)
+            
+            # 7️⃣ DashboardData 구성
+            dashboard_data = DashboardData(
+                **base_data,
+                resource_usage=metrics_data["resource_usage"],
+                pod_status=metrics_data["pod_status"]
+            )
+            return dashboard_data
+
+        except Exception as e:
+            # 8️⃣ fallback 처리
+            collector = self.collector
+            return DashboardData(
+                **extract_simulation_dashboard_data(simulation_data),
+                resource_usage=collector._get_default_resource_usage(),
+                pod_status=collector._get_default_pod_status()
+            )
     
 
     async def get_simulation_summary_list(self) -> List[SimulationSummaryItem]:
