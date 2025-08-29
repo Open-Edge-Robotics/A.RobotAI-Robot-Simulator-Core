@@ -2,6 +2,8 @@ import asyncio
 import logging
 from kubernetes import client, config
 from typing import Dict, Any, List
+from crud.rosbag import RosService
+from models.enums import SimulationStatus
 from schemas.dashboard import ResourceUsage, ResourceUsageData, PodStatusData, StatusBreakdown
 
 logger = logging.getLogger(__name__)
@@ -110,28 +112,29 @@ class MetricsCollector:
             raise
     
     async def _collect_pod_status(self, namespace: str) -> PodStatusData:
-        """Pod 상태 정보 수집"""
+        """Pod 상태 정보 수집 (rosbag 상태 및 시뮬레이션 상태 반영)"""
         try:
             # Pod 목록 조회
             pods = self.v1.list_namespaced_pod(namespace)
             logger.debug(f"Pod 목록 조회 완료: {len(pods.items)}개 Pod")
             
-            status_counts = {"success": 0, "waiting": 0, "failed": 0}
+            status_counts = {"ready": 0, "running": 0, "stopped": 0, "completed": 0, "failed": 0}
             total_count = len(pods.items)
             
             # 각 Pod 상태 분류
             for pod in pods.items:
-                status = self._classify_pod_status(pod)
+                # Pod IP 추출
+                pod_ip = pod.status.pod_ip if pod.status and pod.status.pod_ip else None
+                
+                status = await RosService.get_pod_rosbag_playing_status(pod_ip)
                 status_counts[status] += 1
-                logger.debug(f"Pod {pod.metadata.name}: {pod.status.phase} -> {status}")
+                logger.debug(f"Pod {pod.metadata.name}: {status}")
             
-            # 전체 상태 계산
-            overall_health = (
-                status_counts["success"] / total_count * 100
-                if total_count > 0 else 100.0
-            )
+            # overall_health 계산
+            running_related = status_counts["running"] + status_counts["completed"] + status_counts["failed"]
+            overall_health = (status_counts["completed"] / running_related * 100) if running_related > 0 else 0.0
             
-            logger.info(f"Pod 상태 집계 - Success: {status_counts['success']}, Waiting: {status_counts['waiting']}, Failed: {status_counts['failed']}")
+            logger.info(f"Pod 상태 집계 - Completed: {status_counts['completed']}, Ready: {status_counts['ready']}, Running: {status_counts['running']}, Stopped: {status_counts['stopped']}, Failed: {status_counts['failed']}")
             
             return PodStatusData(
                 total_count=total_count,
@@ -286,33 +289,34 @@ class MetricsCollector:
         else:
             return int(float(storage_str))
     
-    def _classify_pod_status(self, pod) -> str:
-        """Pod 상태를 success/waiting/failed로 분류"""
-        phase = pod.status.phase
-        
-        if phase == "Running":
-            # Running 상태지만 컨테이너 재시작이 많은 경우 체크
-            if pod.status.container_statuses:
-                for container_status in pod.status.container_statuses:
-                    if container_status.restart_count > 5:
-                        logger.debug(f"Pod {pod.metadata.name}: 재시작 횟수 많음 ({container_status.restart_count})")
-                        return "failed"
-                    
-                    # 컨테이너가 준비되지 않은 경우
-                    if not container_status.ready:
-                        logger.debug(f"Pod {pod.metadata.name}: 컨테이너 준비되지 않음")
-                        return "waiting"
-            
-            return "success"
-            
-        elif phase == "Succeeded":
-            return "success"
-            
-        elif phase in ["Pending", "ContainerCreating"]:
+    def _classify_pod_status(self, pod, sim_status: SimulationStatus, rosbag_status: str) -> str:
+        """
+        rosbag_status: "waiting" | "running" | "stopped" | None
+        sim_status: 전체 시뮬레이션 상태
+        """
+
+        # 1️⃣ 시뮬레이션 STOPPED → rosbag stop
+        if sim_status == SimulationStatus.STOPPED or rosbag_status == "stopped":
+            return "stopped"
+
+        # 2️⃣ rosbag play 중
+        if rosbag_status == "running":
+            return "running"
+
+        # 3️⃣ rosbag 아직 play 안 됨
+        if rosbag_status == "waiting":
             return "waiting"
-            
-        else:  # Failed, Unknown, CrashLoopBackOff 등
+
+        # 4️⃣ Pod 종료 상태
+        phase = pod.status.phase
+        if phase == "Succeeded":
+            return "success"
+        elif phase in ["Failed", "CrashLoopBackOff", "Unknown"]:
             return "failed"
+
+        # 기본 fallback
+        return "waiting"
+
     
     def _get_resource_status(self, usage_percent: float) -> str:
         """사용률에 따른 상태 결정"""

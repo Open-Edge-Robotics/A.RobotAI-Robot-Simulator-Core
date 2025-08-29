@@ -26,7 +26,7 @@ def extract_simulation_dashboard_data(simulation: SimulationData) -> Dict[str, A
         SimulationStatus.RUNNING: "실행 중",
         SimulationStatus.COMPLETED: "완료",
         SimulationStatus.FAILED: "오류",
-        SimulationStatus.CANCELLED: "중지됨",
+        SimulationStatus.STOPPED: "중지됨",
     }
     simulation_status = status_map.get(simulation.current_status.status, "알 수 없음")
 
