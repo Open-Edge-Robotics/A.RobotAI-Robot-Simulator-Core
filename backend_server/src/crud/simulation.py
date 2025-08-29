@@ -823,7 +823,7 @@ class SimulationService:
                         elif isinstance(status, dict):
                             is_playing = status.get("isPlaying", True)
                             current_loop = status.get("current_loop", 0)
-                            max_loops = max(status.get("max_loops", 1), 1)
+                            max_loops = max(status.get("max_loops") or 1, 1)
                             pod_progress = min(current_loop / max_loops, 1.0)
                             if is_playing:
                                 running_info.append(f"{pod_name}({current_loop}/{max_loops})")
@@ -1094,7 +1094,7 @@ class SimulationService:
                     elif isinstance(status, dict):
                         is_playing = status.get("isPlaying", True)
                         current_loop = status.get("current_loop", 0)
-                        max_loops = max(status.get("max_loops", 1), 1)
+                        max_loops = max(status.get("max_loops") or 1, 1)
                         pod_progress = min(current_loop / max_loops, 1.0)
                         if is_playing:
                             running_info.append(f"{pod_name}({current_loop}/{max_loops})")
