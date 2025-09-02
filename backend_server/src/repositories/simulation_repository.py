@@ -82,25 +82,23 @@ class SimulationRepository:
         except Exception as e:
             logger.error(f"페이지네이션된 시뮬레이션 목록 조회 중 오류: {str(e)}")
             raise
-        
+
     async def find_summary_list(self) -> List[Tuple[int, str]]:
         """시뮬레이션 ID와 이름만 조회 (드롭다운용)"""
-        if not self.db_session or not MODELS_AVAILABLE:
-            logger.warning("DB 세션이 없거나 모델이 없어 빈 리스트를 반환합니다.")
+        if not MODELS_AVAILABLE:
+            logger.warning("모델이 없어 빈 리스트를 반환합니다.")
             return []
-            
+
         try:
-            # ID와 이름만 선택하여 성능 최적화
-            query = select(Simulation.id, Simulation.name).order_by(
-                desc(Simulation.created_at)  # 최신순 정렬
-            )
-            
-            result = await self.db_session.execute(query)
-            summary_list = result.all()
-            print(summary_list)
-            
-            return summary_list
-            
+            async with self.session_factory() as session:
+                query = (
+                    select(Simulation.id, Simulation.name)
+                    .order_by(desc(Simulation.created_at))  # 최신순 정렬
+                )
+                result = await session.execute(query)
+                summary_list = result.all()
+                return summary_list
+
         except Exception as e:
             logger.error(f"시뮬레이션 요약 목록 조회 중 오류: {str(e)}")
             raise

@@ -58,10 +58,9 @@ async def create_simulation(
     - 시뮬레이션 비교 화면에서 선택 옵션
     - 리포트 생성 시 대상 시뮬레이션 선택
     """,
-    tags=["Simulations"],
     operation_id="getSimulationSummaryList"
 )
-async def get_simulations(
+async def get_simulations_summary_list(
     service: SimulationService = Depends(get_simulation_service)
 ):
     """시뮬레이션 요약 목록 조회"""
