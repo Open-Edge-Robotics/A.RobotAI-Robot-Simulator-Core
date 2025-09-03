@@ -24,17 +24,25 @@ class SimulationStatus(str, Enum):
     FAILED = "FAILED"          # 오류 발생
 
 class StepStatus(str, Enum):
-    PENDING = "PENDING"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+    """
+    SimulationStep의 실행 상태를 나타내는 enum
+    """
+    PENDING = "PENDING"              # 대기 중 (아직 시작되지 않음)
+    RUNNING = "RUNNING"              # 실행 중
+    COMPLETED = "COMPLETED"          # 성공적으로 완료
+    FAILED = "FAILED"                # 실패로 중단
+    STOPPED = "STOPPED"              # 사용자에 의해 중지됨
 
 
 class GroupStatus(str, Enum):
-    PENDING = "PENDING"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+    """
+    SimulationGroup의 실행 상태를 나타내는 enum
+    """
+    PENDING = "PENDING"              # 대기 중 (아직 시작되지 않음)
+    RUNNING = "RUNNING"              # 실행 중
+    COMPLETED = "COMPLETED"          # 성공적으로 완료
+    FAILED = "FAILED"                # 실패로 중단
+    STOPPED = "STOPPED"              # 사용자에 의해 중지됨
 
 class InstanceStatus(str, Enum):
     PENDING = "PENDING"      # 생성 대기

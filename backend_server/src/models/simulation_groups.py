@@ -19,7 +19,6 @@ class SimulationGroup(Base):
     # 반복 실행 정보 (실시간 모니터링용)
     repeat_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     current_repeat: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    expected_pods_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     status: Mapped[GroupStatus] = mapped_column(
         PgEnum(GroupStatus, name="group_status_enum", create_constraint=True),

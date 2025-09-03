@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import traceback
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from sqlalchemy import case, select, func, desc, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -13,19 +13,25 @@ try:
     from models.simulation import Simulation
     from models.simulation_groups import SimulationGroup
     from models.simulation_steps import SimulationStep
-    from models.enums import SimulationStatus, PatternType
+    from models.enums import SimulationStatus, PatternType, StepStatus
     MODELS_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"모델 import 실패: {e}")
     MODELS_AVAILABLE = False
     class Simulation: pass
     class SimulationGroup: pass  
-    class SimulationStep: pass
+    class SimulationStep:
+        PENDING = "PENDING"
+        RUNNING = "RUNNING" 
+        COMPLETED = "COMPLETED"
+        FAILED = "FAILED"
+        STOPPED = "STOPPED"
     class SimulationStatus: 
         READY = "READY"
         RUNNING = "RUNNING" 
         COMPLETED = "COMPLETED"
         FAILED = "FAILED"
+        STOPPED = "STOPPED"
     class PatternType: pass
 
 if TYPE_CHECKING:
@@ -253,6 +259,132 @@ class SimulationRepository:
         except Exception as e:
             logger.error(f"시뮬레이션 상태 업데이트 실패: {str(e)}")
             raise
+        
+    async def update_simulation_step_status(
+        self, 
+        step_id: int, 
+        status: StepStatus, 
+        started_at: datetime = None, 
+        completed_at: datetime = None,
+        failed_at: datetime = None,
+        current_repeat: int = None
+    ):
+        """
+        SimulationStep의 상태와 시간 정보를 업데이트
+        """
+        update_data = {"status": status, "updated_at": datetime.now()}
+        
+        if started_at is not None:
+            update_data["started_at"] = started_at
+        if completed_at is not None:
+            update_data["completed_at"] = completed_at
+        if failed_at is not None:
+            update_data["failed_at"] = failed_at
+        if current_repeat is not None:
+            update_data["current_repeat"] = current_repeat
+
+        async with self.session_factory() as session:
+            await session.execute(
+                update(SimulationStep)
+                .where(SimulationStep.id == step_id)
+                .values(**update_data)
+            )
+            await session.commit()
+            
+    async def update_simulation_step_current_repeat(
+        self, 
+        step_id: int, 
+        current_repeat: int
+    ):
+        """
+        SimulationStep의 현재 반복 진행 상황을 업데이트
+        """
+        async with self.session_factory() as session:
+            await session.execute(
+                update(SimulationStep)
+                .where(SimulationStep.id == step_id)
+                .values(
+                    current_repeat=current_repeat,
+                    updated_at=datetime.now()
+                )
+            )
+            await session.commit()
+            
+    async def get_simulation_step_progress(self, simulation_id: int):
+        """
+        시뮬레이션의 모든 스텝 진행 상황을 조회 (모니터링용)
+        """
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(SimulationStep)
+                .where(SimulationStep.simulation_id == simulation_id)
+                .order_by(SimulationStep.step_order)
+            )
+            steps: List[SimulationStep] = result.scalars().all()
+            
+            progress_info: List[Dict[str, Any]] = []
+            for step in steps:
+                # 진행률 계산
+                progress_percentage = 0.0
+                if step.repeat_count > 0:
+                    progress_percentage = (step.current_repeat / step.repeat_count) * 100
+                        
+                # 안전하게 running_autonomous_agents 할당 (없으면 0)
+                autonomous_agents: int = getattr(step, "autonomous_agent_count", 0) or 0
+                
+                progress_info.append({
+                    "step_id": step.id,
+                    "step_order": step.step_order,
+                    "status": step.status.value,
+                    "progress_percentage": progress_percentage,
+                    "current_repeat": step.current_repeat,
+                    "repeat_count": step.repeat_count,
+                    "started_at": step.started_at,
+                    "completed_at": step.completed_at,
+                    "failed_at": step.failed_at,
+                    "autonomous_agents": autonomous_agents
+                })
+            
+            return progress_info
+
+    async def get_simulation_overall_progress(self, simulation_id: int):
+        """
+        시뮬레이션 전체 진행률 요약 정보 조회
+        """
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(SimulationStep)
+                .where(SimulationStep.simulation_id == simulation_id)
+            )
+            steps = result.scalars().all()
+            
+            if not steps:
+                return {
+                    "total_steps": 0,
+                    "completed_steps": 0,
+                    "running_steps": 0,
+                    "failed_steps": 0,
+                    "stopped_steps": 0,
+                    "overall_progress": 0.0
+                }
+            
+            total_steps = len(steps)
+            completed_steps = sum(1 for step in steps if step.status == StepStatus.COMPLETED)
+            running_steps = sum(1 for step in steps if step.status == StepStatus.RUNNING)
+            failed_steps = sum(1 for step in steps if step.status == StepStatus.FAILED)
+            stopped_steps = sum(1 for step in steps if step.status == StepStatus.STOPPED)
+            
+            overall_progress = (completed_steps / total_steps) * 100 if total_steps > 0 else 0.0
+            
+            return {
+                "total_steps": total_steps,
+                "completed_steps": completed_steps,
+                "running_steps": running_steps,
+                "failed_steps": failed_steps,
+                "stopped_steps": stopped_steps,
+                "overall_progress": overall_progress
+            }
+
 
 
 # Repository 생성 팩토리

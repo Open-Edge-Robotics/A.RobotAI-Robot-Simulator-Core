@@ -642,7 +642,7 @@ class EnhancedRosbagService:
             self.is_stopped = False # 중단 처리 중 실패
             self.stop_reason = "failed"
     
-    async def get_status_v2(self):
+    async def get_status(self):
         """
         현재 rosbag 상태를 반환 - 4가지 상태 구분 가능
         1) 재생 중: isPlaying=True, stopReason=None
@@ -665,9 +665,9 @@ class EnhancedRosbagService:
                 stop_reason = getattr(self, 'stop_reason', None)
 
             return {
-                "isPlaying": is_playing,
-                "isStopped": is_stopped,  # 기존 호환성 유지 (stopped vs failed 구분)
-                "stopReason": stop_reason,  # 추가: 정확한 종료 사유
+                "is_playing": is_playing,
+                "is_stopped": is_stopped,  # 기존 호환성 유지 (stopped vs failed 구분)
+                "stop_reason": stop_reason,  # 추가: 정확한 종료 사유
                 "current_loop": current_loop,
                 "max_loops": max_loops
             }
@@ -675,54 +675,14 @@ class EnhancedRosbagService:
         except Exception as e:
             # 상태 조회 실패 시
             return {
-                "isPlaying": False,
-                "isStopped": False,
-                "stopReason": "failed",  # 상태 조회 실패도 failed로 간주
+                "is_playing": False,
+                "is_stopped": False,
+                "stop_reason": "failed",  # 상태 조회 실패도 failed로 간주
                 "current_loop": 0,
                 "max_loops": 0,
                 "error": str(e)
             }
-
-
-    async def get_status(self):
-        """현재 rosbag 상태 반환"""
-        if self.is_playing:
-            current_time = datetime.now(timezone.utc)
-            elapsed_time = (current_time - self.start_time).total_seconds() if self.start_time else 0
-            remaining_time = None
-
-            if self.end_time:
-                remaining_time = (self.end_time - current_time).total_seconds()
-                remaining_time = max(0, remaining_time)
-
-            estimated_total_time = None
-            if self.max_loop_count and self.current_loop_count > 0:
-                avg_loop_time = self.total_elapsed_time / self.current_loop_count
-                estimated_total_time = avg_loop_time * self.max_loop_count + (
-                    self.max_loop_count - 1) * self.delay_between_loops
-
-            return {
-                "status": "Running" if self.pause_event.is_set() else "Paused",
-                "is_paused": not self.pause_event.is_set(),
-                "current_loop": self.current_loop_count,
-                "max_loops": self.max_loop_count,
-                "elapsed_time": elapsed_time,
-                "total_elapsed_time": self.total_elapsed_time,
-                "remaining_time": remaining_time,
-                "estimated_total_time": estimated_total_time,
-                "delay_between_loops": self.delay_between_loops,
-                "current_bag_directory": self.current_file_path,
-                "start_time": self.start_time.isoformat() if self.start_time else None,
-                "end_time": self.end_time.isoformat() if self.end_time else None
-            }
-
-        return {
-            "status": "Stopped",
-            "total_loops_completed": self.current_loop_count,
-            "total_elapsed_time": self.total_elapsed_time,
-            "last_bag_directory": self.current_file_path
-        }
-
+            
     async def get_file_info(self, object_path: str):
         """rosbag 디렉토리 정보 조회"""
         try:

@@ -336,7 +336,6 @@ class StatusUpdateManager:
                     'group_name': group.group_name,
                     'template_id': group.template_id,
                     'status': group.status,
-                    'expected_pods': group.expected_pods_count,
                     'actual_instances': len(instances),
                     'successful_agents': group.successful_agents or 0,
                     'failed_agents': group.failed_agents or 0,

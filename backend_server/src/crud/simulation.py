@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
 from kubernetes.client import V1Pod
 
+from schemas.simulation_status import CurrentStatus, CurrentTimestamps, ParallelProgress, SequentialProgress, StepDetail
 from crud.metrics_collector import MetricsCollector
 from schemas.dashboard import DashboardData
 from utils.simulation_utils import extract_simulation_dashboard_data
@@ -19,7 +20,7 @@ from schemas.simulation_detail import CurrentStatusInitiating, CurrentStatusRead
 from schemas.pod import GroupIdFilter, StepOrderFilter
 from repositories.simulation_repository import SimulationRepository
 from schemas.pagination import PaginationMeta, PaginationParams
-from models.enums import ExecutionStatus, PatternType, SimulationStatus
+from models.enums import ExecutionStatus, PatternType, SimulationStatus, StepStatus
 from utils.simulation_background import (
     handle_parallel_pattern_background,
     handle_sequential_pattern_background,
@@ -766,6 +767,14 @@ class SimulationService:
             for i, step in enumerate(steps, 1):
                 debug_print(f"\n🔄 스텝 {i}/{len(steps)} 처리 시작 - Step ID: {step.id}")
                 step_start_time = datetime.now(timezone.utc)
+                
+                # 🔄 Step 상태를 RUNNING으로 변경하고 시작 시간 기록
+                await self.repository.update_simulation_step_status(
+                    step_id=step.id,
+                    status=StepStatus.RUNNING,
+                    started_at=step_start_time
+                )
+                debug_print(f"📝 Step {step.step_order} 상태 업데이트: RUNNING")
 
                 # Pod 조회
                 pod_list = self.pod_service.get_pods_by_filter(
@@ -776,6 +785,14 @@ class SimulationService:
                 if not pod_list:
                     failure_reason = f"스텝 {step.step_order}에서 Pod를 찾을 수 없음"
                     debug_print(f"❌ {failure_reason}")
+                    
+                    # 🔄 Step 상태를 FAILED로 변경
+                    await self.repository.update_simulation_step_status(
+                        step_id=step.id,
+                        status=StepStatus.FAILED,
+                        failed_at=datetime.now(timezone.utc)
+                    )
+                    
                     total_execution_summary.update({
                         "failed_steps": total_execution_summary["failed_steps"] + 1,
                         "simulation_status": "FAILED",
@@ -792,9 +809,13 @@ class SimulationService:
 
                 completed_pods = set()
                 poll_interval = 1  # 1초 단위 진행상황
+                
+                debug_print(f"📋 Step {step.step_order} Pod Task 생성 완료: {len(pod_tasks)}개 Pod 병렬 실행 시작")
 
                 # 3️⃣ Pod 진행상황 루프
-                while pod_tasks:
+                last_recorded_repeat = 0  # 메모리 기반 반복 횟수 관리
+                
+                while len(completed_pods) < len(pod_list):
                     done_tasks = [t for t in pod_tasks if t.done()]
 
                     # 완료된 Pod 처리
@@ -802,7 +823,6 @@ class SimulationService:
                         pod_name = pod_tasks.pop(task)
                         try:
                             result = task.result()
-                            completed_pods.add(result.pod_name)
                             debug_print(f"✅ Pod 완료: {result.pod_name} ({len(completed_pods)}/{len(pod_list)})")
                         except asyncio.CancelledError:
                             debug_print(f"🛑 Pod CancelledError 감지: {pod_name}")
@@ -812,6 +832,8 @@ class SimulationService:
                     # 진행 중 Pod 상태 확인 및 로그
                     total_progress = 0.0
                     running_info = []
+                    
+                    debug_print(f"🔍 Pod 상태 체크 시작 - completed_pods: {completed_pods}")
 
                     status_tasks = {
                         pod.metadata.name: asyncio.create_task(self.rosbag_executor._check_pod_rosbag_status(pod))
@@ -819,26 +841,73 @@ class SimulationService:
                     }
 
                     pod_statuses = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
+                    
+                    current_total_loops = 0
+                    max_total_loops = 0
+                    
+                    # 🔍 각 Pod별 상세 디버깅
+                    debug_print(f"📊 === Pod별 진행률 상세 분석 (Step {step.step_order}) ===")
+
+                    loops = []  # (current_loop, max_loops) 집계용
 
                     for pod_name, status in zip(status_tasks.keys(), pod_statuses):
+                        debug_print(f"🔍 === Pod [{pod_name}] 상태 체크 시작 ===")
+                        # 이미 완료된 Pod는 바로 100% 처리
                         if pod_name in completed_pods:
                             pod_progress = 1.0
                             running_info.append(f"{pod_name}(완료)")
-                        elif isinstance(status, dict):
-                            is_playing = status.get("isPlaying", True)
+                        elif isinstance(status, dict):           
+                            is_playing = status.get("is_playing", False)
                             current_loop = status.get("current_loop", 0)
                             max_loops = max(status.get("max_loops") or 1, 1)
+                            
+                            # 집계용 리스트에 기록
+                            loops.append((current_loop, max_loops)) 
+                            
+                            debug_print(f"  🎮 {pod_name}: is_playing = {is_playing} (기본값: False)")
+                            debug_print(f"  🔄 {pod_name}: current_loop = {current_loop} (기본값: 0)")
+                            debug_print(f"  🎯 {pod_name}: max_loops = {max_loops} (기본값: 1, 원본값: {status.get('max_loops')})")
+                            
+                            # 전체 진행률 계산을 위한 루프 수 집계
+                            current_total_loops += current_loop
+                            max_total_loops += max_loops
+                            
                             pod_progress = min(current_loop / max_loops, 1.0)
-                            if is_playing:
-                                running_info.append(f"{pod_name}({current_loop}/{max_loops})")
-                            else:
+                            
+                            if current_loop >= max_loops and not is_playing:
+                                # 실제로 완료된 경우
+                                completed_pods.add(pod_name)
                                 pod_progress = 1.0
-                                running_info.append(f"{pod_name}(종료)")
+                                running_info.append(f"{pod_name}(완료)")
+                                debug_print(f"  ✅ {pod_name}: 상태체크로 완료 감지 -> completed_pods에 추가")
+                            elif is_playing:
+                                running_info.append(f"{pod_name}({current_loop}/{max_loops})")
+                                debug_print(f"  ⏳ {pod_name}: 실행중 -> 진행률 {pod_progress:.1%}")
+                            else:
+                                # is_playing이 False이지만 아직 완료되지 않은 경우
+                                # 무조건 1.0이 아닌 실제 진행률 사용
+                                running_info.append(f"{pod_name}({current_loop}/{max_loops}-중지됨)")
+                                debug_print(f"  ⏸️ {pod_name}: 중지됨 -> 진행률 {pod_progress:.1%}")
                         else:
                             pod_progress = 0.0
                             running_info.append(f"{pod_name}(상태체크실패)")
+                            debug_print(f"  ❌ {pod_name}: 상태체크 실패 -> 0%")
 
                         total_progress += pod_progress
+                        debug_print(f"  📊 {pod_name}: pod_progress={pod_progress:.2f}, 누적 total_progress={total_progress:.2f}")
+
+                    # 그룹 반복 갱신 (min(current_loop) 기준)
+                    if loops:
+                        group_current_loop = min(cl for cl, _ in loops)
+                        group_max_loops = min(ml for _, ml in loops)
+                        target_cap = step.repeat_count or group_max_loops
+                        new_repeat = min(group_current_loop, target_cap)
+
+                        if new_repeat > last_recorded_repeat:
+                            await self.repository.update_simulation_step_current_repeat(step_id=step.id, current_repeat=new_repeat)
+                            step.current_repeat = new_repeat
+                            last_recorded_repeat = new_repeat
+                            debug_print(f"🔁 Step {step.step_order} 반복 갱신: {new_repeat}/{target_cap}")
 
                     group_progress = (total_progress / len(pod_list)) * 100
                     debug_print(f"⏳ Step {step.step_order} 진행률: {group_progress:.1f}% ({len(completed_pods)}/{len(pod_list)}) | 진행중: {', '.join(running_info)}")
@@ -846,24 +915,48 @@ class SimulationService:
                     # stop_event 감지
                     if stop_event.is_set():
                         debug_print(f"⏹️ 중지 이벤트 감지 - 스텝 {step.step_order} 즉시 종료")
+                        
+                        # 🔄 Step 상태를 STOPPED로 변경
+                        await self.repository.update_simulation_step_status(
+                            step_id=step.id,
+                            status=StepStatus.STOPPED,
+                            completed_at=datetime.now(timezone.utc)
+                        )
+                        
                         for t in pod_tasks.keys():
                             t.cancel()
                         await asyncio.gather(*pod_tasks.keys(), return_exceptions=True)
-                        total_execution_summary["simulation_status"] = "CANCELLED"
+                        total_execution_summary["simulation_status"] = "STOPPED"
                         return total_execution_summary
 
                     await asyncio.sleep(poll_interval)
 
                 # 스텝 완료 처리
-                step_execution_time = (datetime.now(timezone.utc) - step_start_time).total_seconds()
+                step_end_time = datetime.now(timezone.utc)
+                step_execution_time = (step_end_time - step_start_time).total_seconds()
+                
+                # 실행 결과 요약 생성
                 execution_summary = self.rosbag_executor.get_execution_summary([
                     task.result() for task in done_tasks if not isinstance(task.result(), Exception)
                 ])
+                
+                # 🔄 Step 상태를 COMPLETED로 변경
+                await self.repository.update_simulation_step_status(
+                    step_id=step.id,
+                    status=StepStatus.COMPLETED,
+                    completed_at=step_end_time,
+                    current_repeat=step.repeat_count  # 완료 시 최대값으로 설정
+                )
+                
+                debug_print(f"✅ Step {step.step_order} 완료 (실행시간: {step_execution_time:.1f}초)")
+                
+                # 전체 실행 요약 업데이트
                 total_execution_summary.update({
                     "completed_steps": total_execution_summary["completed_steps"] + 1,
                     "total_pods_executed": total_execution_summary["total_pods_executed"] + execution_summary['total_pods'],
                     "total_success_pods": total_execution_summary["total_success_pods"] + execution_summary['success_count']
                 })
+                
                 total_execution_summary["step_results"].append({
                     "step_id": step.id,
                     "step_order": step.step_order,
@@ -885,16 +978,34 @@ class SimulationService:
 
         except asyncio.CancelledError:
             debug_print(f"🛑 시뮬레이션 {simulation_id} 태스크 취소됨")
+            
+            # 🔄 진행 중인 모든 스텝을 STOPPED 상태로 변경
+            for step in steps:
+                if step.status == StepStatus.RUNNING:
+                    await self.repository.update_simulation_step_status(
+                        step_id=step.id,
+                        status=StepStatus.STOPPED,
+                        completed_at=datetime.now(timezone.utc)
+                    )
+            
             await self._handle_simulation_stop(simulation_id, "태스크 취소로 인한 중지")
             raise
         except Exception as e:
             debug_print(f"❌ 시뮬레이션 {simulation_id} 실행 중 예외: {e}")
+            
+            # 🔄 진행 중인 모든 스텝을 FAILED 상태로 변경
+            for step in steps:
+                if step.status == StepStatus.RUNNING:
+                    await self.repository.update_simulation_step_status(
+                        step_id=step.id,
+                        status=StepStatus.FAILED,
+                        failed_at=datetime.now(timezone.utc)
+                    )
+            
             await self._update_simulation_status_and_log(simulation_id, "FAILED", str(e))
             raise
         finally:
             self._cleanup_simulation(simulation_id)
-
-      
     
     async def _run_parallel_simulation_with_progress(self, simulation_id: int, stop_event: asyncio.Event):
         """
@@ -1096,7 +1207,7 @@ class SimulationService:
                         pod_progress = 1.0
                         running_info.append(f"{pod_name}(완료)")
                     elif isinstance(status, dict):
-                        is_playing = status.get("isPlaying", True)
+                        is_playing = status.get("is_playing", True)
                         current_loop = status.get("current_loop", 0)
                         max_loops = max(status.get("max_loops") or 1, 1)
                         pod_progress = min(current_loop / max_loops, 1.0)
@@ -1227,7 +1338,7 @@ class SimulationService:
 
         return SimulationDeleteResponse(simulation_id=simulation_id).model_dump()
 
-    async def find_simulation_by_id(self, simulation_id: int, api: str):
+    async def find_simulation_by_id(self, simulation_id: int, api: str) -> Simulation:
         simulation = await self.repository.find_by_id(simulation_id)
 
         if not simulation:
@@ -1788,7 +1899,7 @@ class SimulationService:
                 if isinstance(status, dict):
                     current_loop = status.get("current_loop", 0)
                     max_loops = max(status.get("max_loops", 1), 1)
-                    is_playing = status.get("isPlaying", True)
+                    is_playing = status.get("is_playing", True)
                     pod_status_dict[pod_name]["progress"] = min(current_loop / max_loops, 1.0)
                     pod_status_dict[pod_name]["status"] = "playing" if is_playing else "done"
                 else:
@@ -1810,3 +1921,142 @@ class SimulationService:
             await asyncio.sleep(poll_interval)
 
         return "COMPLETED", pod_status_dict
+    
+    async def get_current_status(self, simulation_id: int) -> CurrentStatus:
+        simulation = await self.find_simulation_by_id(simulation_id, "status")
+        print(f"시뮬레이션 상태: {simulation.status}")
+        
+        now = datetime.now(timezone.utc)
+        status_str = simulation.status
+        
+        started_at = simulation.started_at if status_str == SimulationStatus.RUNNING else None
+        
+        # 공통 Timestamps 
+        timestamps = CurrentTimestamps(
+            created_at=simulation.created_at,
+            started_at=started_at,
+            last_updated=now
+        )
+
+        if status_str == "INITIATING":
+            return CurrentStatus(
+                status=status_str,
+                timestamps=timestamps,
+                message="네임스페이스 및 기본 리소스 생성 중..."
+            )
+        elif status_str == "READY":
+            progress = SequentialProgress(
+                overall_progress=0.0,
+                ready_to_start=True
+            )
+            return CurrentStatus(
+                status=status_str,
+                timestamps=timestamps,
+                progress=progress,
+                message="시뮬레이션 시작 준비 완료"
+            )
+        elif status_str == "RUNNING":
+            if simulation.pattern_type == PatternType.SEQUENTIAL:
+                print(f"[DEBUG] 시퀀셜 시뮬레이션 상태 조회 시작 simulation_id={simulation_id}")
+
+                # 전체 진행률 요약 조회
+                overall_summary = await self.repository.get_simulation_overall_progress(simulation_id)
+                print(f"[DEBUG] overall_summary={overall_summary}")
+
+                # 각 스텝별 상세 진행 상황 조회
+                step_progress_list = await self.repository.get_simulation_step_progress(simulation_id)
+                print(f"[DEBUG] step_progress_list={step_progress_list}")
+
+                # 현재 실행 중인 스텝 찾기
+                current_running_step = None
+                current_step_progress = 0.0
+                for step in step_progress_list:
+                    print(f"[DEBUG] checking step for running: {step}")
+                    if step["status"] == "RUNNING":
+                        current_running_step = step
+                        current_step_progress = step["progress_percentage"]
+                        print(f"[DEBUG] running step found: {current_running_step}")
+                        break
+                print(f"[DEBUG] current_running_step={current_running_step}, current_step_progress={current_step_progress}")
+
+                # 스텝별 상세 정보 생성
+                step_details = []
+                for step in step_progress_list:
+                    step_detail = StepDetail(
+                        step_order=step["step_order"],
+                        status=step["status"],
+                        progress=step["progress_percentage"],
+                        started_at=step["started_at"],
+                        completed_at=step["completed_at"],
+                        failed_at=step["failed_at"],
+                        autonomous_agents=step["autonomous_agents"],
+                        current_repeat=step["current_repeat"],
+                        total_repeats=step["repeat_count"],
+                    )
+                    print(f"[DEBUG] created StepDetail={step_detail}")
+                    step_details.append(step_detail)
+                print(f"[DEBUG] step_details={step_details}")
+
+                # 전체 진행률 계산
+                total_steps = overall_summary["total_steps"]
+                completed_steps = overall_summary["completed_steps"]
+
+                if total_steps > 0:
+                    base_progress = (completed_steps / total_steps) * 100
+                    if current_running_step:
+                        current_step_weight = (1 / total_steps) * 100
+                        current_step_contribution = (current_step_progress / 100) * current_step_weight
+                        overall_progress = base_progress + current_step_contribution
+                    else:
+                        overall_progress = base_progress
+                else:
+                    overall_progress = 0.0
+                print(f"[DEBUG] total_steps={total_steps}, completed_steps={completed_steps}, overall_progress={overall_progress}")
+
+                # 메시지 생성
+                if current_running_step:
+                    message = f"Step {current_running_step['step_order']} 실행 중 ({current_step_progress:.1f}% 완료)"
+                    if current_running_step["current_repeat"] > 0:
+                        message += f" - {current_running_step['current_repeat']}/{current_running_step['repeat_count']} 반복"
+                else:
+                    next_pending_step = None
+                    for step in step_progress_list:
+                        print(f"[DEBUG] checking step for pending: {step}")
+                        if step["status"] == "PENDING":
+                            next_pending_step = step
+                            print(f"[DEBUG] pending step found: {next_pending_step}")
+                            break
+
+                    if next_pending_step:
+                        message = f"Step {next_pending_step['step_order']} 시작 대기 중"
+                    elif completed_steps == total_steps:
+                        message = "모든 스텝 실행 완료"
+                    else:
+                        message = "대기/실행 스텝 없음"
+                print(f"[DEBUG] message={message}")
+
+                # SequentialProgress 객체 생성
+                progress = SequentialProgress(
+                    overall_progress=round(overall_progress, 1),
+                    current_step=current_running_step["step_order"] if current_running_step else None,
+                    completed_steps=completed_steps,
+                    total_steps=total_steps,
+                    ready_to_start=False
+                )
+                print(f"[DEBUG] progress={progress}")
+
+                return CurrentStatus(
+                    status=status_str,
+                    progress=progress,
+                    timestamps=timestamps,
+                    step_details=step_details,
+                    message=message
+                )
+            
+                    
+        # 알 수 없는 상태 처리
+        return CurrentStatus(
+            status=status_str,
+            timestamps=timestamps,
+            message="알 수 없는 상태"
+        )
