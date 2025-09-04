@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
 from kubernetes.client import V1Pod
 
-from schemas.simulation_status import CurrentStatus, CurrentTimestamps, ParallelProgress, SequentialProgress, StepDetail
+from schemas.simulation_status import CurrentStatus, CurrentTimestamps, GroupDetail, ParallelProgress, SequentialProgress, StepDetail
 from crud.metrics_collector import MetricsCollector
 from schemas.dashboard import DashboardData
 from utils.simulation_utils import extract_simulation_dashboard_data
@@ -903,7 +903,7 @@ class SimulationService:
                         target_cap = step.repeat_count or group_max_loops
                         new_repeat = min(group_current_loop, target_cap)
 
-                        if new_repeat > last_recorded_repeat:
+                        if new_repeat > last_recorded_repeat and step.status != StepStatus.PENDING:
                             await self.repository.update_simulation_step_current_repeat(step_id=step.id, current_repeat=new_repeat)
                             step.current_repeat = new_repeat
                             last_recorded_repeat = new_repeat
@@ -1946,8 +1946,7 @@ class SimulationService:
             )
         elif status_str == "READY":
             progress = SequentialProgress(
-                overall_progress=0.0,
-                ready_to_start=True
+                overall_progress=0.0
             )
             return CurrentStatus(
                 status=status_str,
@@ -1955,108 +1954,186 @@ class SimulationService:
                 progress=progress,
                 message="시뮬레이션 시작 준비 완료"
             )
-        elif status_str == "RUNNING":
+        elif status_str in ["RUNNING", "COMPLETED", "STOPPED", "FAILED"]:
             if simulation.pattern_type == PatternType.SEQUENTIAL:
-                print(f"[DEBUG] 시퀀셜 시뮬레이션 상태 조회 시작 simulation_id={simulation_id}")
-
-                # 전체 진행률 요약 조회
-                overall_summary = await self.repository.get_simulation_overall_progress(simulation_id)
-                print(f"[DEBUG] overall_summary={overall_summary}")
-
-                # 각 스텝별 상세 진행 상황 조회
-                step_progress_list = await self.repository.get_simulation_step_progress(simulation_id)
-                print(f"[DEBUG] step_progress_list={step_progress_list}")
-
-                # 현재 실행 중인 스텝 찾기
-                current_running_step = None
-                current_step_progress = 0.0
-                for step in step_progress_list:
-                    print(f"[DEBUG] checking step for running: {step}")
-                    if step["status"] == "RUNNING":
-                        current_running_step = step
-                        current_step_progress = step["progress_percentage"]
-                        print(f"[DEBUG] running step found: {current_running_step}")
-                        break
-                print(f"[DEBUG] current_running_step={current_running_step}, current_step_progress={current_step_progress}")
-
-                # 스텝별 상세 정보 생성
-                step_details = []
-                for step in step_progress_list:
-                    step_detail = StepDetail(
-                        step_order=step["step_order"],
-                        status=step["status"],
-                        progress=step["progress_percentage"],
-                        started_at=step["started_at"],
-                        completed_at=step["completed_at"],
-                        failed_at=step["failed_at"],
-                        autonomous_agents=step["autonomous_agents"],
-                        current_repeat=step["current_repeat"],
-                        total_repeats=step["repeat_count"],
-                    )
-                    print(f"[DEBUG] created StepDetail={step_detail}")
-                    step_details.append(step_detail)
-                print(f"[DEBUG] step_details={step_details}")
-
-                # 전체 진행률 계산
-                total_steps = overall_summary["total_steps"]
-                completed_steps = overall_summary["completed_steps"]
-
-                if total_steps > 0:
-                    base_progress = (completed_steps / total_steps) * 100
-                    if current_running_step:
-                        current_step_weight = (1 / total_steps) * 100
-                        current_step_contribution = (current_step_progress / 100) * current_step_weight
-                        overall_progress = base_progress + current_step_contribution
-                    else:
-                        overall_progress = base_progress
-                else:
-                    overall_progress = 0.0
-                print(f"[DEBUG] total_steps={total_steps}, completed_steps={completed_steps}, overall_progress={overall_progress}")
-
-                # 메시지 생성
-                if current_running_step:
-                    message = f"Step {current_running_step['step_order']} 실행 중 ({current_step_progress:.1f}% 완료)"
-                    if current_running_step["current_repeat"] > 0:
-                        message += f" - {current_running_step['current_repeat']}/{current_running_step['repeat_count']} 반복"
-                else:
-                    next_pending_step = None
-                    for step in step_progress_list:
-                        print(f"[DEBUG] checking step for pending: {step}")
-                        if step["status"] == "PENDING":
-                            next_pending_step = step
-                            print(f"[DEBUG] pending step found: {next_pending_step}")
-                            break
-
-                    if next_pending_step:
-                        message = f"Step {next_pending_step['step_order']} 시작 대기 중"
-                    elif completed_steps == total_steps:
-                        message = "모든 스텝 실행 완료"
-                    else:
-                        message = "대기/실행 스텝 없음"
-                print(f"[DEBUG] message={message}")
-
-                # SequentialProgress 객체 생성
-                progress = SequentialProgress(
-                    overall_progress=round(overall_progress, 1),
-                    current_step=current_running_step["step_order"] if current_running_step else None,
-                    completed_steps=completed_steps,
-                    total_steps=total_steps,
-                    ready_to_start=False
-                )
-                print(f"[DEBUG] progress={progress}")
-
-                return CurrentStatus(
-                    status=status_str,
-                    progress=progress,
-                    timestamps=timestamps,
-                    step_details=step_details,
-                    message=message
-                )
+                return await self.get_sequential_current_status(simulation_id)
+            elif simulation.pattern_type == PatternType.PARALLEL:
+                return await self.get_parallel_current_status(simulation_id)
+                
+        else:                    
+            # 알 수 없는 상태 처리
+            return CurrentStatus(
+                status=status_str,
+                timestamps=timestamps,
+                message="알 수 없는 상태"
+            )
             
-                    
-        # 알 수 없는 상태 처리
+    async def get_sequential_current_status(self, simulation_id: int) -> CurrentStatus:
+        """
+        순차(Sequential) 패턴 시뮬레이션의 현재 상태 조회
+        - RUNNING / COMPLETED / STOPPED / FAILED 상태 처리
+        """
+        simulation = await self.find_simulation_by_id(simulation_id, "status")
+        status_str = simulation.status
+        timestamps = {
+            "startedAt": simulation.started_at,
+            "completedAt": simulation.completed_at,
+            "failedAt": simulation.failed_at,
+            "stoppedAt": simulation.stopped_at,
+            "lastUpdated": datetime.now(timezone.utc)
+        }
+
+        # 전체 진행률 요약과 스텝별 정보 조회
+        overall_summary = await self.repository.get_simulation_overall_progress(simulation_id)
+        step_progress_list = await self.repository.get_simulation_step_progress(simulation_id)
+
+        total_steps = overall_summary["total_steps"]
+        completed_steps = overall_summary["completed_steps"]
+        overall_progress = (completed_steps / total_steps * 100) if total_steps > 0 else 0.0
+
+        # 상태별 스텝 처리
+        step_details = []
+        current_step_info = None
+
+        for step in step_progress_list:
+            step_status = StepStatus(step["status"])
+            if status_str == "RUNNING" and step["status"] == "RUNNING":
+                current_step_info = step
+            elif status_str == "STOPPED" and step["status"] in ["RUNNING", "STOPPED"]:
+                step_status = StepStatus.STOPPED
+                current_step_info = step
+            elif status_str == "FAILED" and step["status"] == "FAILED":
+                step_status = StepStatus.FAILED
+                current_step_info = step
+            elif status_str == "COMPLETED":
+                step_status = StepStatus.COMPLETED
+
+            step_detail = StepDetail(
+                step_order=step["step_order"],
+                status=step_status,
+                progress=step["progress_percentage"],
+                started_at=step.get("started_at"),
+                completed_at=step.get("completed_at"),
+                failed_at=step.get("failed_at"),
+                stopped_at=step.get("stopped_at"),
+                autonomous_agents=step.get("autonomous_agents", 0),
+                current_repeat=step.get("current_repeat", 0),
+                total_repeats=step.get("repeat_count", 0),
+                error=step.get("error")
+            )
+            step_details.append(step_detail)
+
+        # 메시지 생성
+        if status_str == "RUNNING" and current_step_info:
+            message = f"Step {current_step_info['step_order']} 실행 중 ({current_step_info['progress_percentage']:.1f}% 완료)"
+            if current_step_info.get("current_repeat", 0) > 0:
+                message += f" - {current_step_info['current_repeat']}/{current_step_info['repeat_count']} 반복"
+        elif status_str == "COMPLETED":
+            message = "모든 스텝 실행 완료"
+        elif status_str == "STOPPED":
+            message = f"Step {current_step_info['step_order']} 중지됨" if current_step_info else "시뮬레이션 중지됨"
+        elif status_str == "FAILED":
+            error_msg = current_step_info.get("error") if current_step_info else None
+            message = f"Step {current_step_info['step_order']} 실패: {error_msg}" if error_msg else "시뮬레이션 실패"
+        else:
+            message = "상태 정보 없음"
+
+        # 현재 진행 중 스텝 번호
+        current_step_number = current_step_info["step_order"] if current_step_info else None
+
+        progress = SequentialProgress(
+            overall_progress=round(overall_progress, 1),
+            current_step=current_step_number,
+            completed_steps=completed_steps,
+            total_steps=total_steps
+        )
+
         return CurrentStatus(
             status=status_str,
+            progress=progress,
             timestamps=timestamps,
-            message="알 수 없는 상태"
+            step_details=step_details,
+            message=message
+        )
+
+    async def get_parallel_current_status(self, simulation_id: int) -> CurrentStatus:
+        """
+        병렬(Parallel) 패턴 시뮬레이션의 현재 상태 조회
+        - RUNNING / COMPLETED / STOPPED / FAILED 상태 처리
+        - overallProgress는 각 그룹 에이전트 수 기준 가중 평균 계산
+        """
+        simulation = await self.find_simulation_by_id(simulation_id, "status")
+        status_str = simulation.status
+        timestamps = {
+            "startedAt": simulation.started_at,
+            "completedAt": simulation.completed_at,
+            "failedAt": simulation.failed_at,
+            "stoppedAt": simulation.stopped_at,
+            "lastUpdated": datetime.now(timezone.utc)
+        }
+
+        # 그룹별 상세 정보 조회
+        group_list = await self.repository.get_simulation_group_progress(simulation_id)
+
+        overall_summary = await self.repository.get_simulation_overall_group_progress(simulation_id)
+        
+        # 전체 가중 평균 진행률 계산
+        overall_progress = overall_summary["overall_progress"]
+        
+        # 완료 / 실행 / 총 그룹 수
+        total_groups = overall_summary["total_groups"]
+        completed_groups = overall_summary["completed_groups"]
+        running_groups = overall_summary["running_groups"]
+
+        # 그룹별 상세 정보 생성
+        group_details = []
+        for group in group_list:
+            group_detail = GroupDetail(
+                group_id=group["group_id"],
+                status=group["status"],
+                progress=group.get("progress", 0.0),
+                started_at=group.get("started_at"),
+                completed_at=group.get("completed_at"),
+                failed_at=group.get("failed_at"),
+                stopped_at=group.get("stopped_at"),
+                autonomous_agents=group.get("autonomous_agents", 0),
+                current_repeat=group.get("current_repeat", 0),
+                total_repeats=group.get("total_repeats", 0),
+                error=group.get("error")
+            )
+            group_details.append(group_detail)
+
+        # 메시지 생성
+        if status_str == "RUNNING":
+            message = f"{running_groups}개 그룹 병렬 실행 중"
+        elif status_str == "COMPLETED":
+            message = "모든 그룹 시뮬레이션 완료"
+        elif status_str == "STOPPED":
+            message = "사용자에 의해 시뮬레이션 중단됨"
+        elif status_str == "FAILED":
+            failed_group = next((g for g in group_list if g["status"] == "FAILED"), None)
+            if failed_group:
+                error_msg = failed_group.get("error")
+                message = f"그룹 {failed_group['group_id']}에서 치명적 오류 발생으로 전체 시뮬레이션 실패"
+                if error_msg:
+                    message += f": {error_msg}"
+            else:
+                message = "시뮬레이션 실패"
+        else:
+            message = "상태 정보 없음"
+
+        # Progress 객체 생성
+        progress = ParallelProgress(
+            overall_progress=round(overall_progress, 1),
+            completed_groups=completed_groups,
+            running_groups=running_groups,
+            total_groups=total_groups
+        )
+
+        return CurrentStatus(
+            status=status_str,
+            progress=progress,
+            timestamps=timestamps,
+            group_details=group_details,
+            message=message
         )

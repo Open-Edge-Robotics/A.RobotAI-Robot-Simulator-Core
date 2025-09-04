@@ -13,20 +13,27 @@ try:
     from models.simulation import Simulation
     from models.simulation_groups import SimulationGroup
     from models.simulation_steps import SimulationStep
-    from models.enums import SimulationStatus, PatternType, StepStatus
+    from models.enums import SimulationStatus, PatternType, StepStatus, GroupStatus
     MODELS_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"모델 import 실패: {e}")
     MODELS_AVAILABLE = False
     class Simulation: pass
     class SimulationGroup: pass  
-    class SimulationStep:
+    class SimulationStep: pass
+    class SimulationStatus: 
+        READY = "READY"
+        RUNNING = "RUNNING" 
+        COMPLETED = "COMPLETED"
+        FAILED = "FAILED"
+        STOPPED = "STOPPED"
+    class StepStatus:
         PENDING = "PENDING"
         RUNNING = "RUNNING" 
         COMPLETED = "COMPLETED"
         FAILED = "FAILED"
         STOPPED = "STOPPED"
-    class SimulationStatus: 
+    class GroupStatus: 
         READY = "READY"
         RUNNING = "RUNNING" 
         COMPLETED = "COMPLETED"
@@ -383,6 +390,92 @@ class SimulationRepository:
                 "failed_steps": failed_steps,
                 "stopped_steps": stopped_steps,
                 "overall_progress": overall_progress
+            }
+            
+    async def get_simulation_group_progress(self, simulation_id: int) -> List[Dict[str, Any]]:
+        """
+        병렬 패턴 시뮬레이션의 모든 그룹 진행 상황 조회 (모니터링용)
+        """
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(SimulationGroup)
+                .where(SimulationGroup.simulation_id == simulation_id)
+                .order_by(SimulationGroup.group_id)
+            )
+            groups: List[SimulationGroup] = result.scalars().all()
+
+            progress_info: List[Dict[str, Any]] = []
+            for group in groups:
+                # 그룹 진행률 계산
+                # 각 그룹 내부에서 반복 수행 중이면 current_repeat / total_repeats 기준
+                progress = getattr(group, "progress", None)
+                if progress is None:
+                    if group.total_repeats > 0:
+                        progress = (group.current_repeat / group.total_repeats) * 100
+                    else:
+                        progress = 0.0
+
+                # 안전하게 autonomous_agents 할당
+                autonomous_agents = getattr(group, "autonomous_agents", 0) or 0
+
+                progress_info.append({
+                    "group_id": group.group_id,
+                    "status": group.status.value,
+                    "progress": progress,
+                    "started_at": group.started_at,
+                    "completed_at": group.completed_at,
+                    "failed_at": group.failed_at,
+                    "stopped_at": group.stopped_at,
+                    "autonomous_agents": autonomous_agents,
+                    "current_repeat": getattr(group, "current_repeat", 0),
+                    "total_repeats": getattr(group, "total_repeats", 0),
+                    "error": getattr(group, "error", None)
+                })
+
+            return progress_info
+
+    async def get_simulation_overall_group_progress(self, simulation_id: int) -> Dict[str, Any]:
+        """
+        병렬 패턴 시뮬레이션 전체 진행률 요약 정보 조회
+        """
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(SimulationGroup)
+                .where(SimulationGroup.simulation_id == simulation_id)
+            )
+            groups = result.scalars().all()
+
+            if not groups:
+                return {
+                    "total_groups": 0,
+                    "completed_groups": 0,
+                    "running_groups": 0,
+                    "failed_groups": 0,
+                    "stopped_groups": 0,
+                    "overall_progress": 0.0
+                }
+
+            total_groups = len(groups)
+            completed_groups = sum(1 for g in groups if g.status == GroupStatus.COMPLETED)
+            running_groups = sum(1 for g in groups if g.status == GroupStatus.RUNNING)
+            failed_groups = sum(1 for g in groups if g.status == GroupStatus.FAILED)
+            stopped_groups = sum(1 for g in groups if g.status == GroupStatus.STOPPED)
+
+            # overallProgress: 에이전트 수 가중 평균
+            total_agents = sum(getattr(g, "autonomous_agents", 1) or 1 for g in groups)
+            if total_agents > 0:
+                weighted_sum = sum((getattr(g, "progress", 0.0) or 0.0) * (getattr(g, "autonomous_agents", 1) or 1) for g in groups)
+                overall_progress = weighted_sum / total_agents
+            else:
+                overall_progress = 0.0
+
+            return {
+                "total_groups": total_groups,
+                "completed_groups": completed_groups,
+                "running_groups": running_groups,
+                "failed_groups": failed_groups,
+                "stopped_groups": stopped_groups,
+                "overall_progress": round(overall_progress, 1)
             }
 
 
