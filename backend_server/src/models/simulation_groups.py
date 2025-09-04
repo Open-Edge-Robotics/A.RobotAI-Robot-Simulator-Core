@@ -24,14 +24,12 @@ class SimulationGroup(Base):
         PgEnum(GroupStatus, name="group_status_enum", create_constraint=True),
         default=GroupStatus.PENDING
     )
-
-    actual_start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-    actual_end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     
-    # Pod 생성 결과 추적 (리소스 누수 방지 & 부분 실패 처리용)
-    successful_agents: Mapped[int] = mapped_column(Integer, default=0)
-    failed_agents: Mapped[int] = mapped_column(Integer, default=0)
-    created_pods_count: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    stopped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
