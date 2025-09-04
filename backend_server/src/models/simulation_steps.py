@@ -28,6 +28,7 @@ class SimulationStep(Base):
 
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    stopped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
