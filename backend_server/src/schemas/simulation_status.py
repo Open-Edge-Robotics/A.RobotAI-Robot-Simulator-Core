@@ -59,8 +59,8 @@ class StepDetail(BaseSchema):
 class GroupDetail(BaseSchema):
     group_id: int = Field(..., alias="groupId")
     status: GroupStatus
-    progress: float
-    started_at: datetime = Field(..., alias="startedAt")
+    progress: float = 0.0
+    started_at: Optional[datetime] = Field(None, alias="startedAt")
     completed_at: Optional[datetime] = Field(None, alias="completedAt")
     failed_at: Optional[datetime] = Field(None, alias="failedAt")
     stopped_at: Optional[datetime] = Field(None, alias="stoppedAt")

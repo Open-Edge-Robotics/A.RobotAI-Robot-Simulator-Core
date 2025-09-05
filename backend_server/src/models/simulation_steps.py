@@ -31,8 +31,8 @@ class SimulationStep(Base):
     stopped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
     
     template: Mapped["Template"] = relationship(
         "Template",

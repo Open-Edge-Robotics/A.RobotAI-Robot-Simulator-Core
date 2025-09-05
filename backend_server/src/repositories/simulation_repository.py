@@ -273,6 +273,7 @@ class SimulationRepository:
         status: StepStatus, 
         started_at: datetime = None, 
         completed_at: datetime = None,
+        stopped_at: datetime = None,
         failed_at: datetime = None,
         current_repeat: int = None
     ):
@@ -285,6 +286,8 @@ class SimulationRepository:
             update_data["started_at"] = started_at
         if completed_at is not None:
             update_data["completed_at"] = completed_at
+        if stopped_at is not None:
+            update_data["stopped_at"] = stopped_at
         if failed_at is not None:
             update_data["failed_at"] = failed_at
         if current_repeat is not None:
@@ -313,6 +316,60 @@ class SimulationRepository:
                 .values(
                     current_repeat=current_repeat,
                     updated_at=datetime.now()
+                )
+            )
+            await session.commit()
+            
+    async def update_simulation_group_status(
+        self, 
+        group_id: int, 
+        status: GroupStatus, 
+        started_at: datetime = None, 
+        completed_at: datetime = None,
+        stopped_at: datetime = None,
+        failed_at: datetime = None,
+        current_repeat: int = None
+    ):
+        """
+        SimulationGroup의 상태와 시간 정보를 업데이트
+        """
+        update_data = {"status": status, "updated_at": datetime.now(timezone.utc)}
+        
+        if started_at is not None:
+            update_data["started_at"] = started_at
+        if completed_at is not None:
+            update_data["completed_at"] = completed_at
+        if stopped_at is not None:
+            update_data["stopped_at"] = stopped_at
+        if failed_at is not None:
+            update_data["failed_at"] = failed_at
+        if current_repeat is not None:
+            update_data["current_repeat"] = current_repeat
+
+        async with self.session_factory() as session:
+            await session.execute(
+                update(SimulationGroup)
+                .where(SimulationGroup.id == group_id)
+                .values(**update_data)
+            )
+            await session.commit()
+            
+            
+    async def update_simulation_group_current_repeat(
+        self, 
+        group_id: int, 
+        current_repeat: int
+    ):
+        """
+        SimulationGroup의 현재 반복 진행 상황을 업데이트
+        """
+        async with self.session_factory() as session:
+            await session.execute(
+                update(SimulationGroup)
+                .where(SimulationGroup.id == group_id)
+                .values(
+                    current_repeat=current_repeat,
+                    updated_at=datetime.now(timezone.utc)
                 )
             )
             await session.commit()
@@ -400,18 +457,18 @@ class SimulationRepository:
             result = await session.execute(
                 select(SimulationGroup)
                 .where(SimulationGroup.simulation_id == simulation_id)
-                .order_by(SimulationGroup.group_id)
+                .order_by(SimulationGroup.id)
             )
             groups: List[SimulationGroup] = result.scalars().all()
 
             progress_info: List[Dict[str, Any]] = []
             for group in groups:
                 # 그룹 진행률 계산
-                # 각 그룹 내부에서 반복 수행 중이면 current_repeat / total_repeats 기준
+                # 각 그룹 내부에서 반복 수행 중이면 current_repeat / repeat_count 기준
                 progress = getattr(group, "progress", None)
                 if progress is None:
-                    if group.total_repeats > 0:
-                        progress = (group.current_repeat / group.total_repeats) * 100
+                    if group.repeat_count > 0:
+                        progress = (group.current_repeat / group.repeat_count) * 100
                     else:
                         progress = 0.0
 
@@ -419,7 +476,7 @@ class SimulationRepository:
                 autonomous_agents = getattr(group, "autonomous_agents", 0) or 0
 
                 progress_info.append({
-                    "group_id": group.group_id,
+                    "group_id": group.id,
                     "status": group.status.value,
                     "progress": progress,
                     "started_at": group.started_at,
@@ -428,7 +485,7 @@ class SimulationRepository:
                     "stopped_at": group.stopped_at,
                     "autonomous_agents": autonomous_agents,
                     "current_repeat": getattr(group, "current_repeat", 0),
-                    "total_repeats": getattr(group, "total_repeats", 0),
+                    "total_repeats": getattr(group, "reoeat_count", 0),
                     "error": getattr(group, "error", None)
                 })
 

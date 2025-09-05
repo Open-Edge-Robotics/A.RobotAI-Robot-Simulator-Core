@@ -137,6 +137,7 @@ async def get_simulation_status(
     simulation_id: int,
     service: SimulationService = Depends(get_simulation_service)
 ):
+    simulation = await service.find_simulation_by_id(simulation_id, "status")
     # 현재 상태 조회
     current_status: CurrentStatus = await service.get_current_status(simulation_id)
     
@@ -146,6 +147,7 @@ async def get_simulation_status(
         message=f"{simulation_id}번 시뮬레이션 상태 조회 성공",
         data={
             "simulationId": simulation_id,
+            "patternType": simulation.pattern_type,
             "currentStatus": current_status.model_dump()
         }
     )

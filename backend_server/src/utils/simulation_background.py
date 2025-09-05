@@ -454,6 +454,7 @@ async def process_single_group(
             group_name=f"{simulation.name}_group_{group_index}",
             template_id=template.template_id,
             autonomous_agent_count=group.autonomous_agent_count,
+            repeat_count=group.repeat_count,
             execution_time=group.execution_time,
             assigned_area=simulation.namespace,
             status=GroupStatus.PENDING
