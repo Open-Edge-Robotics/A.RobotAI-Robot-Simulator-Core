@@ -43,3 +43,18 @@ class SimulationGroup(Base):
     def __repr__(self) -> str:
         return f"SimulationGroup => {self.group_name} ({self.status})"
     
+    @property
+    def calculate_progress(self) -> float:
+        """그룹의 상태와 반복 실행 정보를 기반으로 진행률 계산"""
+        if self.status == GroupStatus.COMPLETED:
+            return 1.0  # 100% 완료
+        elif self.status == GroupStatus.FAILED or self.status == GroupStatus.STOPPED:
+            return 0.0  # 실패/중단된 경우 0%
+        elif self.status == GroupStatus.RUNNING:
+            # 실행 중인 경우 반복 실행 정보를 고려한 진행률 계산
+            if self.repeat_count > 0:
+                return min(self.current_repeat / self.repeat_count, 1.0)
+            else:
+                return 0.0  # 반복 정보가 없으면 0%로 설정
+        else:  # PENDING 상태
+            return 0.0

@@ -135,6 +135,24 @@ class SimulationRepository:
         except Exception as e:
             logger.error(f"전체 시뮬레이션 개수 조회 중 오류: {str(e)}")
             return 0
+        
+    async def count_simulation_steps(self, simulation_id: int) -> int:
+        """특정 시뮬레이션의 스텝 개수 조회"""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(func.count(SimulationStep.id))
+                .where(SimulationStep.simulation_id == simulation_id)
+            )
+            return result.scalar() or 0
+        
+    async def count_simulation_groups(self, simulation_id: int) -> int:
+        """특정 시뮬레이션의 그룹 개수 조회"""
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(func.count(SimulationGroup.id))
+                .where(SimulationGroup.simulation_id == simulation_id)
+            )
+            return result.scalar() or 0
 
     async def exists_by_id(self, simulation_id: int) -> bool:
         if not MODELS_AVAILABLE:
@@ -473,7 +491,7 @@ class SimulationRepository:
                         progress = 0.0
 
                 # 안전하게 autonomous_agents 할당
-                autonomous_agents = getattr(group, "autonomous_agents", 0) or 0
+                autonomous_agents = getattr(group, "autonomous_agent_count", 0) or 0
 
                 progress_info.append({
                     "group_id": group.id,
@@ -485,7 +503,7 @@ class SimulationRepository:
                     "stopped_at": group.stopped_at,
                     "autonomous_agents": autonomous_agents,
                     "current_repeat": getattr(group, "current_repeat", 0),
-                    "total_repeats": getattr(group, "reoeat_count", 0),
+                    "total_repeats": getattr(group, "repeat_count", 0),
                     "error": getattr(group, "error", None)
                 })
 
@@ -519,12 +537,18 @@ class SimulationRepository:
             stopped_groups = sum(1 for g in groups if g.status == GroupStatus.STOPPED)
 
             # overallProgress: 에이전트 수 가중 평균
-            total_agents = sum(getattr(g, "autonomous_agents", 1) or 1 for g in groups)
+            total_agents = sum(g.autonomous_agent_count for g in groups)
+            print(f"total_agents: {total_agents}")
             if total_agents > 0:
-                weighted_sum = sum((getattr(g, "progress", 0.0) or 0.0) * (getattr(g, "autonomous_agents", 1) or 1) for g in groups)
+                weighted_sum = sum(
+                    g.calculate_progress * g.autonomous_agent_count 
+                    for g in groups
+                )
                 overall_progress = weighted_sum / total_agents
             else:
                 overall_progress = 0.0
+                
+            print(f"overall_progress: {overall_progress}")
 
             return {
                 "total_groups": total_groups,
