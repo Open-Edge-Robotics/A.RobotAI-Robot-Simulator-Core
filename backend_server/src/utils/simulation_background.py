@@ -240,10 +240,10 @@ async def finalize_simulation_success(
     """시뮬레이션 성공 완료 처리"""
     await status_manager.update_simulation_status(
         simulation_id,
-        status=SimulationStatus.READY,
+        status=SimulationStatus.PENDING,
         total_pods=successful_count
     )
-    print("DB 최종 업데이트 완료: 상태='READY'")
+    print("DB 최종 업데이트 완료: 상태='PENDING'")
 
 async def handle_simulation_failure(sessionmaker, simulation_id: int, error_message: str):
     """시뮬레이션 완전 실패 처리 - 모든 관련 데이터 삭제"""

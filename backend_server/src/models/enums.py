@@ -17,7 +17,7 @@ class PatternType(str, Enum):
 
 class SimulationStatus(str, Enum):
     INITIATING = "INITIATING"  # 생성/환경 구성 중
-    READY = "READY"            # 실행 대기
+    PENDING = "PENDING"            # 실행 대기
     RUNNING = "RUNNING"        # 실행 중
     STOPPED = "STOPPED"        # 정지
     COMPLETED = "COMPLETED"    # 정상 완료

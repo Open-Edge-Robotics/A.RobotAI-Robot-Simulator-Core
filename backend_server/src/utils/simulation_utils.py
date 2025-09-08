@@ -22,7 +22,7 @@ def extract_simulation_dashboard_data(simulation: SimulationData) -> Dict[str, A
     # 상태 매핑
     status_map = {
         SimulationStatus.INITIATING: "생성 중",
-        SimulationStatus.READY: "대기 중",
+        SimulationStatus.PENDING: "대기 중",
         SimulationStatus.RUNNING: "실행 중",
         SimulationStatus.COMPLETED: "완료",
         SimulationStatus.FAILED: "오류",

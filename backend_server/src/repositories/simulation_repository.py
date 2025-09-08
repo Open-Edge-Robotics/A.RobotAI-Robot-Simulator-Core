@@ -22,7 +22,7 @@ except ImportError as e:
     class SimulationGroup: pass  
     class SimulationStep: pass
     class SimulationStatus: 
-        READY = "READY"
+        PENDING = "PENDING"
         RUNNING = "RUNNING" 
         COMPLETED = "COMPLETED"
         FAILED = "FAILED"
@@ -34,7 +34,7 @@ except ImportError as e:
         FAILED = "FAILED"
         STOPPED = "STOPPED"
     class GroupStatus: 
-        READY = "READY"
+        PENDING = "PENDING"
         RUNNING = "RUNNING" 
         COMPLETED = "COMPLETED"
         FAILED = "FAILED"
@@ -70,7 +70,7 @@ class SimulationRepository:
                 status_priority = case(
                     (Simulation.status == "RUNNING", 1),
                     (Simulation.status == "INITIATING", 2),
-                    (Simulation.status == "READY", 3),
+                    (Simulation.status == "PENDING", 3),
                     (Simulation.status == "STOPPED", 4),
                     (Simulation.status == "FAILED", 5),
                     (Simulation.status == "COMPLETED", 6),
@@ -80,7 +80,7 @@ class SimulationRepository:
                 time_priority = case(
                     (Simulation.status == "RUNNING", Simulation.started_at),
                     (Simulation.status == "INITIATING", Simulation.created_at),
-                    (Simulation.status == "READY", Simulation.created_at),
+                    (Simulation.status == "PENDING", Simulation.created_at),
                     (Simulation.status == "STOPPED", Simulation.updated_at),
                     (Simulation.status == "FAILED", Simulation.updated_at),
                     (Simulation.status == "COMPLETED", Simulation.completed_at),
@@ -168,12 +168,12 @@ class SimulationRepository:
 
     async def get_overview(self) -> Dict[str, int]:
         if not MODELS_AVAILABLE:
-            return {'total':0,'ready':0,'running':0,'completed':0,'failed':0}
+            return {'total':0,'pending':0,'running':0,'completed':0,'failed':0}
         try:
             async with self.session_factory() as session:
                 stmt = select(
                     func.count(Simulation.id).label('total'),
-                    func.sum(case((Simulation.status == SimulationStatus.READY, 1), else_=0)).label('ready'),
+                    func.sum(case((Simulation.status == SimulationStatus.PENDING, 1), else_=0)).label('pending'),
                     func.sum(case((Simulation.status == SimulationStatus.RUNNING, 1), else_=0)).label('running'), 
                     func.sum(case((Simulation.status == SimulationStatus.COMPLETED, 1), else_=0)).label('completed'), 
                     func.sum(case((Simulation.status == SimulationStatus.FAILED, 1), else_=0)).label('failed')
@@ -182,14 +182,14 @@ class SimulationRepository:
                 row = result.first()
                 return {
                     'total': row.total or 0,
-                    'ready': row.ready or 0,
+                    'pending': row.pending or 0,
                     'running': row.running or 0,
                     'completed': row.completed or 0,
                     'failed': row.failed or 0
                 }
         except Exception as e:
             logger.error(f"시뮬레이션 개요 조회 중 오류: {str(e)}")
-            return {'total':0,'ready':0,'running':0,'completed':0,'failed':0}
+            return {'total':0,'pending':0,'running':0,'completed':0,'failed':0}
 
     async def find_by_id(self, simulation_id: int) -> Optional[Simulation]:
         if not MODELS_AVAILABLE:

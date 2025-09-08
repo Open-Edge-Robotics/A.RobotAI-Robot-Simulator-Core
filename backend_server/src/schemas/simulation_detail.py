@@ -19,8 +19,8 @@ class CurrentStatusInitiating(BaseModel):
     status: str
     timestamps: TimestampModel
 
-# READY 상태용
-class CurrentStatusReady(BaseModel):
+# PENDING 상태용
+class CurrentStatusPENDING(BaseModel):
     status: str
     progress: ProgressModel
     timestamps: TimestampModel
@@ -60,15 +60,15 @@ class SimulationData(BaseModel):
     execution_plan: Union[ExecutionPlanSequential, ExecutionPlanParallel] = Field(
         ..., alias="executionPlan"
     )  # Sequential/Parallel
-    current_status: Union[CurrentStatusInitiating, CurrentStatusReady] = Field(
+    current_status: Union[CurrentStatusInitiating, CurrentStatusPENDING] = Field(
         ..., alias="currentStatus"
-    )  # INITIATING / READY
+    )  # INITIATING / PENDING
 
     class Config:
         allow_population_by_field_name = True  # Python 이름(snake_case)으로도 채울 수 있음
         alias_generator = None                 # 자동 alias 변환 없음
         populate_by_name = True                # dict(by_alias=True)로 직렬화 가능
-  # INITIATING / READY
+  # INITIATING / PENDING
 
 class SimulationResponseModel(GlobalResponseModel):    
     model_config = {
@@ -106,7 +106,7 @@ class SimulationResponseModel(GlobalResponseModel):
                     ]
                     },
                     "currentStatus": {
-                    "status": "READY",
+                    "status": "PENDING",
                     "progress": {
                         "overallProgress": 0,
                         "readyToStart": True

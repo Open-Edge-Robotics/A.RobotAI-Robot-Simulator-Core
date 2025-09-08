@@ -17,7 +17,7 @@ from utils.simulation_utils import extract_simulation_dashboard_data
 from state import SimulationState
 from utils.debug_print import debug_print
 from utils.rosbag_executor import RosbagExecutor
-from schemas.simulation_detail import CurrentStatusInitiating, CurrentStatusReady, ExecutionPlanParallel, ExecutionPlanSequential, GroupModel, ProgressModel, SimulationData, StepModel, TimestampModel
+from schemas.simulation_detail import CurrentStatusInitiating, CurrentStatusPENDING, ExecutionPlanParallel, ExecutionPlanSequential, GroupModel, ProgressModel, SimulationData, StepModel, TimestampModel
 from schemas.pod import GroupIdFilter, StepOrderFilter
 from repositories.simulation_repository import SimulationRepository
 from schemas.pagination import PaginationMeta, PaginationParams
@@ -489,8 +489,8 @@ class SimulationService:
                     last_updated=sim.updated_at
                 )
             )
-        elif sim.status == SimulationStatus.READY:
-            current_status = CurrentStatusReady(
+        elif sim.status == SimulationStatus.PENDING:
+            current_status = CurrentStatusPENDING(
                 status=sim.status,
                 progress=ProgressModel(
                     overall_progress=0.0,
@@ -2657,8 +2657,8 @@ class SimulationService:
                     last_updated=sim.updated_at
                 )
             )
-        elif sim.status == SimulationStatus.READY:
-            current_status = CurrentStatusReady(
+        elif sim.status == SimulationStatus.PENDING:
+            current_status = CurrentStatusPENDING(
                 status=sim.status,
                 progress=ProgressModel(
                     overall_progress=0.0,
@@ -3150,7 +3150,7 @@ class SimulationService:
                 timestamps=timestamps,
                 message="네임스페이스 및 기본 리소스 생성 중..."
             )
-        elif status_str == "READY":
+        elif status_str == "PENDING":
             progress = None
 
             if simulation.pattern_type == PatternType.SEQUENTIAL:
