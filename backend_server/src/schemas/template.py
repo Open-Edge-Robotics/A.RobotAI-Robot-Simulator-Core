@@ -9,7 +9,6 @@ from utils.my_enum import API
 class TemplateCreateRequest(BaseSchema):
     type: str = Field(examples=["robot-arm"])
     description: str = Field(examples=["This is robot-arm"])
-    bag_file_path: str = Field(examples=["ros2bag_2024-05-14.21_53_18/"])
     topics: str = Field(examples=["/navi_motion_traj, /nav_vel, /scan_unified"])
 
 class TemplateCreateResponse(BaseSchema):

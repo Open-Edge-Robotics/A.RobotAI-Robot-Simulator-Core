@@ -14,3 +14,4 @@ minio==7.2.10
 asyncio
 httpx
 aioredis
+python-multipart
