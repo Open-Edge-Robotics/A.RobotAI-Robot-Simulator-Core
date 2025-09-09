@@ -3175,6 +3175,30 @@ class SimulationService:
                     completed_steps=0,
                     total_steps=total_steps
                 )
+                
+                step_progress_list = await self.repository.get_simulation_step_progress(simulation_id)
+                
+                # 상태별 스텝 처리
+                step_details = []
+
+                for step in step_progress_list:
+                    step_status = StepStatus(step["status"])
+
+                    step_detail = StepDetail(
+                        step_order=step["step_order"],
+                        status=step_status,
+                        progress=step["progress_percentage"],
+                        started_at=step.get("started_at"),
+                        completed_at=step.get("completed_at"),
+                        failed_at=step.get("failed_at"),
+                        stopped_at=step.get("stopped_at"),
+                        autonomous_agents=step.get("autonomous_agents", 0),
+                        current_repeat=step.get("current_repeat", 0),
+                        total_repeats=step.get("repeat_count", 0),
+                        error=step.get("error")
+                    )
+                    step_details.append(step_detail)
+                
             elif simulation.pattern_type == PatternType.PARALLEL:
                 total_groups = await self.repository.count_simulation_groups(simulation_id)
                 
@@ -3184,6 +3208,27 @@ class SimulationService:
                     running_groups=0,
                     total_groups=total_groups
                 )
+                
+                # 그룹별 상세 정보 생성
+                group_list = await self.repository.get_simulation_group_progress(simulation_id)
+                group_details = []
+                for group in group_list:
+                    debug_print(f"{group}")
+                    group_detail = GroupDetail(
+                        group_id=group["group_id"],
+                        status=GroupStatus(group["status"]),
+                        progress=group.get("progress", 0.0),
+                        started_at=group.get("started_at"),
+                        completed_at=group.get("completed_at"),
+                        failed_at=group.get("failed_at"),
+                        stopped_at=group.get("stopped_at"),
+                        autonomous_agents=group.get("autonomous_agents", 0),
+                        current_repeat=group.get("current_repeat", 0),
+                        total_repeats=group.get("total_repeats", 0),
+                        error=group.get("error")
+                    )
+                    group_details.append(group_detail)
+
             
             if progress is None:
                 # 알 수 없는 패턴 타입인 경우 기본값 제공
@@ -3191,10 +3236,13 @@ class SimulationService:
                 progress = SequentialProgress(
                     overall_progress=0.0
                 )
+            
             return CurrentStatus(
                 status=status_str,
                 timestamps=timestamps,
                 progress=progress,
+                step_details=step_details if simulation.pattern_type == PatternType.SEQUENTIAL else None,
+                group_details=group_details if simulation.pattern_type == PatternType.PARALLEL else None,
                 message="시뮬레이션 시작 준비 완료"
             )
         elif status_str in ["RUNNING", "COMPLETED", "STOPPED", "FAILED"]:
@@ -3365,7 +3413,7 @@ class SimulationService:
             message = "상태 정보 없음"
 
         # 현재 진행 중 스텝 번호
-        current_step_number = current_step_info["step_order"] if current_step_info else None
+        current_step_number = current_step_info["step_order"] if current_step_info else 0
 
         progress = SequentialProgress(
             overall_progress=round(overall_progress, 1),

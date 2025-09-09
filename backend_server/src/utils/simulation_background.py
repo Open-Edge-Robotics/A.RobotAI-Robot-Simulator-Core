@@ -112,8 +112,8 @@ async def process_single_step(
             autonomous_agent_count=step.autonomous_agent_count,
             execution_time=step.execution_time,
             delay_after_completion=step.delay_after_completion,
-            repeat_count=step.repeat_count,  # 저장은 하되 Pod 생성에는 미사용
-            current_repeat=1,  # 반복 없으므로 항상 1
+            repeat_count=step.repeat_count,
+            current_repeat=0,
             status=StepStatus.PENDING
         )
         session.add(simulation_step)
@@ -455,6 +455,7 @@ async def process_single_group(
             template_id=template.template_id,
             autonomous_agent_count=group.autonomous_agent_count,
             repeat_count=group.repeat_count,
+            current_repeat=0,
             execution_time=group.execution_time,
             assigned_area=simulation.namespace,
             status=GroupStatus.PENDING
