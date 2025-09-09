@@ -48,6 +48,15 @@ class TemplateService:
         return TemplateCreateResponse.model_validate(new_template).model_dump()
     
     async def create_template_with_files(self, template_data: TemplateCreateRequest, metadata_file: UploadFile, db_file: UploadFile) -> TemplateCreateResponse:
+        query = select(Template).where(Template.name == template_data.name)
+        result = await self.db.execute(query)
+        existing_template = result.scalar_one_or_none()
+        if existing_template:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f'템플릿 이름 "{template_data.name}" 은(는) 이미 존재합니다.'
+            )
+        
         # 1. 로컬 임시 디렉토리 생성
         dir_name = f"{template_data.type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         local_dir = os.path.join("/tmp", dir_name)
@@ -72,6 +81,7 @@ class TemplateService:
         # Pod에서 접근할 때는 /rosbag-data/bagfiles/<directory> 구조로 사용
         bag_file_path_for_db = dir_name  # 디렉토리명만 저장
         new_template = Template(
+            name=template_data.name,
             type=template_data.type,
             description=template_data.description,
             bag_file_path=bag_file_path_for_db,

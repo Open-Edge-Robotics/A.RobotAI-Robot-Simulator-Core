@@ -7,6 +7,7 @@ from utils.my_enum import API
 
 ###### 생성 #######
 class TemplateCreateRequest(BaseSchema):
+    name: str = Field(examples=["LG사 로봇팔"])
     type: str = Field(examples=["robot-arm"])
     description: str = Field(examples=["This is robot-arm"])
     topics: str = Field(examples=["/navi_motion_traj, /nav_vel, /scan_unified"])
@@ -15,6 +16,7 @@ class TemplateCreateResponse(BaseSchema):
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
     template_id: int
+    name: str
     type: str
     description: str
     bag_file_path: str

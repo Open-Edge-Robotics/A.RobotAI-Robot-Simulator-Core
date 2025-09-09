@@ -35,7 +35,7 @@ async def get_templates(db: AsyncSession = Depends(get_db)):
     summary="새로운 ROSBAG 템플릿 생성",
     description="""
     ROSBAG 템플릿을 생성합니다.
-
+    - name: 템플릿 이름 (고유값, 템플릿 식별)
     - type: 템플릿 타입 (예: robot-arm, robot-leg)
     - description: 템플릿 설명
     - topics: 구독할 ROS 토픽 목록 (쉼표로 구분)
@@ -43,6 +43,7 @@ async def get_templates(db: AsyncSession = Depends(get_db)):
     """
 )
 async def create_template(
+    name: str = Form(...),
     type: str = Form(...),
     description: str = Form(...),
     topics: str = Form(...), 
@@ -50,7 +51,7 @@ async def create_template(
     db_file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
 ):
-    template_data = TemplateCreateRequest(type=type, description=description, topics=topics)
+    template_data = TemplateCreateRequest(name=name, type=type, description=description, topics=topics)
     new_template = await TemplateService(db, storage_client).create_template_with_files(template_data, metadata_file, db_file)
     return TemplateCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
