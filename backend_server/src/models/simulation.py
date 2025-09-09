@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from .simulation_groups import SimulationGroup
@@ -51,6 +51,7 @@ class Simulation(Base):
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable = True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 관계
     steps: Mapped[Optional[List["SimulationStep"]]] = relationship(
@@ -63,4 +64,7 @@ class Simulation(Base):
 
     def __repr__(self) -> str:
         return f"Simulation => {self.name} ({self.pattern_type})"
+    
+    def mark_as_deleted(self):
+        self.deleted_at = datetime.now(timezone.utc)
 
