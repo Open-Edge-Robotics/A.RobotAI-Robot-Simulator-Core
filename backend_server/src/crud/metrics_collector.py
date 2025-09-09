@@ -118,7 +118,7 @@ class MetricsCollector:
             pods = self.v1.list_namespaced_pod(namespace)
             logger.debug(f"Pod 목록 조회 완료: {len(pods.items)}개 Pod")
             
-            status_counts = {"ready": 0, "running": 0, "stopped": 0, "completed": 0, "failed": 0}
+            status_counts = {"pending": 0, "running": 0, "stopped": 0, "completed": 0, "failed": 0}
             total_count = len(pods.items)
             
             # 각 Pod 상태 분류
@@ -134,7 +134,7 @@ class MetricsCollector:
             running_related = status_counts["running"] + status_counts["completed"] + status_counts["failed"]
             overall_health = (status_counts["completed"] / running_related * 100) if running_related > 0 else 0.0
             
-            logger.info(f"Pod 상태 집계 - Completed: {status_counts['completed']}, Ready: {status_counts['ready']}, Running: {status_counts['running']}, Stopped: {status_counts['stopped']}, Failed: {status_counts['failed']}")
+            logger.info(f"Pod 상태 집계 - Completed: {status_counts['completed']}, Pending: {status_counts['pending']}, Running: {status_counts['running']}, Stopped: {status_counts['stopped']}, Failed: {status_counts['failed']}")
             
             return PodStatusData(
                 total_count=total_count,

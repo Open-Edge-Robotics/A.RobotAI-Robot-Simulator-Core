@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import traceback
 from typing import Dict, Any, List, Optional, Union
 import asyncio
 import logging
@@ -43,10 +44,9 @@ class RosbagExecutor:
     MAX_RETRIES = 3
     RETRY_DELAY = 5
     
-    def __init__(self, pod_service: PodService, ros_service: RosService):
+    def __init__(self, pod_service: PodService):
         self.pod_service = pod_service
         #self.pod_service.enabled = False
-        self.ros_service = ros_service
         
     
     async def execute_rosbag_on_pod_direct(self, pod: V1Pod, simulation, step=None, group=None) -> PodExecutionResult:
@@ -152,7 +152,7 @@ class RosbagExecutor:
         for attempt in range(self.MAX_RETRIES):
             try:
                 response = await asyncio.wait_for(
-                    self.ros_service.send_post_request(pod_ip, "/rosbag/play", rosbag_params),
+                    RosService.send_post_request(pod_ip, "/rosbag/play", rosbag_params),
                     timeout=self.DEFAULT_TIMEOUT
                 )
                 
@@ -329,6 +329,7 @@ class RosbagExecutor:
             return stop_result
 
         except Exception as e:
+            traceback.print_stack()
             debug_print(f"{prefix} 💥 Pod 실행 예외 발생: {e}")
             return PodExecutionResult(
                 pod_name=pod_name,
@@ -344,16 +345,19 @@ class RosbagExecutor:
         pod_name = pod.metadata.name
         
         try:
-            pod_ip = self.pod_service.get_v1pod_ip(pod)
+            pod_ip = pod.status.pod_ip or "unknown"
             
             status_response = await asyncio.wait_for(
-                self.ros_service.get_pod_status(pod_ip),
+                RosService.get_pod_status(pod_ip),
                 timeout=10.0
             )
             
             return status_response
             
+        except asyncio.TimeoutError:
+            raise Exception(f"Pod {pod_name} 상태 체크 타임아웃")
         except Exception as e:
+            traceback.print_exc()
             raise Exception(f"Pod {pod_name} 상태 체크 실패: {str(e)}")
 
     async def _collect_final_results(self, pods: List[V1Pod], execution_context,
@@ -581,7 +585,7 @@ class RosbagExecutor:
                 debug_print(traceback.format_exc())
 
             # 실제 rosbag 중지 요청
-            stop_response = await asyncio.wait_for(self.ros_service.stop_rosbag(pod_ip), timeout=10.0)
+            stop_response = await asyncio.wait_for(RosService.stop_rosbag(pod_ip), timeout=10.0)
             execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             debug_print(f"{execution_context} ✅ Pod {pod_name} rosbag 중지 성공")
 

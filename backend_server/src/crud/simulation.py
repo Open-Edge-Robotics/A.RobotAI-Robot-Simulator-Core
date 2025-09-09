@@ -56,12 +56,11 @@ class SimulationService:
         self.sessionmaker = sessionmaker
         self.repository = repository
         self.state = state
-        self.ros_service = RosService()
         self.pod_service = PodService()
         self.templates_service = TemplateService(session)
         
         # RosbagExecutor 초기화 (pod_service와 ros_service 의존성 주입)
-        self.rosbag_executor = RosbagExecutor(self.pod_service, self.ros_service)
+        self.rosbag_executor = RosbagExecutor(self.pod_service)
         self.collector = MetricsCollector()   
 
     async def create_simulation(
@@ -1741,7 +1740,7 @@ class SimulationService:
             }
 
             # 3️⃣ 실행 중 진행상황 감시 + 즉시 취소 처리
-            poll_interval = 0.5
+            poll_interval = 1.0
             while group_tasks:
                 # 루프 시작 시 상태 체크
                 debug_print(f"🔍 루프 시작: {len(group_tasks)}개 태스크 대기")
@@ -2159,6 +2158,8 @@ class SimulationService:
         timestamp = datetime.now(timezone.utc)
         
         try:
+            debug_print(f"🔄 DB 업데이트 시도 - Group {group_id}: {status.value}")
+            
             # ✅ DB 업데이트
             if status == GroupStatus.COMPLETED:
                 await self.repository.update_simulation_group_status(
@@ -2189,7 +2190,15 @@ class SimulationService:
             
         except Exception as db_error:
             debug_print(f"❌ DB 업데이트 실패 - Group {group_id}: {db_error}")
+            traceback.print_exc()  # 전체 예외 스택 출력
             # DB 실패해도 Redis는 시도
+            
+            # 추가 디버깅: 트랜잭션 상태 확인
+            try:
+                in_tx = self.repository.session.in_transaction()
+                debug_print(f"ℹ️ 트랜잭션 상태 - in_transaction: {in_tx}")
+            except Exception as tx_error:
+                debug_print(f"⚠️ 트랜잭션 상태 확인 실패: {tx_error}")
         
         try:
             # ⚡ Redis 그룹 상태 동시 업데이트
@@ -2315,39 +2324,43 @@ class SimulationService:
             await redis_client.set_simulation_status(simulation_id, current_status)
 
 
-    # 📊 헬퍼 메서드들 - 순차 시뮬레이션 패턴 적용
+    # 📊 헬퍼 메서드들
     async def _update_group_final_status(self, group_id: int, status: GroupStatus, final_repeat: int, 
                                     failure_reason: str = None):
         """그룹 최종 상태를 DB에 기록 (current_repeat 포함)"""
         timestamp = datetime.now(timezone.utc)
         
-        if status == GroupStatus.COMPLETED:
-            await self.repository.update_simulation_group_status(
+        try:
+            if status == GroupStatus.COMPLETED:
+                await self.repository.update_simulation_group_status(
+                    group_id=group_id,
+                    status=status,
+                    completed_at=timestamp
+                )
+            elif status == GroupStatus.FAILED:
+                await self.repository.update_simulation_group_status(
+                    group_id=group_id,
+                    status=status,
+                    failed_at=timestamp
+                )
+            elif status == GroupStatus.STOPPED:
+                await self.repository.update_simulation_group_status(
+                    group_id=group_id,
+                    status=status,
+                    stopped_at=timestamp
+                )
+            
+            # 📊 최종 current_repeat 업데이트
+            await self.repository.update_simulation_group_current_repeat(
                 group_id=group_id,
-                status=status,
-                completed_at=timestamp
-            )
-        elif status == GroupStatus.FAILED:
-            await self.repository.update_simulation_group_status(
-                group_id=group_id,
-                status=status,
-                failed_at=timestamp
-            )
-        elif status == GroupStatus.STOPPED:
-            await self.repository.update_simulation_group_status(
-                group_id=group_id,
-                status=status,
-                stopped_at=timestamp
+                current_repeat=final_repeat
             )
         
-        # 📊 최종 current_repeat 업데이트
-        await self.repository.update_simulation_group_current_repeat(
-            group_id=group_id,
-            current_repeat=final_repeat
-        )
-        
-        debug_print(f"✅ DB 최종 상태 기록 완료 - Group {group_id}: {status.value}, current_repeat: {final_repeat}")
-
+            debug_print(f"✅ DB 최종 상태 기록 완료 - Group {group_id}: {status.value}, current_repeat: {final_repeat}")
+        except Exception as db_error:
+            # DB 실패 시 상세 로그
+            debug_print(f"❌ DB 업데이트 실패 - Group {group_id}: {db_error}")
+            traceback.print_exc()  # 전체 예외 스택 출력
 
     async def _update_overall_progress_redis(self, redis_client, simulation_id, total_summary, 
                                         total_groups, remaining_tasks):
@@ -2498,7 +2511,7 @@ class SimulationService:
         for instance in instances:
             await self.pod_service.check_pod_status(instance)
             pod_ip = await self.pod_service.get_pod_ip(instance)
-            await self.ros_service.send_post_request(pod_ip, "/rosbag/stop")
+            await RosService.send_post_request(pod_ip, "/rosbag/stop")
 
         return SimulationControlResponse(simulation_id=simulation_id).model_dump()
 
@@ -2562,7 +2575,7 @@ class SimulationService:
 
         for instance in instances:
             pod_ip = await self.pod_service.get_pod_ip(instance)
-            pod_status = await self.ros_service.get_pod_status(pod_ip)
+            pod_status = await RosService.get_pod_status(pod_ip)
 
             if pod_status == PodStatus.RUNNING.value:
                 return SimulationStatus.ACTIVE.value
@@ -2583,7 +2596,7 @@ class SimulationService:
         for instance in instances:
             try:
                 pod_ip = await self.pod_service.get_pod_ip(instance)
-                status_response = await self.ros_service.get_pod_status(pod_ip)
+                status_response = await RosService.get_pod_status(pod_ip)
                 detailed_status.append(
                     {
                         "instance_id": instance.id,
