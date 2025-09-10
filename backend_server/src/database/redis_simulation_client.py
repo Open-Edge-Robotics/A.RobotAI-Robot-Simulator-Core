@@ -50,6 +50,28 @@ class RedisSimulationClient:
         key = f"simulation:{simulation_id}"
         await self.client.delete(key)
         
+    async def set_simulation_delete_status(
+        self,
+        simulation_id: int,
+        value: dict,  # {"namespace": "SUCCESS", "redis": "FAILED", "db": "PENDING"}
+        ttl: int | None = None
+    ):
+        """시뮬레이션 삭제 진행 상태를 Redis에 저장"""
+        if not self.client:
+            await self.connect()
+        key = f"delete_status:{simulation_id}"  # monitor_key와 동일
+        await self.client.set(key, json.dumps(value))
+        if ttl or self.ttl:
+            await self.client.expire(key, ttl or self.ttl)
+
+    async def get_simulation_delete_status(self, simulation_id: int) -> dict | None:
+        """시뮬레이션 삭제 진행 상태 조회"""
+        if not self.client:
+            await self.connect()
+        key = f"delete_status:{simulation_id}"
+        data = await self.client.get(key)
+        return json.loads(data) if data else None
+        
     async def health_check(self) -> bool:
         """
         Redis health check

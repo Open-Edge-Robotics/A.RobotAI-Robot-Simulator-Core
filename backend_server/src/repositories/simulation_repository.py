@@ -558,6 +558,13 @@ class SimulationRepository:
                 "stopped_groups": stopped_groups,
                 "overall_progress": round(overall_progress, 1)
             }
+            
+    async def soft_delete_simulation(self, simulation_id: int):
+        async with self.session_factory() as session:
+            sim = await session.get(Simulation, simulation_id)
+            if sim:
+                sim.mark_as_deleted()
+                await session.commit()
 
 
 

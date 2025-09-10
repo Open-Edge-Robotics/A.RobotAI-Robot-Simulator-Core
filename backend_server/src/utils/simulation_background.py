@@ -1,6 +1,10 @@
 import asyncio
 
+from fastapi import Depends
 from sqlalchemy import delete, select
+
+from database.db_conn import get_db
+from database.minio_conn import get_storage_client
 from .status_update_manager import get_status_manager
 from models.enums import GroupStatus, PatternType, SimulationStatus, StepStatus
 from models.simulation_groups import SimulationGroup
@@ -97,9 +101,10 @@ async def process_single_step(
     step_created = 0
     
     # 템플릿 조회
-    async with sessionmaker() as session:
-        templates_service = TemplateService(session)
-        template = await templates_service.find_template_by_id(step.template_id, api)
+    async with sessionmaker() as db:
+        storage_client = get_storage_client()
+        template_service = TemplateService(db, storage_client)
+        template = await template_service.find_template_by_id(step.template_id, api)
         print(f"템플릿 조회 완료: ID={template.template_id}, 타입='{template.type}'")
     
     # SimulationStep DB 저장
@@ -441,9 +446,10 @@ async def process_single_group(
     group_created = 0
     
     # 템플릿 조회
-    async with sessionmaker() as session:
-        templates_service = TemplateService(session)
-        template = await templates_service.find_template_by_id(group.template_id, api)
+    async with sessionmaker() as db:
+        storage_client = get_storage_client()
+        template_service = TemplateService(db, storage_client)
+        template = await template_service.find_template_by_id(group.template_id, api)
         print(f"[그룹 {group_index}] 템플릿 조회 완료: ID={template.template_id}, 타입='{template.type}'")
     
     # SimulationGroup DB 저장
