@@ -10,6 +10,7 @@ from kubernetes.client import V1Pod
 from kubernetes.client.rest import ApiException
 
 from schemas.pod import GroupIdFilter, StepOrderFilter
+from models.enums import PatternType
 from models.instance import Instance
 from utils.my_enum import PodStatus
 
@@ -581,3 +582,50 @@ class PodService:
             namespace, 
             {"group_id": group_id}
         )
+        
+    
+    async def adjust_pod_count(
+        self,
+        namespace: str,
+        pattern_type: str,        # "sequential" 또는 "parallel"
+        desired_count: int,
+        step_order: int | None = None,
+        group_id: int | None = None,
+    ):
+        """
+        Pod 수를 desired_count에 맞춰 조정.
+        - pattern_type: "sequential" 또는 "parallel"
+        - step_order 또는 group_id 중 하나는 반드시 전달
+        """
+        # 유효성 체크
+        if pattern_type == PatternType.SEQUENTIAL and step_order is None:
+            raise ValueError("step_order가 필요합니다 (pattern_type='sequential')")
+        if pattern_type == PatternType.PARALLEL and group_id is None:
+            raise ValueError("group_id가 필요합니다 (pattern_type='parallel')")
+
+        # 1. 현재 Pod 목록 조회
+        if pattern_type == "sequential":
+            pods = await self.get_pods_by_step_order(namespace, step_order)
+        else:  # "parallel"
+            pods = await self.get_pods_by_group_id(namespace, group_id)
+
+        current_count = len(pods)
+
+        # 2. 현재 수와 목표 수가 동일하면 종료
+        if current_count == desired_count:
+            return
+
+        # 3. Pod 수가 부족하면 생성
+        elif current_count < desired_count:
+            to_create = desired_count - current_count
+            for _ in range(to_create):
+                pod_spec = self._generate_pod_spec(pattern_type, step_order, group_id, namespace)
+                await self._create_pod_in_cluster(pod_spec, namespace)
+                await self._verify_pod_creation(pod_spec["metadata"]["name"], namespace)
+
+        # 4. Pod 수가 초과하면 삭제 (가장 최근 생성된 Pod부터)
+        else:
+            to_delete = current_count - desired_count
+            pods_sorted = sorted(pods, key=lambda p: p.metadata.creation_timestamp, reverse=True)
+            for pod in pods_sorted[:to_delete]:
+                await self.delete_pod(pod.metadata.name, namespace)

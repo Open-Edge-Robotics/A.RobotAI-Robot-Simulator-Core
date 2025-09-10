@@ -337,6 +337,46 @@ class SimulationRepository:
                 )
             )
             await session.commit()
+      
+    async def update_simulation_step_configuration(
+        self,
+        step_id: int,
+        execution_time: Optional[int] = None,
+        repeat_count: Optional[int] = None,
+        delay_after_completion: Optional[int] = None
+    ):
+        """
+        SimulationStep 부분 업데이트
+        - step_id 기준
+        - 제공된 매개변수만 업데이트
+        """
+        update_data = {"updated_at": datetime.now()}
+        
+        # 실행 관련 필드
+        if execution_time is not None:
+            update_data["execution_time"] = execution_time
+        if repeat_count is not None:
+            update_data["repeat_count"] = repeat_count
+        if delay_after_completion is not None:
+            update_data["delay_after_completion"] = delay_after_completion
+
+        if len(update_data) == 1:  # updated_at만 있는 경우
+            return  # 업데이트할 내용 없음
+
+        async with self.session_factory() as session:
+            try:
+                stmt = (
+                    update(SimulationStep)
+                    .where(SimulationStep.id == step_id)
+                    .values(**update_data)
+                )
+                result = await session.execute(stmt)
+                if result.rowcount == 0:
+                    raise ValueError(f"SimulationStep ID {step_id}를 찾을 수 없습니다.")
+                await session.commit()
+            except Exception as e:
+                logger.error(f"SimulationStep {step_id} 업데이트 실패: {str(e)}")
+                raise
             
     async def update_simulation_group_status(
         self, 
@@ -558,6 +598,75 @@ class SimulationRepository:
                 "stopped_groups": stopped_groups,
                 "overall_progress": round(overall_progress, 1)
             }
+    
+    async def update_simulation_description(self, simulation_id: int, description: str):
+        async with self.session_factory() as session:
+            update_data = {"description": description}
+            stmt = update(Simulation).where(Simulation.id == simulation_id).values(**update_data)
+            result = await session.execute(stmt)
+            if result.rowcount == 0:
+                return False
+            await session.commit()
+            return True
+        
+    async def create_simulation_step(
+        self,
+        simulation_id: int,
+        step_order: int,
+        template_id: int,
+        autonomous_agent_count: int,
+        execution_time: int,
+        delay_after_completion: int,
+        repeat_count: int
+    ) -> SimulationStep:
+        """SimulationStep 저장"""
+        async with self.session_factory() as session:
+            simulation_step = SimulationStep(
+                simulation_id=simulation_id,
+                step_order=step_order,
+                template_id=template_id,
+                autonomous_agent_count=autonomous_agent_count,
+                execution_time=execution_time,
+                delay_after_completion=delay_after_completion,
+                repeat_count=repeat_count,
+                current_repeat=0,
+                status=StepStatus.PENDING
+            )
+            session.add(simulation_step)
+            await session.commit()
+            await session.refresh(simulation_step)
+            print(f"시뮬레이션 단계 DB 저장 완료 (StepOrder={step_order})")
+            return simulation_step
+
+    async def create_simulation_group(
+        self,
+        simulation_id: int,
+        group_name: str,
+        template_id: int,
+        autonomous_agent_count: int,
+        repeat_count: int,
+        execution_time: int,
+        assigned_area: str
+    ) -> SimulationGroup:
+        """SimulationGroup 저장"""
+        async with self.session_factory() as session:
+            simulation_group = SimulationGroup(
+                simulation_id=simulation_id,
+                group_name=group_name,
+                template_id=template_id,
+                autonomous_agent_count=autonomous_agent_count,
+                repeat_count=repeat_count,
+                current_repeat=0,
+                execution_time=execution_time,
+                assigned_area=assigned_area,
+                status=GroupStatus.PENDING
+            )
+            session.add(simulation_group)
+            await session.flush()  # ID 가져오기 위해 flush
+            await session.commit()
+            await session.refresh(simulation_group)
+            print(f"[그룹 DB 저장] {group_name} (ID: {simulation_group.id})")
+            return simulation_group
 
 
 
