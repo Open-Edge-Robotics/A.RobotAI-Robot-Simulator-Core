@@ -3,13 +3,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Qu
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from database.redis_simulation_client import RedisSimulationClient
+from crud.template import get_template_service
 from schemas.simulation_status import CurrentStatus, SimulationDeletionStatusData, SimulationDeletionStatusResponse, SimulationStatusResponse
 from models.enums import ViewType
 from schemas.dashboard import SimulationDashboardResponseModel
 from repositories.simulation_repository import SimulationRepository
 from schemas.simulation_detail import SimulationResponseModel
-from crud.simulation import SimulationService
+from crud.simulation import SimulationService, TemplateService
 from database.db_conn import get_db, async_session
 from schemas.simulation import *
 from utils.my_enum import API
@@ -17,10 +17,13 @@ from state import simulation_state
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
-def get_simulation_service(db: AsyncSession = Depends(get_db)) -> SimulationService:
+def get_simulation_service(
+    db: AsyncSession = Depends(get_db),
+    template_service: TemplateService = Depends(get_template_service)
+) -> SimulationService:
     """SimulationService 의존성 주입"""
     repository = SimulationRepository(async_session)
-    return SimulationService(db, async_session, repository, simulation_state)
+    return SimulationService(db, async_session, repository, template_service, simulation_state)
 
 
 @router.post(
@@ -247,13 +250,16 @@ async def delete_simulation(
     if simulation.status not in allowed_statuses:
         raise HTTPException(status_code=400, detail="삭제 불가 상태")
     
+    # ✅ 상태를 먼저 DELETING 으로 전환
+    await service.repository.update_simulation_status(simulation_id, SimulationStatus.DELETING)
+    
     print(f"Delete request received for simulation {simulation_id}")
     # 백그라운드 작업 등록
     background_tasks.add_task(service.delete_simulation, simulation_id)
 
     return SimulationDeleteResponseModel(
         status_code=status.HTTP_202_ACCEPTED,
-        data= {"simulation_id": simulation_id },
+        data= {"simulation_id": simulation_id, "status": SimulationStatus.DELETING },
         message="시뮬레이션 삭제 요청 접수됨."
     )
     

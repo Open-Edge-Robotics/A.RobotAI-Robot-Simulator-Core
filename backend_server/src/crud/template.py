@@ -1,11 +1,14 @@
 from datetime import datetime
 import os
 import shutil
-from fastapi import HTTPException, UploadFile
+from fastapi import Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from database.db_conn import get_db
+from database.minio_conn import get_storage_client
+from storage.minio_client import MinioStorageClient
 from storage.client import StorageClient
 from utils.rosbag_file_validator import RosbagFileValidator
 from models.template import Template
@@ -115,3 +118,10 @@ class TemplateService:
         if template is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f'{api}: 존재하지 않는 템플릿id 입니다.')
         return template
+
+# FastAPI DI 제공
+def get_template_service(
+    db: AsyncSession = Depends(get_db),  # get_db: AsyncSession 제공
+    storage_client: MinioStorageClient = Depends(get_storage_client)
+):
+    return TemplateService(db, storage_client)

@@ -4,22 +4,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
 from storage.minio_client import MinioStorageClient
-from crud.template import TemplateService
+from crud.template import TemplateService, get_template_service
 from database.db_conn import get_db
-from database.minio_conn import client, bucket_name
+from database.minio_conn import get_storage_client
 from schemas.template import TemplateCreateRequest, TemplateCreateResponseModel, \
     TemplateListResponseModel, TemplateDeleteResponseModel
 from utils.my_enum import API
 
 router = APIRouter(prefix="/template", tags=["Template"])
 
-# MinIO 클라이언트 주입
-storage_client = MinioStorageClient(client, bucket_name)
-
 # 템플릿 목록 조회
 @router.get("", response_model=TemplateListResponseModel, status_code=status.HTTP_200_OK)
-async def get_templates(db: AsyncSession = Depends(get_db)):
-    template_responses = await TemplateService(db, storage_client).get_all_templates()
+async def get_templates(
+    service: TemplateService = Depends(get_template_service)  
+):
+    template_responses = await service.get_all_templates()
     return TemplateListResponseModel(
         status_code=status.HTTP_200_OK,
         data=template_responses,
@@ -49,10 +48,10 @@ async def create_template(
     topics: str = Form(...), 
     metadata_file: UploadFile = File(...),
     db_file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db)
+    service: TemplateService = Depends(get_template_service)  
 ):
     template_data = TemplateCreateRequest(name=name, type=type, description=description, topics=topics)
-    new_template = await TemplateService(db, storage_client).create_template_with_files(template_data, metadata_file, db_file)
+    new_template = await service.create_template_with_files(template_data, metadata_file, db_file)
     return TemplateCreateResponseModel(
         status_code=status.HTTP_201_CREATED,
         data=new_template,
@@ -62,8 +61,11 @@ async def create_template(
 
 # 템플릿 삭제
 @router.delete("/{template_id}", response_model=TemplateDeleteResponseModel, status_code=status.HTTP_200_OK)
-async def delete_template(template_id: int, db: AsyncSession = Depends(get_db)):
-    data = await TemplateService(db, storage_client).delete_template(template_id)
+async def delete_template(
+    template_id: int, 
+    service: TemplateService = Depends(get_template_service)   
+):
+    data = await service.delete_template(template_id)
     return TemplateDeleteResponseModel(
         status_code=status.HTTP_200_OK,
         data=data,

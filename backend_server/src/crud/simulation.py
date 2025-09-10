@@ -54,13 +54,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 class SimulationService:
-    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository, state: SimulationState):
+    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository, template_service: TemplateService, state: SimulationState):
         self.session = session
         self.sessionmaker = sessionmaker
         self.repository = repository
         self.state = state
         self.pod_service = PodService()
-        self.templates_service = TemplateService(session)
+        self.template_service = template_service
         
         # RosbagExecutor 초기화 (pod_service와 ros_service 의존성 주입)
         self.rosbag_executor = RosbagExecutor(self.pod_service)
@@ -184,11 +184,10 @@ class SimulationService:
         existing_template_ids = []
         
         async with self.sessionmaker() as session:
-            templates_service = TemplateService(session)
             
             for template_id in template_ids:
                 try:
-                    template = await templates_service.find_template_by_id(template_id, api)
+                    template = await self.template_service.find_template_by_id(template_id, api)
                     existing_template_ids.append(template.template_id)
                     print(f"  ✅ 템플릿 ID {template_id}: 존재함 (타입: {template.type})")
                     
@@ -2576,6 +2575,8 @@ class SimulationService:
             try:
                 await self.repository.soft_delete_simulation(simulation_id)
                 status["steps"]["db"] = "SUCCESS"
+                
+                await self.repository.update_simulation_status(simulation_id, SimulationStatus.DELETED)
             except Exception as e:
                 status["steps"]["db"] = "FAILED"
                 status["error_message"] = f"DB deletion failed: {e}"
