@@ -19,23 +19,20 @@ class SimulationGroup(Base):
     # 반복 실행 정보 (실시간 모니터링용)
     repeat_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     current_repeat: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    expected_pods_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     status: Mapped[GroupStatus] = mapped_column(
         PgEnum(GroupStatus, name="group_status_enum", create_constraint=True),
         default=GroupStatus.PENDING
     )
-
-    actual_start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-    actual_end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     
-    # Pod 생성 결과 추적 (리소스 누수 방지 & 부분 실패 처리용)
-    successful_agents: Mapped[int] = mapped_column(Integer, default=0)
-    failed_agents: Mapped[int] = mapped_column(Integer, default=0)
-    created_pods_count: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    stopped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
     
     template: Mapped["Template"] = relationship(
         "Template",
@@ -46,3 +43,18 @@ class SimulationGroup(Base):
     def __repr__(self) -> str:
         return f"SimulationGroup => {self.group_name} ({self.status})"
     
+    @property
+    def calculate_progress(self) -> float:
+        """그룹의 상태와 반복 실행 정보를 기반으로 진행률 계산"""
+        if self.status == GroupStatus.COMPLETED:
+            return 1.0  # 100% 완료
+        elif self.status == GroupStatus.FAILED or self.status == GroupStatus.STOPPED:
+            return 0.0  # 실패/중단된 경우 0%
+        elif self.status == GroupStatus.RUNNING:
+            # 실행 중인 경우 반복 실행 정보를 고려한 진행률 계산
+            if self.repeat_count > 0:
+                return min(self.current_repeat / self.repeat_count, 1.0)
+            else:
+                return 0.0  # 반복 정보가 없으면 0%로 설정
+        else:  # PENDING 상태
+            return 0.0

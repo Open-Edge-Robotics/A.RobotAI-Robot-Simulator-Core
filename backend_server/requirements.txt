@@ -13,3 +13,4 @@ uvicorn==0.31.1
 minio==7.2.10
 asyncio
 httpx
+aioredis

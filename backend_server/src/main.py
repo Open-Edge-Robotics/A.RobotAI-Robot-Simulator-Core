@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi.middleware.cors import CORSMiddleware
 
+from database.redis_simulation_client import RedisSimulationClient
 from database.db_conn import init_db, close_db
 from exception.exception_handler import *
 from routes import template, instance, simulation, dashboard
@@ -46,3 +47,15 @@ for router in routers:
 @app.get("/")
 async def root():
     return {"message": "Hello World"}
+
+@app.get("/health/redis")
+async def health_check():
+    try:
+        redis_client = RedisSimulationClient()
+        is_healthy = await redis_client.health_check()
+        if is_healthy:
+            return {"redis": "ok", "status": "healthy"}
+        else:
+            return {"redis": "fail", "status": "unhealthy"}
+    except Exception as e:
+        return {"redis": "fail", "error": str(e), "status": "unhealthy"}

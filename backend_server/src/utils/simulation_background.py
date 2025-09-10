@@ -112,9 +112,8 @@ async def process_single_step(
             autonomous_agent_count=step.autonomous_agent_count,
             execution_time=step.execution_time,
             delay_after_completion=step.delay_after_completion,
-            repeat_count=step.repeat_count,  # 저장은 하되 Pod 생성에는 미사용
-            current_repeat=1,  # 반복 없으므로 항상 1
-            expected_pods_count=step.autonomous_agent_count,
+            repeat_count=step.repeat_count,
+            current_repeat=0,
             status=StepStatus.PENDING
         )
         session.add(simulation_step)
@@ -241,10 +240,10 @@ async def finalize_simulation_success(
     """시뮬레이션 성공 완료 처리"""
     await status_manager.update_simulation_status(
         simulation_id,
-        status=SimulationStatus.READY,
+        status=SimulationStatus.PENDING,
         total_pods=successful_count
     )
-    print("DB 최종 업데이트 완료: 상태='READY'")
+    print("DB 최종 업데이트 완료: 상태='PENDING'")
 
 async def handle_simulation_failure(sessionmaker, simulation_id: int, error_message: str):
     """시뮬레이션 완전 실패 처리 - 모든 관련 데이터 삭제"""
@@ -455,9 +454,10 @@ async def process_single_group(
             group_name=f"{simulation.name}_group_{group_index}",
             template_id=template.template_id,
             autonomous_agent_count=group.autonomous_agent_count,
+            repeat_count=group.repeat_count,
+            current_repeat=0,
             execution_time=group.execution_time,
             assigned_area=simulation.namespace,
-            expected_pods_count=group.autonomous_agent_count,
             status=GroupStatus.PENDING
         )
         session.add(simulation_group)

@@ -179,7 +179,7 @@ class SimulationListItem(BaseModel):
 class SimulationOverview(BaseModel):
     """시뮬레이션 전체 개요 응답 DTO"""
     total: int = Field(..., description="전체 시뮬레이션 개수", ge=0)
-    ready: int = Field(..., description="실행 대기 중인 시뮬레이션 개수", ge=0)
+    pending: int = Field(..., description="실행 대기 중인 시뮬레이션 개수", ge=0)
     running: int = Field(..., description="실행 중인 시뮬레이션 개수", ge=0)
     completed: int = Field(..., description="완료된 시뮬레이션 개수", ge=0)
     failed: int = Field(..., description="실패한 시뮬레이션 개수", ge=0)
@@ -189,7 +189,7 @@ class SimulationOverview(BaseModel):
         json_schema_extra = {
             "example": {
                 "total": 100,
-                "ready": 0,
+                "pending": 0,
                 "running": 25,
                 "completed": 60,
                 "failed": 15
@@ -213,7 +213,7 @@ class SimulationOverview(BaseModel):
         """DTO 객체를 딕셔너리로 변환"""
         return {
             "total": self.total,
-            "ready": self.ready,
+            "pending": self.pending,
             "running": self.running,
             "completed": self.completed,
             "failed": self.failed
@@ -239,7 +239,7 @@ class SimulationListResponse(BaseModel):
                 "data": {
                     "overview": {
                         "total": 2,
-                        "ready": 2,
+                        "pending": 2,
                         "running": 0,
                         "completed": 0,
                         "failed": 0
@@ -249,7 +249,7 @@ class SimulationListResponse(BaseModel):
                             "simulationId": 4,
                             "simulationName": "병렬 실행 반복 시뮬레이션 테스트",
                             "patternType": "parallel",
-                            "status": "READY",
+                            "status": "PENDING",
                             "mecId": "mec-02",
                             "createdAt": "2025-08-18T03:50:54.868749",
                             "updatedAt": "2025-08-18T03:50:55.371514"
@@ -258,7 +258,7 @@ class SimulationListResponse(BaseModel):
                             "simulationId": 2,
                             "simulationName": "순차 실행 반복 시뮬레이션 테스트",
                             "patternType": "sequential",
-                            "status": "READY",
+                            "status": "PENDING",
                             "mecId": "mec-01",
                             "createdAt": "2025-08-18T03:49:01.113675",
                             "updatedAt": "2025-08-18T03:49:02.000375"

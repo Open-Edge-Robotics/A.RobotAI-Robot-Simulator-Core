@@ -3,6 +3,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Qu
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from schemas.simulation_status import CurrentStatus, SimulationStatusResponse
 from models.enums import ViewType
 from schemas.dashboard import SimulationDashboardResponseModel
 from repositories.simulation_repository import SimulationRepository
@@ -107,9 +108,51 @@ async def get_simulation(
         detail_data = await service.get_simulation(simulation_id)
         return SimulationResponseModel(
             statusCode="200",
-            data=detail_data,
+            data=detail_data.model_dump(by_alias=True),
             message=f"{simulation_id}번 시뮬레이션 상세정보 조회 성공"
         )
+
+@router.get(
+    "/{simulation_id}/status",
+    response_model=SimulationStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="시뮬레이션 상태 조회",
+    description="""
+    특정 시뮬레이션의 **현재 상태**를 조회합니다.
+    실시간 진행 상황 확인용으로 5초 단위 폴링에 최적화되어 있습니다.
+
+    **주요 특징:**
+    - 현재 상태, 진행률, step/group 세부 정보 포함
+    - 실행 패턴에 따라 Sequential 또는 Parallel 구조 반환
+    - COMPLETED, FAILED, STOPPED 상태에 따른 추가 정보 제공
+
+    **사용 예시:**
+    - 실시간 대시보드 모니터링
+    - 시뮬레이션 진행 상황 확인
+    - 오류 발생 시 상세 정보 확인
+    """,
+    operation_id="getSimulationCurrentStatus"
+)
+async def get_simulation_status(
+    simulation_id: int,
+    service: SimulationService = Depends(get_simulation_service)
+):
+    simulation = await service.find_simulation_by_id(simulation_id, "status")
+    # 현재 상태 조회
+    current_status: CurrentStatus = await service.get_current_status(simulation_id)
+    
+    # 응답 DTO 변환
+    response = SimulationStatusResponse(
+        status_code = 200,
+        message=f"{simulation_id}번 시뮬레이션 상태 조회 성공",
+        data={
+            "simulationId": simulation_id,
+            "patternType": simulation.pattern_type,
+            "currentStatus": current_status.model_dump()
+        }
+    )
+    
+    return response
 
 @router.get("", response_model=SimulationListResponse, status_code=status.HTTP_200_OK)
 async def get_simulations(
@@ -155,22 +198,6 @@ async def update_simulation_pattern(
         data=result,
         message="UPDATE_SIMULATION_PATTERN"
     )
-
-
-@router.get("/{simulation_id}/status")
-async def get_simulation_detailed_status(
-        simulation_id: int,
-        service: SimulationService = Depends(get_simulation_service)
-):
-    """시뮬레이션 상세 상태 조회"""
-    detailed_status = await service.get_simulation_detailed_status(simulation_id)
-
-    return {
-        "status_code": status.HTTP_200_OK,
-        "data": detailed_status,
-        "message": "GET_SIMULATION_DETAILED_STATUS"
-    }
-
 
 @router.post("/action", response_model=SimulationControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_simulation(

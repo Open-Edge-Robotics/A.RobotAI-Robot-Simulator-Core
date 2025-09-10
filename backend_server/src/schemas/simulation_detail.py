@@ -19,8 +19,8 @@ class CurrentStatusInitiating(BaseModel):
     status: str
     timestamps: TimestampModel
 
-# READY 상태용
-class CurrentStatusReady(BaseModel):
+# PENDING 상태용
+class CurrentStatusPENDING(BaseModel):
     status: str
     progress: ProgressModel
     timestamps: TimestampModel
@@ -42,23 +42,33 @@ class GroupModel(BaseSchema):
     repeat_count: int
     execution_time: int
 
-class ExecutionPlanSequential(BaseModel):
+class ExecutionPlanSequential(BaseSchema):
     steps: List[StepModel]
 
-class ExecutionPlanParallel(BaseModel):
+class ExecutionPlanParallel(BaseSchema):
     groups: List[GroupModel]
 
 # 최종 Simulation Response
-class SimulationData(BaseSchema):
-    simulation_id: int
-    simulation_name: str
-    simulation_description: str
-    pattern_type: str
-    mec_id: str
+class SimulationData(BaseModel):
+    simulation_id: int = Field(..., alias="simulationId")
+    simulation_name: str = Field(..., alias="simulationName")
+    simulation_description: str = Field(..., alias="simulationDescription")
+    pattern_type: str = Field(..., alias="patternType")
+    mec_id: str = Field(..., alias="mecId")
     namespace: str
-    created_at: datetime
-    execution_plan: Union[ExecutionPlanSequential, ExecutionPlanParallel]  # Sequential/Parallel
-    current_status: Union[CurrentStatusInitiating, CurrentStatusReady]  # INITIATING / READY
+    created_at: datetime = Field(..., alias="createdAt")
+    execution_plan: Union[ExecutionPlanSequential, ExecutionPlanParallel] = Field(
+        ..., alias="executionPlan"
+    )  # Sequential/Parallel
+    current_status: Union[CurrentStatusInitiating, CurrentStatusPENDING] = Field(
+        ..., alias="currentStatus"
+    )  # INITIATING / PENDING
+
+    class Config:
+        allow_population_by_field_name = True  # Python 이름(snake_case)으로도 채울 수 있음
+        alias_generator = None                 # 자동 alias 변환 없음
+        populate_by_name = True                # dict(by_alias=True)로 직렬화 가능
+  # INITIATING / PENDING
 
 class SimulationResponseModel(GlobalResponseModel):    
     model_config = {
@@ -96,7 +106,7 @@ class SimulationResponseModel(GlobalResponseModel):
                     ]
                     },
                     "currentStatus": {
-                    "status": "READY",
+                    "status": "PENDING",
                     "progress": {
                         "overallProgress": 0,
                         "readyToStart": True

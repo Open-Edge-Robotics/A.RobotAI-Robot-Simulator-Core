@@ -17,24 +17,32 @@ class PatternType(str, Enum):
 
 class SimulationStatus(str, Enum):
     INITIATING = "INITIATING"  # 생성/환경 구성 중
-    READY = "READY"            # 실행 대기
+    PENDING = "PENDING"            # 실행 대기
     RUNNING = "RUNNING"        # 실행 중
     STOPPED = "STOPPED"        # 정지
     COMPLETED = "COMPLETED"    # 정상 완료
     FAILED = "FAILED"          # 오류 발생
 
 class StepStatus(str, Enum):
-    PENDING = "PENDING"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+    """
+    SimulationStep의 실행 상태를 나타내는 enum
+    """
+    PENDING = "PENDING"              # 대기 중 (아직 시작되지 않음)
+    RUNNING = "RUNNING"              # 실행 중
+    COMPLETED = "COMPLETED"          # 성공적으로 완료
+    FAILED = "FAILED"                # 실패로 중단
+    STOPPED = "STOPPED"              # 사용자에 의해 중지됨
 
 
 class GroupStatus(str, Enum):
-    PENDING = "PENDING"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+    """
+    SimulationGroup의 실행 상태를 나타내는 enum
+    """
+    PENDING = "PENDING"              # 대기 중 (아직 시작되지 않음)
+    RUNNING = "RUNNING"              # 실행 중
+    COMPLETED = "COMPLETED"          # 성공적으로 완료
+    FAILED = "FAILED"                # 실패로 중단
+    STOPPED = "STOPPED"              # 사용자에 의해 중지됨
 
 class InstanceStatus(str, Enum):
     PENDING = "PENDING"      # 생성 대기

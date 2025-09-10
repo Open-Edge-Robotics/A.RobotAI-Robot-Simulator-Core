@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import traceback
 from typing import Dict, Any, List, Optional, Union
 import asyncio
 import logging
@@ -43,10 +44,9 @@ class RosbagExecutor:
     MAX_RETRIES = 3
     RETRY_DELAY = 5
     
-    def __init__(self, pod_service: PodService, ros_service: RosService):
+    def __init__(self, pod_service: PodService):
         self.pod_service = pod_service
         #self.pod_service.enabled = False
-        self.ros_service = ros_service
         
     
     async def execute_rosbag_on_pod_direct(self, pod: V1Pod, simulation, step=None, group=None) -> PodExecutionResult:
@@ -152,7 +152,7 @@ class RosbagExecutor:
         for attempt in range(self.MAX_RETRIES):
             try:
                 response = await asyncio.wait_for(
-                    self.ros_service.send_post_request(pod_ip, "/rosbag/play", rosbag_params),
+                    RosService.send_post_request(pod_ip, "/rosbag/play", rosbag_params),
                     timeout=self.DEFAULT_TIMEOUT
                 )
                 
@@ -295,7 +295,7 @@ class RosbagExecutor:
             elapsed = 0
             while elapsed < max_wait:
                 pod_status = await self._check_pod_rosbag_status(pod)
-                is_playing = pod_status.get("isPlaying", False)
+                is_playing = pod_status.get("is_playing", False)
 
                 if not is_playing:
                     debug_print(f"{prefix} ✅ Pod 실행 완료")
@@ -329,6 +329,7 @@ class RosbagExecutor:
             return stop_result
 
         except Exception as e:
+            traceback.print_stack()
             debug_print(f"{prefix} 💥 Pod 실행 예외 발생: {e}")
             return PodExecutionResult(
                 pod_name=pod_name,
@@ -344,51 +345,100 @@ class RosbagExecutor:
         pod_name = pod.metadata.name
         
         try:
-            pod_ip = self.pod_service.get_v1pod_ip(pod)
+            pod_ip = pod.status.pod_ip or "unknown"
             
             status_response = await asyncio.wait_for(
-                self.ros_service.get_pod_status(pod_ip),
+                RosService.get_pod_status(pod_ip),
                 timeout=10.0
             )
             
             return status_response
             
+        except asyncio.TimeoutError:
+            raise Exception(f"Pod {pod_name} 상태 체크 타임아웃")
         except Exception as e:
+            traceback.print_exc()
             raise Exception(f"Pod {pod_name} 상태 체크 실패: {str(e)}")
 
     async def _collect_final_results(self, pods: List[V1Pod], execution_context,
-                                     stop_event: Optional[asyncio.Event] = None) -> List[PodExecutionResult]:
+                                        stop_event: Optional[asyncio.Event] = None) -> List[PodExecutionResult]:
         """최종 실행 결과 수집"""
         results = []
         is_stopped = stop_event and stop_event.is_set()
         
+        debug_print(f"{execution_context} 📊 최종 결과 수집 시작 - stop_event.is_set()={is_stopped}")
+        
         for pod in pods:
             pod_name = pod.metadata.name
+            debug_print(f"{execution_context} 🔍 Pod [{pod_name}] 최종 상태 수집 중...")
             
             try:
-                # 최종 상태 확인
                 final_status = await self._check_pod_rosbag_status(pod)
+                debug_print(f"{execution_context} 📋 Pod [{pod_name}] 최종 상태: {final_status}")
                 
+                is_playing = final_status.get("isPlaying", False)
+                stop_reason = final_status.get("stopReason")
+                current_loop = final_status.get("current_loop", 0)
+                max_loops = final_status.get("max_loops", 0)
+                
+                debug_print(f"{execution_context} 📈 Pod [{pod_name}] 상태 분석:")
+                debug_print(f"  - isPlaying: {is_playing}")
+                debug_print(f"  - stopReason: {stop_reason}")
+                debug_print(f"  - current_loop: {current_loop}")
+                debug_print(f"  - max_loops: {max_loops}")
+                
+                # 상태 및 메시지 결정
                 if is_stopped:
-                    # 중지된 경우
-                    message = "사용자 요청으로 중지됨"
+                    # 사용자가 중지 이벤트를 발생시킨 경우
+                    status = ExecutionStatus.SUCCESS  # 중지도 성공으로 간주
+                    message = f"사용자 요청으로 중지됨 ({current_loop}/{max_loops} loops 완료)"
+                    debug_print(f"{execution_context} ⏹️ Pod [{pod_name}] 사용자 중지")
+                    
+                elif stop_reason == "completed":
+                    # 정상 완료
+                    status = ExecutionStatus.SUCCESS
+                    message = f"Rosbag 재생 완료 ({current_loop}/{max_loops} loops)"
+                    debug_print(f"{execution_context} ✅ Pod [{pod_name}] 정상 완료")
+                    
+                elif stop_reason == "user_stopped":
+                    # Pod 자체에서 사용자 중지
+                    status = ExecutionStatus.SUCCESS
+                    message = f"사용자가 중지 ({current_loop}/{max_loops} loops 완료)"
+                    debug_print(f"{execution_context} ⏹️ Pod [{pod_name}] Pod 내부 사용자 중지")
+                    
+                elif stop_reason == "failed":
+                    # 실행 중 실패
+                    status = ExecutionStatus.FAILED
+                    error_detail = final_status.get("error", "unknown error")
+                    message = f"Rosbag 재생 실패: {error_detail} ({current_loop}/{max_loops} loops)"
+                    debug_print(f"{execution_context} ❌ Pod [{pod_name}] 실행 실패")
+                    
+                elif is_playing:
+                    # 아직 실행 중 (비정상적인 상황)
+                    status = ExecutionStatus.FAILED
+                    message = f"비정상 상태: 아직 실행 중 ({current_loop}/{max_loops} loops)"
+                    debug_print(f"{execution_context} ⚠️ Pod [{pod_name}] 비정상 상태 - 아직 실행 중")
+                    
                 else:
-                    # 정상 완료된 경우
-                    total_loops = final_status.get("total_loops_completed", 0)
-                    message = f"Rosbag 재생 완료 ({total_loops} loops)"
+                    # 알 수 없는 상태
+                    status = ExecutionStatus.FAILED
+                    message = f"알 수 없는 상태 (stopReason: {stop_reason}, {current_loop}/{max_loops} loops)"
+                    debug_print(f"{execution_context} ❓ Pod [{pod_name}] 알 수 없는 상태")
                 
                 results.append(PodExecutionResult(
                     pod_name=pod_name,
                     pod_ip=pod.status.pod_ip or "unknown",
-                    status=ExecutionStatus.SUCCESS, # 중지도 성공으로 간주
+                    status=status,
                     message=message,
                     response_data=final_status,
                     execution_time=0.0  # 전체 실행 시간은 별도 계산 필요
                 ))
                 
+                debug_print(f"{execution_context} 📝 Pod [{pod_name}] 결과 생성 완료 - status: {status.value}")
+                
             except Exception as e:
                 error_msg = f"최종 상태 수집 실패: {str(e)}"
-                debug_print(f"{execution_context} ❌ Pod {pod_name} {error_msg}")
+                debug_print(f"{execution_context} ❌ Pod [{pod_name}] 예외 발생: {error_msg}")
                 
                 results.append(PodExecutionResult(
                     pod_name=pod_name,
@@ -401,10 +451,10 @@ class RosbagExecutor:
         success_count = sum(1 for r in results if r.status == ExecutionStatus.SUCCESS)
         failed_count = len(results) - success_count
         
-        debug_print(f"{execution_context} 📊 최종 결과 수집 완료", 
-                success_count=success_count,
-                failed_count=failed_count,
-                is_stopped=is_stopped)
+        debug_print(f"{execution_context} 📊 최종 결과 수집 완료:")
+        debug_print(f"  - 성공: {success_count}개")
+        debug_print(f"  - 실패: {failed_count}개") 
+        debug_print(f"  - 중지 이벤트: {is_stopped}")
         
         return results
 
@@ -514,8 +564,8 @@ class RosbagExecutor:
             try:
                 current_status = await self._check_pod_rosbag_status(pod)
                 is_dict = isinstance(current_status, dict)
-                is_playing = current_status.get("isPlaying", False) if is_dict else False
-                debug_print(f"{execution_context} ▶️ Pod {pod_name} isPlaying={is_playing}")
+                is_playing = current_status.get("is_playing", False) if is_dict else False
+                debug_print(f"{execution_context} ▶️ Pod {pod_name} is_playing={is_playing}")
 
                 if not is_playing:
                     execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
@@ -535,7 +585,7 @@ class RosbagExecutor:
                 debug_print(traceback.format_exc())
 
             # 실제 rosbag 중지 요청
-            stop_response = await asyncio.wait_for(self.ros_service.stop_rosbag(pod_ip), timeout=10.0)
+            stop_response = await asyncio.wait_for(RosService.stop_rosbag(pod_ip), timeout=10.0)
             execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             debug_print(f"{execution_context} ✅ Pod {pod_name} rosbag 중지 성공")
 

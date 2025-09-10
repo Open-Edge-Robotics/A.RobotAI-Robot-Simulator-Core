@@ -1,3 +1,4 @@
+from utils import debug_print
 import httpx
 import logging
 from fastapi import HTTPException
@@ -8,36 +9,84 @@ class RosService:
     @staticmethod
     async def get_pod_status(pod_ip: str) -> dict:
         """
-        비동기 방식으로 Pod 상태 조회
+        비동기 방식으로 Pod 상태 조회 
         """
+        logger.debug(f"Pod 상태 조회 시작: {pod_ip}")
+        
         if not pod_ip:
+            logger.warning("Pod IP가 비어있음 - 기본 상태 반환")
             return {
-                "isPlaying": False,
+                "is_playing": False,
+                "is_stopped": False,
+                "stop_reason": "failed",
                 "current_loop": 0,
                 "max_loops": 0,
                 "error": "Not Ready"
             }
 
         pod_api_url = f"http://{pod_ip}:8002/rosbag/status"
+        logger.debug(f"Pod API 요청 URL: {pod_api_url}")
 
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(pod_api_url)
                 response.raise_for_status()
+                
                 data = response.json()
-
-                return {
-                    "isPlaying": data.get("isPlaying", False),
+                
+                result = {
+                    "is_playing": data.get("is_playing", False),
+                    "is_stopped": data.get("is_stopped", False),
+                    "stop_reason": data.get("stop_reason"),
                     "current_loop": data.get("current_loop", 0),
                     "max_loops": data.get("max_loops", 0)
                 }
+                
+                logger.info(f"Pod 상태 조회 성공: {pod_ip} - playing: {result['is_playing']}, stopped: {result['is_stopped']}")
+                return result
 
-        except (httpx.RequestError, httpx.HTTPStatusError, ValueError) as e:
+        except httpx.RequestError as e:
+            logger.error(f"Pod 상태 조회 실패 (RequestError): {pod_ip} - {str(e)}")
             return {
-                "isPlaying": False,
+                "is_playing": False,
+                "is_stopped": False,
+                "stop_reason": "failed",
                 "current_loop": 0,
                 "max_loops": 0,
-                "error": str(e)
+                "error": f"RequestError: {str(e)}"
+            }
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Pod 상태 조회 실패 (HTTPStatusError): {pod_ip} - {e.response.status_code}")
+            return {
+                "is_playing": False,
+                "is_stopped": False,
+                "stop_reason": "failed",
+                "current_loop": 0,
+                "max_loops": 0,
+                "error": f"HTTPStatusError: {e.response.status_code} - {str(e)}"
+            }
+            
+        except ValueError as e:
+            logger.error(f"Pod 상태 조회 실패 (JSON 파싱 오류): {pod_ip} - {str(e)}")
+            return {
+                "is_playing": False,
+                "is_stopped": False,
+                "stop_reason": "failed",
+                "current_loop": 0,
+                "max_loops": 0,
+                "error": f"ValueError: {str(e)}"
+            }
+            
+        except Exception as e:
+            logger.error(f"Pod 상태 조회 실패 (예상치 못한 오류): {pod_ip} - {type(e).__name__}: {str(e)}", exc_info=True)
+            return {
+                "is_playing": False,
+                "is_stopped": False,
+                "stop_reason": "failed",
+                "current_loop": 0,
+                "max_loops": 0,
+                "error": f"Unexpected error: {type(e).__name__}: {str(e)}"
             }
 
     @staticmethod

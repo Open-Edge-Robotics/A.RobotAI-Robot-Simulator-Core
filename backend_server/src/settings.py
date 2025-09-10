@@ -13,8 +13,12 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str
     MINIO_SECRET_KEY: str
     MINIO_BUCKET_NAME: str
+    REDIS_HOST: str
+    REDIS_PORT: str
+    REDIS_PASSWORD: str
+    REDIS_DB: str
 
-    model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
+    model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="forbid")
 
 settings = Settings()
 
@@ -23,4 +27,4 @@ class BaseSchema(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     def model_dump(self, **kwargs):
-        return super().model_dump(by_alias=True, **kwargs)
+        return super().model_dump(by_alias=True, exclude_none=True, **kwargs)
