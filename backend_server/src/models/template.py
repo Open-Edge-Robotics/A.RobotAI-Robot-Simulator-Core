@@ -11,6 +11,7 @@ class Template(Base):
     __tablename__ = 'templates'
 
     template_id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(nullable=False)
     type: Mapped[str] = mapped_column(nullable=False)
     description: Mapped[str] = mapped_column(String(100), nullable=False)
     bag_file_path: Mapped[str] = mapped_column(nullable=False)
