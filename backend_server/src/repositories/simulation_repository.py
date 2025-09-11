@@ -667,6 +667,13 @@ class SimulationRepository:
             await session.refresh(simulation_group)
             print(f"[그룹 DB 저장] {group_name} (ID: {simulation_group.id})")
             return simulation_group
+            
+    async def soft_delete_simulation(self, simulation_id: int):
+        async with self.session_factory() as session:
+            sim = await session.get(Simulation, simulation_id)
+            if sim:
+                sim.mark_as_deleted()
+                await session.commit()
 
 
 

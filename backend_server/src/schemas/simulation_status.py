@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -87,3 +87,41 @@ class CurrentStatus(BaseSchema):
 
 class SimulationStatusResponse(GlobalResponseModel):
     data: Optional[dict]
+
+# ------------------------------
+# 시뮬레이션 삭제 상태 Response
+# ------------------------------
+class SimulationDeletionStatusData(BaseSchema):
+    simulation_id: int = Field(..., alias="simulationId")
+    status: str  # PENDING, RUNNING, SUCCESS, FAILED
+    progress: int  # 0~100
+    steps: Dict[str, str]  # namespace, redis, db 단계별 상태
+    started_at: Optional[datetime] = Field(None, alias="startedAt")
+    completed_at: Optional[datetime] = Field(None, alias="completedAt")
+    error_message: Optional[str] = Field(None, alias="errorMessage")
+    
+class SimulationDeletionStatusResponse(GlobalResponseModel):
+    data: Optional[dict]
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "statusCode": "200",
+                "data": {
+                    "simulationId": 1,
+                    "status": "RUNNING",
+                    "progress": 33,
+                    "steps": {
+                        "namespace": "SUCCESS",
+                        "redis": "PENDING",
+                        "db": "PENDING"
+                    },
+                    "startedAt": "2025-09-09T12:00:00Z",
+                    "completedAt": None,
+                    "errorMessage": None
+                },
+                "message": "시뮬레이션 삭제 진행 상태 조회 성공"
+            }
+        }
+    }
+    

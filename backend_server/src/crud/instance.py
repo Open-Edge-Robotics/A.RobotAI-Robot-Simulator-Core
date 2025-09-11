@@ -9,7 +9,7 @@ from starlette import status
 from .pod import PodService
 from .rosbag import RosService
 from .simulation import SimulationService
-from .template import TemplateService
+from .template import get_template_service
 from models.instance import Instance
 from schemas.instance import *
 from utils.my_enum import API, PodStatus, InstanceStatus
@@ -19,7 +19,7 @@ class InstanceService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.simulation_service = SimulationService(session)
-        self.templates_service = TemplateService(session)
+        self.templates_service = get_template_service()
         self.pod_service = PodService()
         self.ros_service = RosService()
 

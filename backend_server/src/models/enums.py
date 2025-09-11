@@ -22,6 +22,8 @@ class SimulationStatus(str, Enum):
     STOPPED = "STOPPED"        # 정지
     COMPLETED = "COMPLETED"    # 정상 완료
     FAILED = "FAILED"          # 오류 발생
+    DELETING = "DELETING"      # 삭제 진행 중
+    DELETED = "DELETED"        # 삭제 완료(soft delete)
 
 class StepStatus(str, Enum):
     """

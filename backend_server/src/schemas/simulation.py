@@ -421,11 +421,11 @@ class SimulationDeleteResponseModel(GlobalResponseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "statusCode": 200,
+                "statusCode": 202,
                 "data": {
                     "simulationId": 1,
                 },
-                "message": API.DELETE_SIMULATION.value
+                "message": "시뮬레이션 삭제 요청 접수됨."
             }
         }
     }

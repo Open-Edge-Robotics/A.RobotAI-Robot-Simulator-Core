@@ -53,9 +53,12 @@ from schemas.simulation import (
 from utils.my_enum import PodStatus, API
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import async_sessionmaker
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SimulationService:
-    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository, template_repository: TemplateRepository, instance_repository: InstanceRepository, state: SimulationState):
+    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository, template_service: TemplateService , template_repository: TemplateRepository, instance_repository: InstanceRepository, state: SimulationState):
         self.session = session
         self.sessionmaker = sessionmaker
         self.repository = repository
@@ -63,7 +66,7 @@ class SimulationService:
         self.instance_repository = instance_repository
         self.state = state
         self.pod_service = PodService()
-        self.templates_service = TemplateService(session)
+        self.template_service = template_service
         
         # RosbagExecutor 초기화 (pod_service와 ros_service 의존성 주입)
         self.rosbag_executor = RosbagExecutor(self.pod_service)
@@ -187,11 +190,10 @@ class SimulationService:
         existing_template_ids = []
         
         async with self.sessionmaker() as session:
-            templates_service = TemplateService(session)
             
             for template_id in template_ids:
                 try:
-                    template = await templates_service.find_template_by_id(template_id, api)
+                    template = await self.template_service.find_template_by_id(template_id, api)
                     existing_template_ids.append(template.template_id)
                     print(f"  ✅ 템플릿 ID {template_id}: 존재함 (타입: {template.type})")
                     
@@ -2535,33 +2537,106 @@ class SimulationService:
         return list(instances)
 
     async def delete_simulation(self, simulation_id: int):
-        api = API.DELETE_SIMULATION.value
-        simulation = await self.find_simulation_by_id(simulation_id, api)
+        """
+        시뮬레이션 삭제
+        - namespace, Redis, DB 단계별 상태를 Redis에 저장
+        - Redis 연결 사용 후 반드시 close
+        """
+        redis_client = RedisSimulationClient()  # 싱글톤
+        status = {
+            "steps": {"namespace": "PENDING", "redis": "PENDING", "db": "PENDING"},
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": None,
+            "error_message": None
+        }
 
-        # 시뮬레이션이 실행 중인지 확인
-        current_status = await self.get_simulation_status(simulation)
-        if current_status == SimulationStatus.ACTIVE.value:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{api}: 실행 중인 시뮬레이션은 삭제할 수 없습니다.",
-            )
+        try:
+            # 초기 상태 기록
+            await redis_client.set_simulation_delete_status(simulation_id, status)
 
-        # 시뮬레이션이 존재해야 아래 코드 실행됨
-        statement = select(exists().where(Instance.simulation_id == simulation_id))
-        is_existed = await self.session.scalar(statement)
+            # 1. 네임스페이스 삭제
+            try:
+                await self.pod_service.delete_namespace(simulation_id)
+                status["steps"]["namespace"] = "SUCCESS"
+            except Exception as e:
+                status["steps"]["namespace"] = "FAILED"
+                status["error_message"] = f"Namespace deletion failed: {e}"
+                debug_print(f"[{simulation_id}] 네임스페이스 삭제 실패: {e}")
+            finally:
+                await redis_client.set_simulation_delete_status(simulation_id, status)
 
-        if is_existed is False:
-            await self.session.delete(simulation)
-            await self.session.commit()
+            # 2. Redis 삭제
+            try:
+                await redis_client.delete_simulation_status(simulation_id)
+                status["steps"]["redis"] = "SUCCESS"
+            except Exception as e:
+                status["steps"]["redis"] = "FAILED"
+                status["error_message"] = f"Redis deletion failed: {e}"
+                
+                debug_print(f"[{simulation_id}] Redis deletion failed: {e}")
+            finally:
+                await redis_client.set_simulation_delete_status(simulation_id, status)
 
-            await self.pod_service.delete_namespace(simulation_id)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"{api}: 삭제하려는 시뮬레이션에 속한 인스턴스가 있어 시뮬레이션 삭제가 불가합니다.",
-            )
+            # 3. DB soft delete
+            try:
+                await self.repository.soft_delete_simulation(simulation_id)
+                status["steps"]["db"] = "SUCCESS"
+                
+                await self.repository.update_simulation_status(simulation_id, SimulationStatus.DELETED)
+            except Exception as e:
+                status["steps"]["db"] = "FAILED"
+                status["error_message"] = f"DB deletion failed: {e}"
+                
+                debug_print(f"[{simulation_id}] DB deletion failed: {e}")
+                await redis_client.set_simulation_delete_status(simulation_id, status)
+                raise RuntimeError(f"Simulation deletion failed at DB stage: {simulation_id}")
+            finally:
+                await redis_client.set_simulation_delete_status(simulation_id, status)
 
-        return SimulationDeleteResponse(simulation_id=simulation_id).model_dump()
+            debug_print(f"[{simulation_id}] Deletion completed: {status}")
+
+            return SimulationDeleteResponse(simulation_id=simulation_id).model_dump()
+        
+        finally:
+            # 모든 단계 완료 시점 기록
+            status["completed_at"] = datetime.now(timezone.utc).isoformat()
+            await redis_client.set_simulation_delete_status(simulation_id, status)
+            
+            # Redis 연결 종료
+            if redis_client.client:
+                await redis_client.client.close()
+                redis_client.client = None
+    
+    async def get_deletion_status(self, simulation_id: int) -> dict:
+        """
+        Redis에서 삭제 상태 조회 및 안전한 연결 종료
+        - 반환 구조:
+        {
+            "simulation_id": 123,
+            "status": "PENDING",
+            "steps": {"namespace": "SUCCESS", "redis": "PENDING", "db": "PENDING"},
+            "started_at": "...",
+            "completed_at": null,
+            "error_message": null
+        }
+        """
+        redis_client = RedisSimulationClient()
+        try:
+            await redis_client.connect()
+            deletion_status = await redis_client.get_simulation_delete_status(simulation_id)
+            if deletion_status is None:
+                return None
+            
+            # started_at, completed_at 변환
+            deletion_status["started_at"] = self._parse_datetime(deletion_status.get("started_at"))
+            deletion_status["completed_at"] = self._parse_datetime(deletion_status.get("completed_at"))
+            
+            return {"simulation_id": simulation_id, **deletion_status}
+        finally:
+            # Redis 연결 종료
+            if redis_client.client:
+                await redis_client.client.close()
+                redis_client.client = None
 
     async def find_simulation_by_id(self, simulation_id: int, api: str) -> Simulation:
         simulation = await self.repository.find_by_id(simulation_id)

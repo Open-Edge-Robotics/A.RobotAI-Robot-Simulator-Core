@@ -5,11 +5,13 @@ from starlette import status
 
 from schemas.simulation_update import SimulationUpdateRequest
 from schemas.simulation_status import CurrentStatus, SimulationStatusResponse
+from crud.template import get_template_service
+from schemas.simulation_status import CurrentStatus, SimulationDeletionStatusData, SimulationDeletionStatusResponse, SimulationStatusResponse
 from models.enums import ViewType
 from schemas.dashboard import SimulationDashboardResponseModel
 from repositories.simulation_repository import SimulationRepository
 from schemas.simulation_detail import SimulationResponseModel
-from crud.simulation import SimulationService
+from crud.simulation import SimulationService, TemplateService
 from database.db_conn import get_db, async_session
 from schemas.simulation import *
 from utils.my_enum import API
@@ -17,10 +19,13 @@ from state import simulation_state
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
 
-def get_simulation_service(db: AsyncSession = Depends(get_db)) -> SimulationService:
+def get_simulation_service(
+    db: AsyncSession = Depends(get_db),
+    template_service: TemplateService = Depends(get_template_service)
+) -> SimulationService:
     """SimulationService 의존성 주입"""
     repository = SimulationRepository(async_session)
-    return SimulationService(db, async_session, repository, simulation_state)
+    return SimulationService(db, async_session, repository, template_service, simulation_state)
 
 
 @router.post(
@@ -244,16 +249,84 @@ async def control_simulation(
         message=message
     )
 
-
-@router.delete("/{simulation_id}", response_model=SimulationDeleteResponseModel, status_code=status.HTTP_200_OK)
+@router.delete(
+    "/{simulation_id}", 
+    response_model=SimulationDeleteResponseModel, 
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="시뮬레이션 삭제 요청",
+    description=(
+        "특정 시뮬레이션 삭제 요청을 접수합니다.\n"
+        "- 삭제 단계: namespace → Redis → DB\n"
+        "- 요청 즉시 202 Accepted 반환\n"
+        "- 진행 상태는 monitor_key를 통해 확인 가능"
+    ),
+)
 async def delete_simulation(
-        simulation_id: int, service: SimulationService = Depends(get_simulation_service)
+    background_tasks: BackgroundTasks,
+    simulation_id: int, service: SimulationService = Depends(get_simulation_service)
 ):
-    """시뮬레이션 삭제"""
-    data = await service.delete_simulation(simulation_id)
+    """시뮬레이션 삭제 요청 접수"""
+    api = API.DELETE_SIMULATION.value
+    simulation = await service.find_simulation_by_id(simulation_id, api)
+    
+    allowed_statuses = [SimulationStatus.PENDING, SimulationStatus.COMPLETED, SimulationStatus.FAILED, SimulationStatus.STOPPED]
+    
+    if simulation.status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail="삭제 불가 상태")
+    
+    # ✅ 상태를 먼저 DELETING 으로 전환
+    await service.repository.update_simulation_status(simulation_id, SimulationStatus.DELETING)
+    
+    print(f"Delete request received for simulation {simulation_id}")
+    # 백그라운드 작업 등록
+    background_tasks.add_task(service.delete_simulation, simulation_id)
 
     return SimulationDeleteResponseModel(
-        status_code=status.HTTP_200_OK,
-        data=data,
-        message=API.DELETE_SIMULATION.value
+        status_code=status.HTTP_202_ACCEPTED,
+        data= {"simulation_id": simulation_id, "status": SimulationStatus.DELETING },
+        message="시뮬레이션 삭제 요청 접수됨."
+    )
+    
+@router.get(
+    "/{simulation_id}/deletion", 
+    response_model=SimulationDeletionStatusResponse, 
+    status_code=status.HTTP_200_OK,
+    summary="시뮬레이션 삭제 진행 상태 조회",
+    description=(
+        "삭제 요청 후 특정 시뮬레이션의 삭제 진행 상태를 조회합니다.\n"
+        "- 단계별 상태: namespace, Redis, DB\n"
+        "- 상태: PENDING, RUNNING, SUCCESS, FAILED\n"
+        "- 진행률(progress), 시작/완료 시간, 오류 메시지 포함\n"
+        "- 프론트엔드에서 polling 방식으로 UI 업데이트 가능"
+    ),
+)
+async def get_delete_status(simulation_id: int, service: SimulationService = Depends(get_simulation_service)):
+    """삭제 진행 상태 조회"""
+    deletion_status = await service.get_deletion_status(simulation_id)
+    if not deletion_status:
+        raise HTTPException(status_code=404, detail="삭제 상태 정보 없음")
+    
+    steps = deletion_status.get("steps", {})
+    completed_steps = sum(1 for v in steps.values() if v == "SUCCESS")
+    total_steps = len(steps)
+    progress = int((completed_steps / total_steps) * 100) if total_steps else 0
+
+    overall_status = (
+        "FAILED" if "FAILED" in steps.values() else
+        "PENDING" if "PENDING" in steps.values() else
+        "SUCCESS"
+    )
+    
+    return SimulationDeletionStatusResponse(
+        data=SimulationDeletionStatusData(
+            simulation_id=simulation_id,
+            status=overall_status,
+            progress=progress,
+            steps=steps,
+            started_at=deletion_status.get("started_at"),
+            completed_at=deletion_status.get("completed_at"),
+            error_message=deletion_status.get("error_message")
+        ).model_dump(),
+        message="시뮬레이션 삭제 진행 상태 조회 성공",
+        statusCode="200"
     )

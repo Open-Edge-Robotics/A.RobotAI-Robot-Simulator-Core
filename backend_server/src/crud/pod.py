@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 import logging
 import os
@@ -9,12 +10,15 @@ from kubernetes import client, config
 from kubernetes.client import V1Pod
 from kubernetes.client.rest import ApiException
 
+from utils.debug_print import debug_print
 from schemas.pod import GroupIdFilter, StepOrderFilter
 from models.enums import PatternType
 from models.instance import Instance
 from utils.my_enum import PodStatus
 
 pod_client = None
+
+logger = logging.getLogger(__name__)
 
 # config.load_kube_config('/root/.kube/config')  # 로컬 실행 시에는 주석 처리 필수
 try:
@@ -67,7 +71,7 @@ class PodService:
                 template_id = getattr(instance, 'template_id', None)
                 step_order = getattr(instance, 'step_order', None)
         except KeyError as e:
-            logging.error(f"❌ [Pod Creation] 필수 instance 데이터 누락: {e}")
+            logger.error(f"❌ [Pod Creation] 필수 instance 데이터 누락: {e}")
             raise ValueError(f"Missing required instance data: {e}")
         
         # 실행 패턴 정보 추출
@@ -83,15 +87,15 @@ class PodService:
             pod_name = f"sim-{simulation_id}-group-{group_identifier}-instance-{instance_id}"
         
         # 2. 시작 로그
-        logging.info(f"🚀 [Pod Creation] 시작 - pod_name: {pod_name}")
-        logging.info(f"📊 [Pod Creation] 파라미터 정보:")
-        logging.info(f"   - instance_id: {instance_id}")
-        logging.info(f"   - simulation_id: {simulation_id}")
-        logging.info(f"   - pattern_type: {pattern_type}")
-        logging.info(f"   - step_order: {step_order}")
-        logging.info(f"   - group_id: {group_id}")
-        logging.info(f"   - template_type: {getattr(template, 'type', 'Unknown')}")
-        logging.info(f"   - namespace: {pod_namespace}")
+        logger.info(f"🚀 [Pod Creation] 시작 - pod_name: {pod_name}")
+        logger.info(f"📊 [Pod Creation] 파라미터 정보:")
+        logger.info(f"   - instance_id: {instance_id}")
+        logger.info(f"   - simulation_id: {simulation_id}")
+        logger.info(f"   - pattern_type: {pattern_type}")
+        logger.info(f"   - step_order: {step_order}")
+        logger.info(f"   - group_id: {group_id}")
+        logger.info(f"   - template_type: {getattr(template, 'type', 'Unknown')}")
+        logger.info(f"   - namespace: {pod_namespace}")
         
         try:
             # 3. 기본 검증
@@ -116,16 +120,16 @@ class PodService:
             # 8. 생성 후 검증
             await PodService._verify_pod_creation(pod_name, pod_namespace)
             
-            logging.info(f"✅ [Pod Creation] Pod 생성 완료!")
-            logging.info(f"   - Pod name: {pod_name}")
-            logging.info(f"   - Namespace: {pod_namespace}")
-            logging.info(f"   - UID: {result.metadata.uid}")
+            logger.info(f"✅ [Pod Creation] Pod 생성 완료!")
+            logger.info(f"   - Pod name: {pod_name}")
+            logger.info(f"   - Namespace: {pod_namespace}")
+            logger.info(f"   - UID: {result.metadata.uid}")
             
             return pod_name
             
         except Exception as e:
-            logging.error(f"❌ [Pod Creation] 실패 - pod_name: {pod_name}")
-            logging.error(f"   - Error: {type(e).__name__}: {e}")
+            logger.error(f"❌ [Pod Creation] 실패 - pod_name: {pod_name}")
+            logger.error(f"   - Error: {type(e).__name__}: {e}")
             raise
 
     @staticmethod
@@ -134,18 +138,18 @@ class PodService:
         # pod_client 상태 확인
         if pod_client is None:
             raise ValueError("pod_client is not initialized")
-        logging.debug("✅ [Pod Creation] pod_client 확인 완료")
+        logger.debug("✅ [Pod Creation] pod_client 확인 완료")
         
         # 네임스페이스 존재 여부 확인
         try:
             pod_client.read_namespace(name=pod_namespace)
-            logging.debug(f"✅ [Pod Creation] 네임스페이스 '{pod_namespace}' 존재 확인")
+            logger.debug(f"✅ [Pod Creation] 네임스페이스 '{pod_namespace}' 존재 확인")
         except ApiException as e:
             if e.status == 404:
-                logging.error(f"❌ [Pod Creation] 네임스페이스 '{pod_namespace}' 존재하지 않음")
+                logger.error(f"❌ [Pod Creation] 네임스페이스 '{pod_namespace}' 존재하지 않음")
                 raise ValueError(f"Namespace '{pod_namespace}' does not exist")
             else:
-                logging.error(f"❌ [Pod Creation] 네임스페이스 확인 실패: {e}")
+                logger.error(f"❌ [Pod Creation] 네임스페이스 확인 실패: {e}")
                 raise
 
     @staticmethod
@@ -154,20 +158,20 @@ class PodService:
         template_path = "/robot-simulator/src/pod-template.yaml"
         
         if not os.path.exists(template_path):
-            logging.error(f"❌ [Pod Creation] 템플릿 파일 없음: {template_path}")
+            logger.error(f"❌ [Pod Creation] 템플릿 파일 없음: {template_path}")
             raise FileNotFoundError(f"Template file not found: {template_path}")
         
-        logging.debug(f"✅ [Pod Creation] 템플릿 파일 존재 확인: {template_path}")
+        logger.debug(f"✅ [Pod Creation] 템플릿 파일 존재 확인: {template_path}")
         
         try:
             with open(template_path, "r", encoding="utf-8") as f:
                 pod_spec = yaml.safe_load(f)
-            logging.debug("✅ [Pod Creation] 템플릿 파일 읽기 완료")
+            logger.debug("✅ [Pod Creation] 템플릿 파일 읽기 완료")
         except yaml.YAMLError as e:
-            logging.error(f"❌ [Pod Creation] YAML 파싱 에러: {e}")
+            logger.error(f"❌ [Pod Creation] YAML 파싱 에러: {e}")
             raise
         except Exception as e:
-            logging.error(f"❌ [Pod Creation] 템플릿 파일 읽기 실패: {e}")
+            logger.error(f"❌ [Pod Creation] 템플릿 파일 읽기 실패: {e}")
             raise
         
         # 템플릿 구조 검증
@@ -177,7 +181,7 @@ class PodService:
         if 'containers' not in pod_spec['spec'] or not pod_spec['spec']['containers']:
             raise ValueError("No containers found in pod template")
         
-        logging.debug(f"✅ [Pod Creation] 템플릿 검증 완료 - 컨테이너 수: {len(pod_spec['spec']['containers'])}")
+        logger.debug(f"✅ [Pod Creation] 템플릿 검증 완료 - 컨테이너 수: {len(pod_spec['spec']['containers'])}")
         
         return pod_spec
     
@@ -316,16 +320,16 @@ class PodService:
             
             container["env"].extend(simulation_env_vars)
         
-        logging.debug(f"📝 [Pod Creation] 개선된 메타데이터 설정 완료")
-        logging.debug(f"   - name: {pod_name}")
-        logging.debug(f"   - simulation-id: {simulation_id}")
-        logging.debug(f"   - pattern-type: {pattern_type}")
-        logging.debug(f"   - step-order: {step_order}")
-        logging.debug(f"   - group-id: {group_id}")
-        logging.debug(f"   - labels count: {len(pod_labels)}")
-        logging.debug(f"   - annotations count: {len(pod_annotations)}")
-        logging.debug(f"   - bag-file-path: {bag_file_path}")
-        logging.debug(f"   - repeat-count: {repeat_count}")
+        logger.debug(f"📝 [Pod Creation] 개선된 메타데이터 설정 완료")
+        logger.debug(f"   - name: {pod_name}")
+        logger.debug(f"   - simulation-id: {simulation_id}")
+        logger.debug(f"   - pattern-type: {pattern_type}")
+        logger.debug(f"   - step-order: {step_order}")
+        logger.debug(f"   - group-id: {group_id}")
+        logger.debug(f"   - labels count: {len(pod_labels)}")
+        logger.debug(f"   - annotations count: {len(pod_annotations)}")
+        logger.debug(f"   - bag-file-path: {bag_file_path}")
+        logger.debug(f"   - repeat-count: {repeat_count}")
         
         return configured_pod
 
@@ -347,10 +351,10 @@ class PodService:
         if configured_pod["spec"]["containers"]:
             configured_pod["spec"]["containers"][0]["name"] = pod_name
         
-        logging.debug(f"📝 [Pod Creation] 메타데이터 설정 완료")
-        logging.debug(f"   - name: {pod_name}")
-        logging.debug(f"   - labels: {pod_label}")
-        logging.debug(f"   - namespace: {pod_namespace}")
+        logger.debug(f"📝 [Pod Creation] 메타데이터 설정 완료")
+        logger.debug(f"   - name: {pod_name}")
+        logger.debug(f"   - labels: {pod_label}")
+        logger.debug(f"   - namespace: {pod_namespace}")
         
         return configured_pod
 
@@ -362,43 +366,43 @@ class PodService:
                 name=pod_name, 
                 namespace=pod_namespace
             )
-            logging.warning(f"⚠️ [Pod Creation] 같은 이름의 Pod가 이미 존재: {pod_name}")
-            logging.warning(f"   - 상태: {existing_pod.status.phase}")
+            logger.warning(f"⚠️ [Pod Creation] 같은 이름의 Pod가 이미 존재: {pod_name}")
+            logger.warning(f"   - 상태: {existing_pod.status.phase}")
             
             # 정책에 따라 처리 (현재는 경고만)
             # 필요시 기존 Pod 삭제 또는 다른 이름 사용 로직 추가
             
         except ApiException as e:
             if e.status == 404:
-                logging.debug("✅ [Pod Creation] 중복 Pod 없음 - 생성 진행")
+                logger.debug("✅ [Pod Creation] 중복 Pod 없음 - 생성 진행")
             else:
-                logging.warning(f"⚠️ [Pod Creation] Pod 중복 확인 실패: {e}")
+                logger.warning(f"⚠️ [Pod Creation] Pod 중복 확인 실패: {e}")
                 # 중복 확인 실패는 치명적이지 않으므로 계속 진행
 
     @staticmethod
     async def _create_pod_in_cluster(configured_pod: dict, pod_namespace: str):
         """실제 클러스터에 Pod 생성"""
         try:
-            logging.info(f"🏗️ [Pod Creation] Pod 생성 실행 중...")
+            logger.info(f"🏗️ [Pod Creation] Pod 생성 실행 중...")
             
             result = pod_client.create_namespaced_pod(
                 namespace=pod_namespace, 
                 body=configured_pod
             )
             
-            logging.info(f"✅ [Pod Creation] Kubernetes API 호출 성공")
+            logger.info(f"✅ [Pod Creation] Kubernetes API 호출 성공")
             return result
             
         except ApiException as e:
-            logging.error(f"❌ [Pod Creation] Kubernetes API 에러:")
-            logging.error(f"   - Status: {e.status}")
-            logging.error(f"   - Reason: {e.reason}")
-            logging.error(f"   - Body: {e.body}")
+            logger.error(f"❌ [Pod Creation] Kubernetes API 에러:")
+            logger.error(f"   - Status: {e.status}")
+            logger.error(f"   - Reason: {e.reason}")
+            logger.error(f"   - Body: {e.body}")
             raise
         except Exception as e:
-            logging.error(f"❌ [Pod Creation] 예상치 못한 에러: {type(e).__name__}: {e}")
+            logger.error(f"❌ [Pod Creation] 예상치 못한 에러: {type(e).__name__}: {e}")
             import traceback
-            logging.error(f"❌ [Pod Creation] 스택 트레이스:\n{traceback.format_exc()}")
+            logger.error(f"❌ [Pod Creation] 스택 트레이스:\n{traceback.format_exc()}")
             raise
 
     @staticmethod
@@ -409,16 +413,16 @@ class PodService:
                 name=pod_name, 
                 namespace=pod_namespace
             )
-            logging.info(f"🔍 [Pod Creation] 생성된 Pod 상태: {created_pod.status.phase}")
+            logger.info(f"🔍 [Pod Creation] 생성된 Pod 상태: {created_pod.status.phase}")
             
             # 추가 상태 정보
             if created_pod.status.conditions:
                 for condition in created_pod.status.conditions:
                     if condition.status == "True":
-                        logging.debug(f"   - {condition.type}: {condition.status}")
+                        logger.debug(f"   - {condition.type}: {condition.status}")
             
         except Exception as e:
-            logging.warning(f"⚠️ [Pod Creation] 생성된 Pod 상태 확인 실패: {e}")
+            logger.warning(f"⚠️ [Pod Creation] 생성된 Pod 상태 확인 실패: {e}")
             # 상태 확인 실패는 치명적이지 않으므로 무시
             
     @staticmethod
@@ -469,25 +473,56 @@ class PodService:
             
             # 생성 확인
             if result:
-                print(f"네임스페이스 '{name}' 생성 성공")
+                logger.info(f"네임스페이스 '{name}' 생성 성공")
                 return name
             else:
                 raise Exception("네임스페이스 생성 결과가 None")
                 
         except Exception as e:
-            print(f"네임스페이스 '{name}' 생성 실패: {e}")
+            logger.info(f"네임스페이스 '{name}' 생성 실패: {e}")
             raise Exception(f"네임스페이스 생성 실패: {str(e)}")
+
+    @staticmethod
+    async def wait_namespace_deleted(name: str, timeout: int = 60, interval: float = 1.0):
+        """
+        네임스페이스 삭제 완료까지 대기 (주기적 상태 로깅 포함)
+        :param name: 네임스페이스 이름
+        :param timeout: 최대 대기 시간(초)
+        :param interval: 상태 체크 간격(초)
+        """
+        waited = 0
+        while waited < timeout:
+            try:
+                pod_client.read_namespace(name=name)
+                # 존재하면 아직 삭제 중
+                debug_print(f"네임스페이스 '{name}' 삭제 진행 중... {waited}/{timeout}초 경과")
+            except ApiException as e:
+                if e.status == 404:
+                    debug_print(f"네임스페이스 '{name}' 완전히 삭제됨")
+                    return True
+                else:
+                    debug_print(f"네임스페이스 '{name}' 조회 실패: {e}")
+                    raise
+            await asyncio.sleep(interval)
+            waited += interval
+        raise TimeoutError(f"네임스페이스 '{name}' 삭제가 {timeout}초 내 완료되지 않음")
 
     @staticmethod
     async def delete_namespace(simulation_id: int):
         name = f"simulation-{simulation_id}"
         try:
             pod_client.delete_namespace(name=name)
-            print(f"네임스페이스 '{name}' 삭제 성공")
+            debug_print(f"네임스페이스 '{name}' 삭제 요청 성공, 완료 대기 중...")
+            await PodService.wait_namespace_deleted(name)
+            debug_print(f"네임스페이스 '{name}' 삭제 완료")
+        except ApiException as e:
+            if e.status == 404:
+                # 이미 삭제된 경우
+                debug_print(f"네임스페이스 '{name}' 이미 없음")
+            else:
+                debug_print(f"네임스페이스 '{name}' 삭제 실패: {e}")
         except Exception as e:
-            print(f"네임스페이스 '{name}' 삭제 실패: {e}")
-            # 삭제는 실패해도 크리티컬하지 않을 수 있음
-            pass
+            debug_print(f"네임스페이스 '{name}' 삭제 중 알 수 없는 오류 발생: {e}")
 
     @staticmethod
     async def get_pod_ip(instance: Instance):
