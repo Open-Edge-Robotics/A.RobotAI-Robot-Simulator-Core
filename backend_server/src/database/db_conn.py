@@ -14,6 +14,11 @@ async def get_db() -> AsyncSession:
     async with async_session() as db:
         yield db
 
+# 의존성 주입을 위한 async_sessionmaker 반환 함수 추가
+def get_async_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """Repository들을 위한 async_sessionmaker 반환"""
+    return async_session
+
 async def init_db():
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

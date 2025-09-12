@@ -1,10 +1,15 @@
+import contextlib
 from datetime import datetime, timezone
 import traceback
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Optional, Tuple
+from fastapi import Depends
 from sqlalchemy import case, select, func, desc, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 import logging
+
+from database.db_conn import get_async_sessionmaker
+from schemas.context import StepContext
 
 logger = logging.getLogger(__name__)
 
@@ -191,17 +196,24 @@ class SimulationRepository:
             logger.error(f"시뮬레이션 개요 조회 중 오류: {str(e)}")
             return {'total':0,'pending':0,'running':0,'completed':0,'failed':0}
 
-    async def find_by_id(self, simulation_id: int) -> Optional[Simulation]:
-        if not MODELS_AVAILABLE:
-            return None
-        try:
-            async with self.session_factory() as session:
+    async def find_by_id(
+        self, 
+        simulation_id: int, 
+        session: Optional[AsyncSession] = None
+    ) -> Optional[Simulation]:
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
+            try:
                 stmt = select(Simulation).where(Simulation.id == simulation_id)
                 result = await session.execute(stmt)
                 return result.scalars().first()
-        except Exception as e:
-            logger.error(f"단일 시뮬레이션 조회 중 오류: {str(e)}")
-            return None
+            except Exception as e:
+                logger.error(f"단일 시뮬레이션 조회 중 오류: {str(e)}")
+                return None
 
     async def find_steps_with_template(self, simulation_id: int) -> List[SimulationStep]:
         if not MODELS_AVAILABLE:
@@ -236,23 +248,56 @@ class SimulationRepository:
             logger.error(f"시뮬레이션 그룹 조회 중 오류: {str(e)}")
             return []
 
-    async def find_simulation_steps(self, simulation_id: int) -> List[SimulationStep]:
-        try:
-            async with self.session_factory() as session:
+    async def find_simulation_steps(self, simulation_id: int, session: Optional[AsyncSession] = None) -> List[SimulationStep]:
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
+            stmt = select(SimulationStep).where(SimulationStep.simulation_id == simulation_id).order_by(SimulationStep.step_order)
+            result = await session.execute(stmt)
+            return result.scalars().all()
+
+    async def find_step_by_order(
+        self,
+        simulation_id: int,
+        step_order: int,
+        session: Optional[AsyncSession] = None
+    ) -> Optional[SimulationStep]:
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
+            try:
                 stmt = (
                     select(SimulationStep)
-                    .where(SimulationStep.simulation_id == simulation_id)
-                    .order_by(SimulationStep.step_order)
+                    .where(
+                        (SimulationStep.simulation_id == simulation_id) & 
+                        (SimulationStep.step_order == step_order)
+                    )
                 )
                 result = await session.execute(stmt)
-                return result.scalars().all()
-        except Exception as e:
-            logger.error(f"시뮬레이션 스텝 조회 중 오류: {str(e)}")
-            return []
+                return result.scalars().first()
+            except Exception as e:
+                logger.error(f"시뮬레이션 단계 조회 중 오류: {str(e)}")
+                return None
+        
 
-    async def find_simulation_groups(self, simulation_id: int) -> List[SimulationGroup]:
-        try:
-            async with self.session_factory() as session:
+    async def find_simulation_groups(
+        self, 
+        simulation_id: int,
+        session: Optional[AsyncSession] = None
+    ) -> List[SimulationGroup]:
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
+            try:
                 stmt = (
                     select(SimulationGroup)
                     .where(SimulationGroup.simulation_id == simulation_id)
@@ -260,9 +305,9 @@ class SimulationRepository:
                 )
                 result = await session.execute(stmt)
                 return result.scalars().all()
-        except Exception as e:
-            logger.error(f"시뮬레이션 그룹 조회 중 오류: {str(e)}")
-            return []
+            except Exception as e:
+                logger.error(f"시뮬레이션 그룹 조회 중 오류: {str(e)}")
+                return []
 
     async def update_simulation_status(
         self, simulation_id: int, status: str, failure_reason: Optional[str] = None
@@ -340,42 +385,46 @@ class SimulationRepository:
       
     async def update_simulation_step_configuration(
         self,
-        step_id: int,
-        execution_time: Optional[int] = None,
-        repeat_count: Optional[int] = None,
-        delay_after_completion: Optional[int] = None
+        step: StepContext,
+        session: Optional[AsyncSession] = None
     ):
         """
         SimulationStep 부분 업데이트
         - step_id 기준
         - 제공된 매개변수만 업데이트
+        - session 제공 시 재사용, 없으면 새로 생성
         """
         update_data = {"updated_at": datetime.now()}
         
         # 실행 관련 필드
-        if execution_time is not None:
-            update_data["execution_time"] = execution_time
-        if repeat_count is not None:
-            update_data["repeat_count"] = repeat_count
-        if delay_after_completion is not None:
-            update_data["delay_after_completion"] = delay_after_completion
+        if step.execution_time is not None:
+            update_data["execution_time"] = step.execution_time
+        if step.repeat_count is not None:
+            update_data["repeat_count"] = step.repeat_count
+        if step.delay_after_completion is not None:
+            update_data["delay_after_completion"] = step.delay_after_completion
 
         if len(update_data) == 1:  # updated_at만 있는 경우
             return  # 업데이트할 내용 없음
 
-        async with self.session_factory() as session:
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
             try:
                 stmt = (
                     update(SimulationStep)
-                    .where(SimulationStep.id == step_id)
+                    .where(SimulationStep.id == step.id)
                     .values(**update_data)
                 )
                 result = await session.execute(stmt)
                 if result.rowcount == 0:
-                    raise ValueError(f"SimulationStep ID {step_id}를 찾을 수 없습니다.")
+                    raise ValueError(f"SimulationStep ID {step.id}를 찾을 수 없습니다.")
                 await session.commit()
             except Exception as e:
-                logger.error(f"SimulationStep {step_id} 업데이트 실패: {str(e)}")
+                logger.error(f"SimulationStep {step.id} 업데이트 실패: {str(e)}")
                 raise
             
     async def update_simulation_group_status(
@@ -611,6 +660,7 @@ class SimulationRepository:
         
     async def create_simulation_step(
         self,
+        session: AsyncSession,
         simulation_id: int,
         step_order: int,
         template_id: int,
@@ -620,26 +670,24 @@ class SimulationRepository:
         repeat_count: int
     ) -> SimulationStep:
         """SimulationStep 저장"""
-        async with self.session_factory() as session:
-            simulation_step = SimulationStep(
-                simulation_id=simulation_id,
-                step_order=step_order,
-                template_id=template_id,
-                autonomous_agent_count=autonomous_agent_count,
-                execution_time=execution_time,
-                delay_after_completion=delay_after_completion,
-                repeat_count=repeat_count,
-                current_repeat=0,
-                status=StepStatus.PENDING
-            )
-            session.add(simulation_step)
-            await session.commit()
-            await session.refresh(simulation_step)
-            print(f"시뮬레이션 단계 DB 저장 완료 (StepOrder={step_order})")
-            return simulation_step
+        step = SimulationStep(
+            simulation_id=simulation_id,
+            step_order=step_order,
+            template_id=template_id,
+            autonomous_agent_count=autonomous_agent_count,
+            execution_time=execution_time,
+            delay_after_completion=delay_after_completion,
+            repeat_count=repeat_count,
+            current_repeat=0,
+            status=StepStatus.PENDING,
+        )
+        session.add(step)
+        await session.flush()  # PK 확보
+        return step
 
     async def create_simulation_group(
         self,
+        session: AsyncSession,
         simulation_id: int,
         group_name: str,
         template_id: int,
@@ -649,24 +697,20 @@ class SimulationRepository:
         assigned_area: str
     ) -> SimulationGroup:
         """SimulationGroup 저장"""
-        async with self.session_factory() as session:
-            simulation_group = SimulationGroup(
-                simulation_id=simulation_id,
-                group_name=group_name,
-                template_id=template_id,
-                autonomous_agent_count=autonomous_agent_count,
-                repeat_count=repeat_count,
-                current_repeat=0,
-                execution_time=execution_time,
-                assigned_area=assigned_area,
-                status=GroupStatus.PENDING
-            )
-            session.add(simulation_group)
-            await session.flush()  # ID 가져오기 위해 flush
-            await session.commit()
-            await session.refresh(simulation_group)
-            print(f"[그룹 DB 저장] {group_name} (ID: {simulation_group.id})")
-            return simulation_group
+        group = SimulationGroup(
+            simulation_id=simulation_id,
+            group_name=group_name,
+            template_id=template_id,
+            autonomous_agent_count=autonomous_agent_count,
+            repeat_count=repeat_count,
+            current_repeat=0,
+            execution_time=execution_time,
+            assigned_area=assigned_area,
+            status=GroupStatus.PENDING,
+        )
+        session.add(group)
+        await session.flush()
+        return group
             
     async def soft_delete_simulation(self, simulation_id: int):
         async with self.session_factory() as session:
@@ -674,10 +718,21 @@ class SimulationRepository:
             if sim:
                 sim.mark_as_deleted()
                 await session.commit()
-
+                
+    async def delete_step(self, session, step_id: int) -> None:
+        step = await session.get(SimulationStep, step_id)
+        if step:
+            await session.delete(step)    
+            
+    async def delete_step(self, session, group_id: int) -> None:
+        group = await session.get(SimulationGroup, group_id)
+        if group:
+            await session.delete(group)
 
 
 # Repository 생성 팩토리
-def create_simulation_repository(session_factory: async_sessionmaker[AsyncSession]) -> SimulationRepository:
+def create_simulation_repository(
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_async_sessionmaker)]
+) -> SimulationRepository:
     """AsyncSession Factory 기반 안전한 Repository 생성"""
     return SimulationRepository(session_factory)

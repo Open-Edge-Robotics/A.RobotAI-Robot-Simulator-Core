@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from datetime import datetime, timezone
 import logging
 import os
@@ -14,6 +15,8 @@ from utils.debug_print import debug_print
 from schemas.pod import GroupIdFilter, StepOrderFilter
 from models.enums import PatternType
 from models.instance import Instance
+from models.simulation import Simulation, SimulationGroup
+from models.simulation_steps import SimulationStep
 from utils.my_enum import PodStatus
 
 pod_client = None
@@ -36,6 +39,115 @@ except Exception as e:
         pod_client = None
 
 class PodService:
+    
+    @staticmethod
+    async def create_pod_v2(
+        instance: Union['Instance', Dict[str, Any]],
+        simulation: Union['Simulation', Dict[str, Any]],
+        step: Union['SimulationStep', Dict[str, Any]] = None,
+        group: Union['SimulationGroup', Dict[str, Any]] = None,
+    ):
+        """
+        Pod 생성 및 메타데이터/환경변수 구성
+        - dict 또는 SQLAlchemy 객체 모두 지원
+        """
+
+        # -----------------------------
+        # 1. Instance 정보 추출
+        # -----------------------------
+        try:
+            instance_id = instance['id'] if isinstance(instance, dict) else getattr(instance, 'id')
+        except KeyError as e:
+            logger.error(f"❌ [Pod Creation] 필수 instance 데이터 누락: {e}")
+            raise ValueError(f"Missing required instance data: {e}")
+
+        # -----------------------------
+        # 2. Simulation 정보 추출
+        # -----------------------------
+        simulation_id = simulation['id'] if isinstance(simulation, dict) else getattr(simulation, 'id')
+        pattern_type = simulation.get('pattern_type', 'parallel') if isinstance(simulation, dict) else getattr(simulation, 'pattern_type', 'parallel')
+        pod_namespace = simulation.get('namespace') if isinstance(simulation, dict) else getattr(simulation, 'namespace', None)
+
+        # -----------------------------
+        # 3. Step 정보 추출
+        # -----------------------------
+        step_order = None
+        template_type = "Unknown"
+        if step:
+            if isinstance(step, dict):
+                step_order = step.get('step_order')
+                template_type = step.get('template', {}).get('type', 'Unknown')
+            else:
+                step_order = getattr(step, 'step_order', None)
+                template_type = getattr(getattr(step, 'template', None), 'type', 'Unknown')
+
+        # -----------------------------
+        # 4. Group 정보 추출
+        # -----------------------------
+        group_id = group.get('id') if isinstance(group, dict) else getattr(group, 'id', None)
+
+        # -----------------------------
+        # 5. Pod 이름 구성
+        # -----------------------------
+        if pattern_type == PatternType.SEQUENTIAL:
+            pod_name = f"sim-{simulation_id}-step-{step_order or 0}-instance-{instance_id}"
+        else:
+            pod_name = f"sim-{simulation_id}-group-{group_id}-instance-{instance_id}"
+
+        # -----------------------------
+        # 6. 로그 기록
+        # -----------------------------
+        print(f"🚀 [Pod Creation] 시작 - pod_name={pod_name}")
+        print(f"📊 instance_id={instance_id}, simulation_id={simulation_id}, pattern_type={pattern_type}, "
+            f"step_order={step_order}, group_id={group_id}, template_type={template_type}, "
+            f"namespace={pod_namespace}")
+
+        try:
+            # -----------------------------
+            # 7. Pod 사전 조건 검증
+            # -----------------------------
+            await PodService._validate_pod_creation_prerequisites(pod_namespace)
+
+            # -----------------------------
+            # 8. Pod 템플릿 로드
+            # -----------------------------
+            pod_spec = await PodService._load_and_validate_template()
+
+            # -----------------------------
+            # 9. Pod 메타데이터 구성
+            # -----------------------------
+            configured_pod = PodService.configure_pod_metadata(
+                pod_spec=pod_spec,
+                pod_name=pod_name,
+                simulation=simulation,
+                step=step,
+                instance=instance,
+                group=group
+            )
+
+            # -----------------------------
+            # 10. 기존 Pod 처리
+            # -----------------------------
+            await PodService._handle_existing_pod(pod_name, pod_namespace)
+
+            # -----------------------------
+            # 11. Pod 생성
+            # -----------------------------
+            result = await PodService._create_pod_in_cluster(configured_pod, pod_namespace)
+
+            # -----------------------------
+            # 12. 생성 후 검증
+            # -----------------------------
+            await PodService._verify_pod_creation(pod_name, pod_namespace)
+
+            print(f"✅ [Pod Creation] Pod 생성 완료 - name={pod_name}, namespace={pod_namespace}, UID={result.metadata.uid}")
+            return pod_name
+
+        except Exception as e:
+            print(f"❌ [Pod Creation] 실패 - pod_name={pod_name}, Error={type(e).__name__}: {e}")
+            raise
+
+         
     @staticmethod
     async def create_pod(instance: Union[Instance, Dict[str, Any]], template, simulation_config: Dict[str, Any] = None):
         """
@@ -138,18 +250,18 @@ class PodService:
         # pod_client 상태 확인
         if pod_client is None:
             raise ValueError("pod_client is not initialized")
-        logger.debug("✅ [Pod Creation] pod_client 확인 완료")
+        print("✅ [Pod Creation] pod_client 확인 완료")
         
         # 네임스페이스 존재 여부 확인
         try:
             pod_client.read_namespace(name=pod_namespace)
-            logger.debug(f"✅ [Pod Creation] 네임스페이스 '{pod_namespace}' 존재 확인")
+            print(f"✅ [Pod Creation] 네임스페이스 '{pod_namespace}' 존재 확인")
         except ApiException as e:
             if e.status == 404:
-                logger.error(f"❌ [Pod Creation] 네임스페이스 '{pod_namespace}' 존재하지 않음")
+                print(f"❌ [Pod Creation] 네임스페이스 '{pod_namespace}' 존재하지 않음")
                 raise ValueError(f"Namespace '{pod_namespace}' does not exist")
             else:
-                logger.error(f"❌ [Pod Creation] 네임스페이스 확인 실패: {e}")
+                print(f"❌ [Pod Creation] 네임스페이스 확인 실패: {e}")
                 raise
 
     @staticmethod
@@ -158,20 +270,20 @@ class PodService:
         template_path = "/robot-simulator/src/pod-template.yaml"
         
         if not os.path.exists(template_path):
-            logger.error(f"❌ [Pod Creation] 템플릿 파일 없음: {template_path}")
+            print(f"❌ [Pod Creation] 템플릿 파일 없음: {template_path}")
             raise FileNotFoundError(f"Template file not found: {template_path}")
         
-        logger.debug(f"✅ [Pod Creation] 템플릿 파일 존재 확인: {template_path}")
+        print(f"✅ [Pod Creation] 템플릿 파일 존재 확인: {template_path}")
         
         try:
             with open(template_path, "r", encoding="utf-8") as f:
                 pod_spec = yaml.safe_load(f)
-            logger.debug("✅ [Pod Creation] 템플릿 파일 읽기 완료")
+            print("✅ [Pod Creation] 템플릿 파일 읽기 완료")
         except yaml.YAMLError as e:
-            logger.error(f"❌ [Pod Creation] YAML 파싱 에러: {e}")
+            print(f"❌ [Pod Creation] YAML 파싱 에러: {e}")
             raise
         except Exception as e:
-            logger.error(f"❌ [Pod Creation] 템플릿 파일 읽기 실패: {e}")
+            print(f"❌ [Pod Creation] 템플릿 파일 읽기 실패: {e}")
             raise
         
         # 템플릿 구조 검증
@@ -181,9 +293,129 @@ class PodService:
         if 'containers' not in pod_spec['spec'] or not pod_spec['spec']['containers']:
             raise ValueError("No containers found in pod template")
         
-        logger.debug(f"✅ [Pod Creation] 템플릿 검증 완료 - 컨테이너 수: {len(pod_spec['spec']['containers'])}")
+        print(f"✅ [Pod Creation] 템플릿 검증 완료 - 컨테이너 수: {len(pod_spec['spec']['containers'])}")
         
         return pod_spec
+    
+    @staticmethod
+    def configure_pod_metadata(
+        pod_spec: dict,
+        pod_name: str,
+        simulation: Union['Simulation', Dict[str, Any]],
+        step: Union['SimulationStep', Dict[str, Any]],
+        group: Union['SimulationGroup', Dict[str, Any]],
+        instance: Union['Instance', Dict[str, Any]],
+    ) -> dict:
+        """
+        Pod 메타데이터 및 컨테이너 환경변수 구성
+        - step, instance, group 정보 활용
+        - 반복/실행시간 등 StepContext에서 가져오기
+        - simulation 정보에서 namespace, pattern_type, mec_id 등 가져오기
+        - 정적 값: debug_mode, log_level, communication_port, data_format 등
+        """
+
+        configured_pod = copy.deepcopy(pod_spec)
+
+        # -----------------------------
+        # 1. Simulation 정보 추출
+        # -----------------------------
+        simulation_id = simulation['id'] if isinstance(simulation, dict) else getattr(simulation, 'id', None)
+        namespace = simulation.get('namespace', 'default') if isinstance(simulation, dict) else getattr(simulation, 'namespace', 'default')
+        pattern_type = simulation.get('pattern_type', 'parallel') if isinstance(simulation, dict) else getattr(simulation, 'pattern_type', 'parallel')
+        simulation_name = simulation.get('name', 'unknown') if isinstance(simulation, dict) else getattr(simulation, 'name', 'unknown')
+        mec_id = simulation.get('mec_id') if isinstance(simulation, dict) else getattr(simulation, 'mec_id', None)
+
+        # -----------------------------
+        # 2. Step 정보 추출
+        # -----------------------------
+        step_order = step.get('step_order') if isinstance(step, dict) else getattr(step, 'step_order', None) if step else None
+        template = step.get('template') if isinstance(step, dict) else getattr(step, 'template', None) if step else None
+        repeat_count = step.get('repeat_count', 1) if isinstance(step, dict) else getattr(step, 'repeat_count', 1) if step else 1
+        max_execution_time = f"{step.get('execution_time', 3600)}s" if isinstance(step, dict) else f"{getattr(step, 'execution_time', 3600)}s" if step else "3600s"
+        delay_after_completion = step.get('delay_after_completion', 0) if isinstance(step, dict) else getattr(step, 'delay_after_completion', 0) if step else 0
+
+        # -----------------------------
+        # 3. Group 정보 추출
+        # -----------------------------
+        group_id = group.get('id') if isinstance(group, dict) else getattr(group, 'id', None) if group else None
+
+        # -----------------------------
+        # 4. Instance 정보 추출
+        # -----------------------------
+        instance_id = instance.get('id', 'unknown') if isinstance(instance, dict) else getattr(instance, 'id', 'unknown') if instance else 'unknown'
+
+        # -----------------------------
+        # 5. 생성 시간
+        # -----------------------------
+        creation_time = datetime.now(timezone.utc).isoformat() + "Z"
+
+        # --------------------------------------------------
+        # 2. Labels
+        # --------------------------------------------------
+        pod_labels = {
+            "app": "simulation-pod",
+            "simulation-id": str(simulation_id),
+            "instance-id": str(instance_id),
+            "pattern-type": pattern_type,
+            "step-order": str(step_order) if step_order is not None else "0",
+            "group-id": str(group_id) if group_id else "default",
+            "template-id": str(getattr(template, "template_id", "unknown")) if template else "unknown",
+        }
+
+        # --------------------------------------------------
+        # 3. Annotations
+        # --------------------------------------------------
+        pod_annotations = {
+            "simulation-platform/created-at": creation_time,
+            "simulation-platform/simulation-id": str(simulation_id),
+            "simulation-platform/instance-id": str(instance_id),
+            "simulation-platform/pattern-type": pattern_type,
+            "simulation-platform/step-order": str(step_order) if step_order else "0",
+            "simulation-platform/group-id": str(group_id) if group_id else "default",
+            "simulation-platform/repeat-count": str(repeat_count),
+            "simulation-platform/max-execution-time": max_execution_time,
+            "simulation-platform/delay-after-completion": str(delay_after_completion),
+            "simulation-platform/simulation-name": simulation_name,
+            "simulation-platform/mec-id": mec_id or "none",
+            # 정적 정보
+            "simulation-platform/log-level": "INFO",
+            "simulation-platform/debug-mode": "false",
+            "simulation-platform/communication-port": "11311",
+            "simulation-platform/data-format": "ros-bag",
+        }
+
+        # --------------------------------------------------
+        # 4. 메타데이터 적용
+        # --------------------------------------------------
+        configured_pod["metadata"]["name"] = pod_name
+        configured_pod["metadata"]["labels"] = pod_labels
+        configured_pod["metadata"]["annotations"] = pod_annotations
+        configured_pod["metadata"]["namespace"] = namespace
+
+        # --------------------------------------------------
+        # 5. 컨테이너 환경변수 (핵심 정보만)
+        # --------------------------------------------------
+        if configured_pod.get("spec", {}).get("containers"):
+            container = configured_pod["spec"]["containers"][0]
+            container["name"] = pod_name
+            container.setdefault("env", [])
+            container["env"].extend([
+                {"name": "SIMULATION_ID", "value": str(simulation_id)},
+                {"name": "INSTANCE_ID", "value": str(instance_id)},
+                {"name": "PATTERN_TYPE", "value": pattern_type},
+                {"name": "STEP_ORDER", "value": str(step_order) if step_order else "0"},
+                {"name": "GROUP_ID", "value": str(group_id) if group_id else "default"},
+                {"name": "REPEAT_COUNT", "value": str(repeat_count)},
+                {"name": "MAX_EXECUTION_TIME", "value": max_execution_time},
+                {"name": "DELAY_AFTER_COMPLETION", "value": str(delay_after_completion)},
+                {"name": "DEBUG_MODE", "value": "false"},
+                {"name": "LOG_LEVEL", "value": "INFO"},
+                {"name": "COMMUNICATION_PORT", "value": "11311"},
+                {"name": "DATA_FORMAT", "value": "ros-bag"},
+            ])
+
+        return configured_pod
+
     
     # 개선된 Pod 메타데이터 구성
     @staticmethod
@@ -383,26 +615,27 @@ class PodService:
     async def _create_pod_in_cluster(configured_pod: dict, pod_namespace: str):
         """실제 클러스터에 Pod 생성"""
         try:
-            logger.info(f"🏗️ [Pod Creation] Pod 생성 실행 중...")
+            print(f"🏗️ [Pod Creation] Pod 생성 실행 중...")
+            print(f"네임스페이스: {pod_namespace}")
             
             result = pod_client.create_namespaced_pod(
                 namespace=pod_namespace, 
                 body=configured_pod
             )
             
-            logger.info(f"✅ [Pod Creation] Kubernetes API 호출 성공")
+            print(f"✅ [Pod Creation] Kubernetes API 호출 성공")
             return result
             
         except ApiException as e:
-            logger.error(f"❌ [Pod Creation] Kubernetes API 에러:")
-            logger.error(f"   - Status: {e.status}")
-            logger.error(f"   - Reason: {e.reason}")
-            logger.error(f"   - Body: {e.body}")
+            print(f"❌ [Pod Creation] Kubernetes API 에러:")
+            print(f"   - Status: {e.status}")
+            print(f"   - Reason: {e.reason}")
+            print(f"   - Body: {e.body}")
             raise
         except Exception as e:
-            logger.error(f"❌ [Pod Creation] 예상치 못한 에러: {type(e).__name__}: {e}")
+            print(f"❌ [Pod Creation] 예상치 못한 에러: {type(e).__name__}: {e}")
             import traceback
-            logger.error(f"❌ [Pod Creation] 스택 트레이스:\n{traceback.format_exc()}")
+            print(f"❌ [Pod Creation] 스택 트레이스:\n{traceback.format_exc()}")
             raise
 
     @staticmethod
