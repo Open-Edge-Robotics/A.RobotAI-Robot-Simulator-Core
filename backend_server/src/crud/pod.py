@@ -693,6 +693,58 @@ class PodService:
     @staticmethod
     async def delete_pod(pod_name, namespace):
         pod_client.delete_namespaced_pod(name=pod_name, namespace=namespace)
+        
+    @staticmethod
+    async def delete_pods_by_filter(
+        namespace: str,
+        filter_params: Union[StepOrderFilter, GroupIdFilter],
+    ) -> None:
+        """
+        필터 조건에 맞는 모든 Pod 삭제
+        """
+        pods = await PodService.get_pods_by_filter(namespace, filter_params)
+        if not pods:
+            debug_print(f"[delete_pods_by_filter] No pods found for filter={filter_params}")
+            return
+
+        debug_print(f"[delete_pods_by_filter] Found {len(pods)} pods → deleting...")
+        for pod in pods:
+            try:
+                await PodService.delete_pod(pod.metadata.name, namespace)
+                debug_print(f"Pod '{pod.metadata.name}' 삭제 요청 완료")
+            except Exception as e:
+                debug_print(f"Pod '{pod.metadata.name}' 삭제 실패: {e}")
+                raise
+    
+    @staticmethod        
+    async def wait_for_pods_deletion(
+        namespace: str,
+        filter_params: Union[StepOrderFilter, GroupIdFilter],
+        timeout: int = 60,
+        interval: float = 1.0,
+    ) -> bool:
+        """
+        지정된 필터에 맞는 Pod들이 모두 삭제될 때까지 대기
+        """
+        waited = 0
+        while waited < timeout:
+            pods = PodService.get_pods_by_filter(namespace, filter_params)
+            if not pods:
+                debug_print(f"[wait_for_pods_deletion] All pods deleted for filter={filter_params}")
+                return True
+
+            debug_print(
+                f"[wait_for_pods_deletion] {len(pods)} pods still exist. "
+                f"Waited {waited}/{timeout} seconds..."
+            )
+            await asyncio.sleep(interval)
+            waited += interval
+
+        raise TimeoutError(
+            f"[wait_for_pods_deletion] Pods not deleted within {timeout} seconds for filter={filter_params}"
+        )
+
+
 
     @staticmethod
     async def create_namespace(simulation_id: int):
@@ -799,8 +851,8 @@ class PodService:
         }
         return status_code_map.get(pod_status)
     
+    @staticmethod
     def get_pods_by_filter(
-        self, 
         namespace: str, 
         filter_params: Union[StepOrderFilter, GroupIdFilter]
     ) -> List[V1Pod]:
@@ -837,7 +889,7 @@ class PodService:
         """
         step_order로 pod 목록 조회 (편의 메서드)
         """
-        return await self.get_pods_by_filter(
+        return await PodService.get_pods_by_filter(
             namespace, 
             {"step_order": step_order}
         )
@@ -846,7 +898,7 @@ class PodService:
         """
         group_id로 pod 목록 조회 (편의 메서드)
         """
-        return await self.get_pods_by_filter(
+        return await PodService.get_pods_by_filter(
             namespace, 
             {"group_id": group_id}
         )

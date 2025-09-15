@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 import logging
 
+from utils.simulation_utils import generate_final_group_name, generate_temp_group_name
 from database.db_conn import get_async_sessionmaker
 from schemas.context import StepContext
 
@@ -259,6 +260,47 @@ class SimulationRepository:
             result = await session.execute(stmt)
             return result.scalars().all()
 
+    async def find_step(
+        self,
+        simulation_id: int,
+        step_order: Optional[int] = None,
+        step_id: Optional[int] = None,
+        last: bool = False,
+        session: Optional[AsyncSession] = None
+    ) -> Optional[SimulationStep]:
+        """
+        Step 조회 메서드 통합
+        - step_id 또는 step_order로 조회
+        - last=True이면 step_order 내림차순으로 가장 큰 Step 반환
+        """
+        
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
+            try:
+                stmt = select(SimulationStep).where(
+                    SimulationStep.simulation_id == simulation_id
+                )
+                
+                if last:
+                    stmt = stmt.order_by(desc(SimulationStep.step_order)).limit(1)
+                elif step_id is not None:
+                    stmt = stmt.where(SimulationStep.id == step_id)
+                elif step_order is not None:
+                    stmt = stmt.where(SimulationStep.step_order == step_order)
+                else:
+                    raise ValueError("step_id 또는 step_order 중 하나는 반드시 필요합니다.")
+
+                result = await session.execute(stmt)
+                return result.scalars().first()
+            except Exception as e:
+                logger.error(f"시뮬레이션 단계 조회 중 오류: {str(e)}")
+                return None
+
+
     async def find_step_by_order(
         self,
         simulation_id: int,
@@ -308,6 +350,33 @@ class SimulationRepository:
             except Exception as e:
                 logger.error(f"시뮬레이션 그룹 조회 중 오류: {str(e)}")
                 return []
+            
+    async def find_group(
+        self,
+        simulation_id: int,
+        group_id: int,
+        session: Optional[AsyncSession] = None
+    ) -> Optional[SimulationGroup]:
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
+            try:
+                stmt = (
+                    select(SimulationGroup)
+                    .where(
+                        (SimulationGroup.simulation_id == simulation_id) &
+                        (SimulationGroup.id == group_id)
+                    )
+                )
+                result = await session.execute(stmt)
+                return result.scalars().first()
+            except Exception as e:
+                logger.error(f"시뮬레이션 그룹 조회 중 오류: {str(e)}")
+                return None
+
 
     async def update_simulation_status(
         self, simulation_id: int, status: str, failure_reason: Optional[str] = None
@@ -689,17 +758,19 @@ class SimulationRepository:
         self,
         session: AsyncSession,
         simulation_id: int,
-        group_name: str,
         template_id: int,
         autonomous_agent_count: int,
         repeat_count: int,
         execution_time: int,
         assigned_area: str
     ) -> SimulationGroup:
-        """SimulationGroup 저장"""
+        # 1. 임시 이름 생성(UUID8) 생성
+        temp_name = generate_temp_group_name(simulation_id)
+        
+        # 2. 그룹 생성 (임시 이름으로)
         group = SimulationGroup(
             simulation_id=simulation_id,
-            group_name=group_name,
+            group_name=temp_name,
             template_id=template_id,
             autonomous_agent_count=autonomous_agent_count,
             repeat_count=repeat_count,
@@ -710,6 +781,10 @@ class SimulationRepository:
         )
         session.add(group)
         await session.flush()
+        
+        # 3. 최종 이름 업데이트 (group_id 기반)
+        group.group_name = generate_final_group_name(simulation_id, group.id)
+        
         return group
             
     async def soft_delete_simulation(self, simulation_id: int):
@@ -719,12 +794,45 @@ class SimulationRepository:
                 sim.mark_as_deleted()
                 await session.commit()
                 
-    async def delete_step(self, session, step_id: int) -> None:
-        step = await session.get(SimulationStep, step_id)
+    async def delete_step(
+        self, 
+        session, 
+        step_id: int = None, 
+        step_order: int = None, 
+        simulation_id: int = None
+    ) -> None:
+        """
+        Step 삭제
+        - step_id 또는 step_order+simulation_id 중 하나를 사용
+        - 둘 다 없거나 둘 다 있으면 Exception 발생
+        """
+        # 입력 검증
+        if step_id is None and step_order is None:
+            raise Exception("step_id 또는 step_order 중 하나는 필수입니다.")
+        if step_id is not None and step_order is not None:
+            raise Exception("step_id와 step_order는 동시에 사용할 수 없습니다.")
+        if step_order is not None and simulation_id is None:
+            raise Exception("step_order로 삭제할 때는 simulation_id가 필요합니다.")
+
+        step = None
+
+        if step_id is not None:
+            step = await session.get(SimulationStep, step_id)
+        
+        elif step_order is not None:
+            stmt = select(SimulationStep).where(
+                SimulationStep.step_order == step_order,
+                SimulationStep.simulation_id == simulation_id
+            )
+            result = await session.execute(stmt)
+            step = result.scalar_one_or_none()
+
         if step:
-            await session.delete(step)    
+            await session.delete(step)
+        else:
+            raise Exception("삭제할 Step을 찾을 수 없습니다.")  
             
-    async def delete_step(self, session, group_id: int) -> None:
+    async def delete_group(self, session, group_id: int) -> None:
         group = await session.get(SimulationGroup, group_id)
         if group:
             await session.delete(group)

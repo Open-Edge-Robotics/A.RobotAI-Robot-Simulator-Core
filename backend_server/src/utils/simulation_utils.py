@@ -1,4 +1,6 @@
-from typing import Dict, Any
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional
+import uuid
 
 from models.enums import SimulationStatus
 from schemas.simulation_detail import SimulationData
@@ -39,3 +41,31 @@ def extract_simulation_dashboard_data(simulation: SimulationData) -> Dict[str, A
         "total_execution_time": total_execution_time,
         "autonomous_agent_count": total_agent_count
     }
+
+def generate_temp_group_name(simulation_id: int) -> str:
+    """flush 전 UUID8 기반 그룹 이름 생성"""
+    return f"sim-{simulation_id}-group-{uuid.uuid4().hex[:8]}"
+
+def generate_final_group_name(simulation_id: int, group_id: int) -> str:
+    """flush 후 group_id 기반 최종 그룹 이름 생성"""
+    return f"sim-{simulation_id}-group-{group_id}"
+
+# -----------------------------
+# 유니크 인스턴스 이름 생성
+# -----------------------------
+def generate_instance_name(
+    simulation_id: int,
+    step_order: Optional[int] = None,
+    group_id: Optional[int] = None
+) -> str:
+    """
+    UUID8 기반 임시 유니크 이름 생성
+    """
+    unique_suffix = uuid.uuid4().hex[:8]
+
+    if step_order is not None:
+        return f"sim-{simulation_id}-step-{step_order}-instance-{unique_suffix}"
+    elif group_id is not None:
+        return f"sim-{simulation_id}-group-{group_id}-instance-{unique_suffix}"
+    else:
+        return f"sim-{simulation_id}-instance-{unique_suffix}"

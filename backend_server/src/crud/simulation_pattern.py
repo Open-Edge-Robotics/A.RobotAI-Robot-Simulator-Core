@@ -1,11 +1,16 @@
 import asyncio
+from datetime import datetime, timezone
 import traceback
-from typing import Annotated, Dict, List
+from typing import Annotated, Dict, List, Optional
 
 from fastapi import Depends
+from schemas.pod import GroupIdFilter, StepOrderFilter
 from crud.pod import PodService
 from crud.simulation import SimulationRepository
 from models.enums import PatternType, SimulationStatus
+from models.simulation import Simulation
+from models.simulation_steps import SimulationStep
+from models.simulation_groups import SimulationGroup
 from database.db_conn import AsyncSession, async_sessionmaker, get_async_sessionmaker
 from repositories.simulation_repository import SimulationRepository
 from repositories.instance_repository import InstanceRepository
@@ -14,6 +19,8 @@ from schemas.simulation_pattern import (
     GroupCreateDTO,
     PatternCreateRequestDTO,
     PatternCreateResponseDTO,
+    PatternDeleteRequestDTO,
+    PatternDeleteResponseDTO,
     StepCreateDTO
 )
 
@@ -32,6 +39,7 @@ class SimulationPatternService:
    
     async def create_pattern(self, simulation_id: int, body: PatternCreateRequestDTO) -> PatternCreateResponseDTO:
         try:
+            print(f"{body}")
             await self._validate_request_data(body)
             
             # 검증 (ID들만 확인)
@@ -47,6 +55,250 @@ class SimulationPatternService:
         except Exception as e:
             print(f"❌ 패턴 생성 실패: {e}")
             raise
+    
+    async def delete_pattern(self, simulation_id: int, body: PatternDeleteRequestDTO) -> PatternDeleteResponseDTO:
+        """패턴 삭제 - Kubernetes 먼저, DB 나중 순서로 처리"""
+    
+        # 1. 사전 검증 (상태/타입만 체크)
+        await self._validate_before_deletion(simulation_id, body)
+        
+        simulation: Simulation = None
+        step: SimulationStep = None
+        group: SimulationGroup = None
+        
+        # 2. 삭제 대상 정보 조회 (읽기 전용 트랜잭션)
+        async with self.sessionmaker() as session:
+            simulation = await self.simulation_repository.find_by_id(simulation_id, session)
+            
+            if simulation.pattern_type == PatternType.SEQUENTIAL:
+                step = await self.simulation_repository.find_step(
+                    simulation_id=simulation_id, 
+                    step_order=body.step_order, 
+                    session=session
+                )
+                if not step:
+                    raise ValueError(f"❌ Step {body.step_id}를 찾을 수 없습니다")
+                
+                if step.simulation_id != simulation_id:
+                    raise ValueError(f"❌ Step {body.step_id}는 Simulation {simulation_id}에 속하지 않습니다")
+                
+                # 마지막 Step인지 확인
+                last_step = await self.simulation_repository.find_step(
+                    simulation_id=simulation_id,
+                    last=True,
+                    session=session
+                )
+                if step.step_order != last_step.step_order:
+                    raise ValueError(
+                        f"❌ 순차 패턴: 마지막 단계 Step {last_step.step_order}부터 삭제 가능합니다"
+                    )
+                    
+            elif simulation.pattern_type == PatternType.PARALLEL:
+                group = await self.simulation_repository.find_group(
+                    simulation_id=simulation_id,
+                    group_id=body.group_id, 
+                    session=session
+                )
+                if not group:
+                    raise ValueError(f"❌ Group {body.group_id}를 찾을 수 없습니다")
+                
+                if group.simulation_id != simulation_id:
+                    raise ValueError(f"❌ Group {body.group_id}는 Simulation {simulation_id}에 속하지 않습니다")
+        
+        # 3. Kubernetes 리소스 정리 (트랜잭션 외부)
+        try:
+            if simulation.pattern_type == PatternType.SEQUENTIAL:
+                kubernetes_deleted  = await self._delete_kubernetes_resources(
+                    namespace=simulation.namespace,
+                    step_order=step.step_order,
+                    resource_name=f"Step {step.step_order} of Simulation {simulation.id}"
+                )
+            elif simulation.pattern_type == PatternType.PARALLEL:
+                kubernetes_deleted  = await self._delete_kubernetes_resources(
+                    namespace=simulation.namespace,
+                    group_id=group.id,
+                    resource_name=f"Group {group.id} of Simulation {simulation.id}"
+                )
+
+            print(f"✅ Kubernetes 리소스 삭제 완료")
+
+        except Exception as e:
+            print(f"❌ Kubernetes 리소스 삭제 실패: {e}")
+            raise ValueError(f"Kubernetes 리소스 삭제 실패로 패턴 삭제를 중단합니다: {e}")
+        
+        # 4. DB 리소스 삭제 (단일 트랜잭션)
+        try:
+            async with self.sessionmaker() as session:
+                async with session.begin():  # 명시적 트랜잭션 시작
+                    if simulation.pattern_type == PatternType.SEQUENTIAL:
+                        # Instance bulk 삭제
+                        deleted_count = await self.instance_repository.delete_by_step(
+                            step_order=body.step_order,
+                            simulation_id=simulation.id,
+                            session=session
+                        )
+                        print(f"✅ {deleted_count}개 Instance 삭제")
+                        # Step 삭제
+                        await self.simulation_repository.delete_step(
+                            session=session,
+                            step_order=body.step_order,
+                            simulation_id=simulation.id
+                        )
+                        print(f"✅ SimulationStep {body.step_order} 삭제")
+                        
+                    elif simulation.pattern_type == PatternType.PARALLEL:
+                        # Instance bulk 삭제
+                        deleted_count = await self.instance_repository.delete_by_group(
+                            group_id=body.group_id,
+                            session=session
+                        )
+                        print(f"✅ {deleted_count}개 Instance 삭제")
+                        # Group 삭제
+                        await self.simulation_repository.delete_group(
+                            session=session,
+                            group_id=body.group_id
+                        )
+                        print(f"✅ SimulationGroup {body.group_id} 삭제")
+                    
+                    # 트랜잭션 자동 커밋
+                    print("✅ DB 트랜잭션 커밋 완료")
+        except Exception as e:
+            print(f"❌ DB 삭제 실패: {e}")
+            # DB 삭제 실패 시 orphaned pods에 대한 정리 필요성 로깅
+            await self._log_orphaned_resources_warning(simulation, step, group)
+            raise ValueError(f"DB 삭제 실패: {e}")
+    
+        print("🎉 패턴 삭제 완료")
+        
+        # 5. DB 삭제 완료 후 Response DTO 구성
+        response_data = {
+            "simulation_id": simulation_id,
+            "pattern_type": simulation.pattern_type.value,
+            "deleted_target": body.step_order if simulation.pattern_type == PatternType.SEQUENTIAL else body.group_id,
+            "kubernetes_deleted": kubernetes_deleted,
+            "deleted_at": datetime.now(timezone.utc)
+        }
+
+        return PatternDeleteResponseDTO(
+            statusCode=200,
+            data=response_data,
+            message="패턴 삭제 완료"
+        )
+        
+    # -----------------------------
+    # 고아 리소스 경고 + 예약 정리
+    # -----------------------------
+    async def _log_orphaned_resources_warning(self, simulation, step=None, group=None):
+        """
+        고아 리소스 경고 로깅 및 정리 작업 예약
+        """
+        if step:
+            print(f"⚠️ WARNING: Step {step.id}의 Pod들은 삭제되었지만 DB 레코드 삭제 실패")
+            print(f"⚠️ 수동 정리 필요: step_order={step.step_order}, namespace={simulation.namespace}")
+            # 선택적 자동 정리
+            await self.cleanup_orphaned_pods(
+                simulation_id=simulation.id,
+                pattern_type=PatternType.SEQUENTIAL,
+                step_order=step.step_order
+            )
+        elif group:
+            print(f"⚠️ WARNING: Group {group.id}의 Pod들은 삭제되었지만 DB 레코드 삭제 실패")
+            print(f"⚠️ 수동 정리 필요: group_id={group.id}, namespace={simulation.namespace}")
+            # 선택적 자동 정리
+            await self.cleanup_orphaned_pods(
+                simulation_id=simulation.id,
+                pattern_type=PatternType.PARALLEL,
+                group_id=group.id
+            )
+            
+    # -----------------------------
+    # 고아 Pod 정리
+    # -----------------------------
+    async def cleanup_orphaned_pods(
+        self,
+        simulation_id: int,
+        pattern_type: PatternType,
+        step_order: int = None,
+        group_id: int = None
+    ):
+        """
+        고아 Pod 정리 (DB 삭제 후 Pod만 남은 경우)
+        """
+        try:
+            async with self.sessionmaker() as session:
+                simulation = await self.simulation_repository.find_by_id(simulation_id, session)
+
+            if pattern_type == PatternType.SEQUENTIAL and step_order is not None:
+                filter_params = {"step_order": step_order}
+                await PodService.delete_pods_by_filter(simulation.namespace, filter_params)
+                print(f"✅ 고아 Pod 정리 완료: step_order={step_order}")
+
+            elif pattern_type == PatternType.PARALLEL and group_id is not None:
+                filter_params = {"group_id": group_id}
+                await PodService.delete_pods_by_filter(simulation.namespace, filter_params)
+                print(f"✅ 고아 Pod 정리 완료: group_id={group_id}")
+
+            else:
+                print(f"⚠️ 고아 Pod 정리 실패: 필수 파라미터(step_order/group_id)가 누락됨")
+
+        except Exception as e:
+            print(f"❌ 고아 Pod 정리 실패: {e}")
+
+        
+    async def _delete_kubernetes_resources(
+        self,
+        namespace: str,
+        step_order: Optional[int] = None,
+        group_id: Optional[int] = None,
+        resource_name: Optional[str] = None  # 로그용 (step.name 또는 group.name)
+    ) -> bool:
+        """
+        Kubernetes 리소스 삭제
+        - 삭제 성공 시 True 반환
+        - 이미 삭제된 경우 False 반환
+        """
+        print("_delete_kubernetes_resources 호출")
+        if not step_order and not group_id:
+            raise ValueError("step_order 또는 group_id 중 하나는 반드시 필요합니다.")
+        
+        try:
+            # 필터 구성
+            filter_params = {}
+            if step_order is not None:
+                filter_params = StepOrderFilter(step_order=step_order)
+            if group_id is not None:
+                filter_params = GroupIdFilter(group_id=group_id)
+
+            # Pod 조회
+            pods = PodService.get_pods_by_filter(
+                namespace=namespace, 
+                filter_params=filter_params
+            )
+            
+            if not pods:
+                target = resource_name or ("Step" if step_order else "Group")
+                print(f"ℹ️ {target} 관련 Pod이 이미 삭제되어 있음 → Kubernetes 리소스 정리 스킵")
+                return False
+
+            # Pod 존재 -> 삭제 진행
+            pod_names = [pod.metadata.name for pod in pods]
+            print(f"🗑️  {len(pods)}개 Pod 삭제 시작: {', '.join(pod_names)}")
+
+            # Pod 삭제
+            delete_tasks = [PodService.delete_pod(pod, namespace) for pod in pod_names]
+            await asyncio.gather(*delete_tasks)
+
+            # Pod 삭제 완료 대기
+            await PodService.wait_for_pods_deletion(namespace, filter_params, timeout=60)
+
+            target = resource_name or ("Step" if step_order else "Group")
+            print(f"✅ {target} Kubernetes 리소스 정리 완료")
+            return True
+
+        except Exception as e:
+            # 실제 삭제 과정에서 오류 발생 → DB 삭제 중단
+            raise RuntimeError(f"Kubernetes 리소스 삭제 실패: {e}")
+        
     
     # =====================================================
     # 비즈니스 규칙 검증
@@ -150,6 +402,35 @@ class SimulationPatternService:
         template = await self.template_repository.find_by_id(group_data.template_id, session)
         if not template:
                 raise ValueError(f"❌ Template {group_data.template_id}를 찾을 수 없습니다")
+    
+    async def _validate_before_deletion(self, simulation_id: int, body: PatternDeleteRequestDTO):
+        """패턴 삭제 전에 조건만 확인"""
+        async with self.sessionmaker() as session:
+            simulation = await self.simulation_repository.find_by_id(simulation_id, session)
+            if not simulation:
+                raise ValueError(f"❌ Simulation {simulation_id}를 찾을 수 없습니다")
+            
+            # 상태 검증
+            if simulation.status in {
+                SimulationStatus.RUNNING,
+                SimulationStatus.INITIATING,
+                SimulationStatus.DELETING,
+                SimulationStatus.DELETED,
+            }:
+                raise ValueError(f"❌ 상태 {simulation.status} 에서는 패턴을 삭제할 수 없습니다")
+            
+            # 타입/요청 검증
+            if simulation.pattern_type == PatternType.SEQUENTIAL:
+                if body.group_id:
+                    raise ValueError("❌ SEQUENTIAL 시뮬레이션에서는 Group 삭제 불가")
+                if not body.step_order:
+                    raise ValueError("❌ SEQUENTIAL 시뮬레이션에서는 Step Order 필요")
+            elif simulation.pattern_type == PatternType.PARALLEL:
+                if body.step_order:
+                    raise ValueError("❌ PARALLEL 시뮬레이션에서는 Step 삭제 불가")
+                if not body.group_id:
+                    raise ValueError("❌ PARALLEL 시뮬레이션에서는 Group ID 필요")
+ 
         
     # =====================================================
     # STEP 및 GROUP 패턴 메인 메서드
@@ -193,12 +474,15 @@ class SimulationPatternService:
 
         try:
             # 1. DB에서 Group과 Instance 생성 + 데이터 추출
+            print("DB에서 Group과 Instance 생성 + 데이터 추출")
             group_result = await self._create_group_and_instances(simulation_id, group_data)
+            print(f"group_result: {group_result}")
             
             created_group_id = group_result["group_id"]
             created_instance_ids = group_result["instance_ids"]
             
             # 2. Pod 생성 (추출된 데이터 사용)
+            print("Pod 생성 (추출된 데이터 사용)")
             created_pods = await self._create_pods_for_instances(
                 group_result["instances_data"],
                 group_result["simulation_data"], 
@@ -297,14 +581,15 @@ class SimulationPatternService:
             async with session.begin():
                 
                 # 1. Simulation과 Template 재조회 (세션 내에서)
+                print("Simulation과 Template 재조회 (세션 내에서)")
                 simulation = await self.simulation_repository.find_by_id(simulation_id, session)
                 template = await self.template_repository.find_by_id(group_data.template_id, session)
                 
                 # 2. Group 생성
+                print("Group 생성")
                 group = await self.simulation_repository.create_simulation_group(
                     session=session,
                     simulation_id=simulation.id,
-                    group_name=f"{simulation.name}_group_{int(time.time())}",  # 유니크한 그룹명
                     template_id=template.template_id,
                     autonomous_agent_count=group_data.autonomous_agent_count,
                     repeat_count=group_data.repeat_count,
@@ -313,7 +598,7 @@ class SimulationPatternService:
                 )
                 
                 # 3. Instance 생성 (Group용)
-                instances = await self.instance_repository.create_instances_for_group(
+                instances = await self.instance_repository.create_instances_batch(
                     simulation=simulation,
                     group=group,
                     session=session
@@ -365,7 +650,13 @@ class SimulationPatternService:
     # =====================================================
     # 공통 메서드 수정 (Step과 Group 모두 지원)
     # =====================================================            
-    async def _create_pods_for_instances(self, instances_data: List[Dict], simulation_data: Dict, step_data: Dict):
+    async def _create_pods_for_instances(
+        self, 
+        instances_data: List[Dict], 
+        simulation_data: Dict, 
+        step_data: Optional[Dict], 
+        group_data: Optional[Dict] 
+    ):
         """Pod 생성 - 빠른 실패 적용"""
         created_pods = []
         
@@ -381,7 +672,7 @@ class SimulationPatternService:
                         instance_data, 
                         simulation_data, 
                         step_data, 
-                        None  # group_data
+                        group_data
                     ),
                     timeout=60  # 60초 타임아웃
                 )

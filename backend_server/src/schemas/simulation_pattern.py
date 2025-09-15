@@ -1,4 +1,5 @@
 from typing import List, Optional
+from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # -----------------------------
@@ -131,18 +132,18 @@ class PatternUpdateResponseDTO(BaseModel):
 # Step / Group 삭제 DTO
 # -----------------------------
 class PatternDeleteRequestDTO(BaseModel):
-    step_id: Optional[int] = Field(None, description="삭제할 단계 ID", alias="stepId")
+    step_order: Optional[int] = Field(None, description="삭제할 단계 순서", alias="stepOrder")
     group_id: Optional[int] = Field(None, description="삭제할 그룹 ID", alias="groupId")
 
     @model_validator(mode="before")
     @classmethod
-    def validate_step_or_group(cls, values):
-        step = values.get("step_id")
-        group = values.get("group_id")
+    def check_step_or_group(cls, values):
+        step = values.get('stepOrder')
+        group = values.get('groupId')
         if step and group:
-            raise ValueError("stepId와 groupId는 동시에 사용할 수 없습니다")
+            raise HTTPException(status_code=400, detail="stepOrder와 groupId는 동시에 사용할 수 없습니다")
         if not step and not group:
-            raise ValueError("stepId 또는 groupId 중 하나는 필수입니다")
+            raise HTTPException(status_code=400, detail="stepOrder 또는 groupId 중 하나는 필수입니다")
         return values
 
     class Config:

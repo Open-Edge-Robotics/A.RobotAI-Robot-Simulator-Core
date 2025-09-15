@@ -3,6 +3,7 @@ import asyncio
 from fastapi import Depends
 from sqlalchemy import delete, select
 
+from utils.simulation_utils import generate_final_group_name, generate_instance_name, generate_temp_group_name
 from database.db_conn import get_db
 from database.minio_conn import get_storage_client
 from .status_update_manager import get_status_manager
@@ -145,10 +146,10 @@ async def process_single_step(
     
     # Instance 정보 준비
     async with sessionmaker() as session:
-        for i in range(step.autonomous_agent_count):
+        for _ in range(step.autonomous_agent_count):
             instance = Instance(
-                name=f"{simulation.name}_step{step.step_order}_agent_{i}",
-                description=f"Step {step.step_order} - Agent {i}",
+                name=generate_instance_name(simulation_id=simulation.id, step_order=step.step_order),
+                description=f"Step {step.step_order} - Instance",
                 pod_namespace=simulation.namespace,
                 simulation_id=simulation.id,
                 template_id=template.template_id,
@@ -455,9 +456,12 @@ async def process_single_group(
     # SimulationGroup DB 저장
     group_id = None
     async with sessionmaker() as session:
+        # 1. 임시 이름 생성(UUID8) 생성
+        temp_name = generate_temp_group_name(simulation.id)
+        
         simulation_group = SimulationGroup(
             simulation_id=simulation.id,
-            group_name=f"{simulation.name}_group_{group_index}",
+            group_name=temp_name,
             template_id=template.template_id,
             autonomous_agent_count=group.autonomous_agent_count,
             repeat_count=group.repeat_count,
@@ -469,7 +473,12 @@ async def process_single_group(
         session.add(simulation_group)
         await session.flush()
         group_id = simulation_group.id
+        
+        # 3. 최종 이름 업데이트 (group_id 기반)
+        simulation_group.group_name = generate_final_group_name(simulation.id, group_id)
+        
         await session.commit()
+        
         print(f"[그룹 {group_index}] SimulationGroup DB 저장 완료 (ID: {group_id})")
         
     # 시뮬레이션 설정 정보 구성
@@ -493,10 +502,10 @@ async def process_single_group(
     
     # Instance 정보 준비
     async with sessionmaker() as session:
-        for i in range(group.autonomous_agent_count):
+        for _ in range(group.autonomous_agent_count):
             instance = Instance(
-                name=f"{simulation.name}_group{group_index}_agent_{i}",
-                description=f"Group {group_index} - Agent {i}",
+                name=generate_instance_name(simulation_id=simulation.id, group_id=group_id),
+                description=f"Group {group_id} - Instance",
                 pod_namespace=simulation.namespace,
                 simulation_id=simulation.id,
                 template_id=template.template_id,

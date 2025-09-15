@@ -2,13 +2,14 @@ import contextlib
 from datetime import datetime
 from typing import Annotated, List, Optional, Union
 from fastapi import Depends
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 import logging
 
+from utils.simulation_utils import generate_instance_name
 from database.db_conn import get_async_sessionmaker
 from schemas.context import SimulationContext, StepContext
-from models.simulation import Simulation
+from models.simulation import Simulation, SimulationGroup
 from models.simulation_steps import SimulationStep
 from models.instance import Instance
 
@@ -35,8 +36,8 @@ class InstanceRepository:
     async def create_instance(
         self,
         simulation: Union[SimulationContext, Simulation],
-        step: Union[StepContext, SimulationStep],
-        agent_index: int,
+        step: Optional[Union[StepContext, SimulationStep]] = None,
+        group: Optional[SimulationGroup] = None,
         session: Optional[AsyncSession] = None,
     ) -> Instance:
         """
@@ -59,23 +60,41 @@ class InstanceRepository:
             manage_session = True
 
         async with session if manage_session else contextlib.nullcontext(session):
-            name = (
-                f"{simulation.name}_step{step.step_order}_agent_{agent_index}"
-                if step.step_order is not None
-                else f"{simulation.name}_agent_{agent_index}"
-            )
-            desc = f"Step {step.step_order} - Agent {agent_index}" if step.step_order is not None else f"Agent {agent_index}"
+            step_order = getattr(step, "step_order", None)
+            template_id = None
+            if step is not None:
+                template_id = getattr(step, "template_id", None)
+            elif group is not None:
+                template_id = getattr(group, "template_id", None)
+ 
+            group_id = getattr(group, "id", None)
+            
+            # 1. UUID8 기반 임시 이름 생성
+            name = generate_instance_name(simulation.id, step_order, group_id)
 
             instance = Instance(
                 name=name,
-                description=desc,
+                description=f"Step {step_order}" if step_order is not None else f"Group {group_id}" if group_id is not None else None,
                 pod_namespace=getattr(simulation, "namespace", None),
                 simulation_id=simulation.id,
-                template_id=step.template_id,
-                step_order=step.step_order,
+                template_id=template_id,
+                step_order=step_order,
+                group_id=group_id
             )
             session.add(instance)
             await session.flush()  # ID 생성
+            
+            # 3. 최종 이름 업데이트 (instance_id 반영)
+            if step_order is not None:
+                instance.name = f"sim-{simulation.id}-step-{step_order}-instance-{instance.id}"
+            elif group_id is not None:
+                instance.name = f"sim-{simulation.id}-group-{group_id}-instance-{instance.id}"
+            else:
+                instance.name = f"sim-{simulation.id}-instance-{instance.id}"
+                
+            if manage_session:
+                await session.commit()
+                
             return instance
 
     # -----------------------------
@@ -84,7 +103,8 @@ class InstanceRepository:
     async def create_instances_batch(
         self,
         simulation: Union[SimulationContext, Simulation],
-        step: Union[StepContext, SimulationStep],
+        step: Optional[Union["StepContext", "SimulationStep"]] = None,
+        group: Optional["SimulationGroup"] = None,
         session: Optional[AsyncSession] = None,
         start_index: int = 0,
     ) -> List[Instance]:
@@ -96,15 +116,22 @@ class InstanceRepository:
         if session is None:
             session = self.session_factory()
             manage_session = True
+        
+        # 생성할 instance 개수 결정
+        if step is not None:
+            count = step.autonomous_agent_count
+        elif group is not None:
+            count = group.autonomous_agent_count
+        else:
+            raise ValueError("Either step or group must be provided to determine instance count")
             
         instances = []
         async with session if manage_session else contextlib.nullcontext(session):
-            for i in range(step.autonomous_agent_count):
-                agent_index = start_index + i
+            for _ in range(count):
                 inst = await self.create_instance(
                     simulation=simulation,
                     step=step,
-                    agent_index=agent_index,
+                    group=group,
                     session=session,
                 )
                 instances.append(inst)
@@ -118,6 +145,68 @@ class InstanceRepository:
         instance = await session.get(Instance, instance_id)
         if instance:
             await session.delete(instance)
+            
+    async def delete_by_step(
+        self,
+        step_order: int,
+        simulation_id: int,
+        session: Optional[AsyncSession] = None,
+    ) -> int:
+        """
+        step_order 기준으로 Instance 삭제
+        Args:
+            step_order: 삭제할 Step 순서 (필수)
+            simulation_id: Simulation ID (필수)
+            session: Optional, 기존 AsyncSession 재사용 가능
+        Returns:
+            삭제된 레코드 수
+        """
+        if step_order is None or simulation_id is None:
+            raise Exception("step_order와 simulation_id는 필수입니다.")
+
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
+            stmt = delete(Instance).where(
+                Instance.step_order == step_order,
+                Instance.simulation_id == simulation_id
+            ).returning(Instance.id)
+            result = await session.execute(stmt)
+            deleted_ids = result.scalars().all()
+            return len(deleted_ids)
+
+
+    async def delete_by_group(
+        self,
+        group_id: int,
+        session: Optional[AsyncSession] = None,
+    ) -> int:
+        """
+        group_id 기준으로 Instance 삭제
+        Args:
+            group_id: 삭제할 그룹 ID (필수)
+            session: Optional, 기존 AsyncSession 재사용 가능
+        Returns:
+            삭제된 레코드 수
+        """
+        if group_id is None:
+            raise Exception("group_id는 필수입니다.")
+
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
+            stmt = delete(Instance).where(
+                Instance.group_id == group_id
+            ).returning(Instance.id)      
+            result = await session.execute(stmt)
+            deleted_ids = result.scalars().all()
+            return len(deleted_ids)
 
 # 의존성 주입을 위한 팩토리 함수
 def create_instance_repository(

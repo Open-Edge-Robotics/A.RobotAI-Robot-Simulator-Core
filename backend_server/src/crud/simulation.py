@@ -844,7 +844,7 @@ class SimulationService:
                     await redis_client.set_simulation_status(simulation_id, current_status)
 
                 # Pod 조회
-                pod_list = self.pod_service.get_pods_by_filter(
+                pod_list = PodService.get_pods_by_filter(
                     namespace=simulation.namespace,
                     filter_params=StepOrderFilter(step_order=step.step_order)
                 )
@@ -1273,7 +1273,7 @@ class SimulationService:
                     await redis_client.set_simulation_status(simulation_id, current_status)
 
                 # Pod 조회
-                pod_list = self.pod_service.get_pods_by_filter(
+                pod_list = PodService.get_pods_by_filter(
                     namespace=simulation.namespace,
                     filter_params=StepOrderFilter(step_order=step.step_order)
                 )
@@ -1928,7 +1928,7 @@ class SimulationService:
 
         try:
             # 1️⃣ 그룹 Pod 조회
-            pod_list = self.pod_service.get_pods_by_filter(
+            pod_list = PodService.get_pods_by_filter(
                 namespace=simulation.namespace,
                 filter_params=GroupIdFilter(group_id=group.id)
             )
@@ -3053,7 +3053,7 @@ class SimulationService:
             
             # 각 스텝별로 역순 처리
             for step in steps_reversed:
-                pod_list = self.pod_service.get_pods_by_filter(
+                pod_list = PodService.get_pods_by_filter(
                     namespace=simulation.namespace,
                     filter_params=StepOrderFilter(step_order=step.step_order)
                 )
@@ -3110,7 +3110,7 @@ class SimulationService:
             all_pods = []
             
             for group in groups:
-                pod_list = self.pod_service.get_pods_by_filter(
+                pod_list = PodService.get_pods_by_filter(
                     namespace=simulation.namespace,
                     filter_params=GroupIdFilter(group_id=group.id)
                 )
@@ -3698,143 +3698,6 @@ class SimulationService:
         if not success:
             raise ValueError(f"Simulation ID {simulation_id} not found")
         return True
-    
-    # async def update_pattern_background(self, simulation_id: int, pattern_update: PatternUpdateRequest):
-    #     """
-    #     BackgroundTasks로 실행되는 실제 패턴 업데이트
-    #     - steps_update / groups_update 처리
-    #     - 진행상황 Redis 기록
-    #     """
-    #     async with self.sessionmaker() as session:
-    #         async with session.begin():  # 단일 트랜잭션
-    #             # 1. 시뮬레이션 조회
-    #             debug_print("시뮬레이션 조회")
-    #             simulation = await self.repository.find_by_id(simulation_id, session=session)
-    #             pattern_type = simulation.pattern_type
-                
-    #             # 2. step/group 한 번에 조회
-    #             steps_map = {}
-    #             groups_map = {}
-    #             if pattern_type == PatternType.SEQUENTIAL:
-    #                 debug_print("step 목록 조회")
-    #                 simulation_steps = await self.repository.find_simulation_steps(simulation_id, session=session)
-    #                 debug_print("step 목록 조회 완료")
-    #                 steps_map = {step.step_order: step for step in simulation_steps}
-    #             elif pattern_type == PatternType.PARALLEL:
-    #                 groups_map = {group.group_id: group for group in await self.repository.find_simulation_groups(simulation_id, session=session)}
-                    
-    #             # 3. steps_update 처리
-    #             if pattern_type == PatternType.SEQUENTIAL and pattern_update.steps_update:
-    #                 for step_update in pattern_update.steps_update:
-    #                     step_entity = steps_map.get(step_update.step_order)
-    #                     if step_entity:
-    #                         """기존 단계 업데이트"""
-    #                         debug_print(f"Step {step_entity.step_order} 업데이트")
-                            
-    #                         update_data = StepContext(
-    #                             id=step_entity.id,
-    #                             execution_time=step_update.execution_time,
-    #                             delay_after_completion=step_update.delay_after_completion,
-    #                             repeat_count=step_update.repeat_count,
-    #                             autonomous_agent_count=step_update.autonomous_agent_count
-    #                         )
-    #                         await self.repository.update_simulation_step_configuration(
-    #                             step=update_data,
-    #                             session=session
-    #                         )
-                            
-    #                         # Pod 증감 처리
-    #                         if step_update.autonomous_agent_count is not None:
-    #                             # 목표 Pod 수
-    #                             desired_count = step_update.autonomous_agent_count - step_entity.autonomous_agent_count
-                                
-    #                             # DB에서 Instance 증감 반영
-    #                             if desired_count > 0:
-    #                                 # 새 Instance 생성
-    #                                 sim_context = SimulationContext(
-    #                                     id=simulation.id,
-    #                                     name=simulation.name,
-    #                                     pattern_type=simulation.pattern_type,
-    #                                     namespace=simulation.namespace
-    #                                 )
-    #                                 step_context = StepContext(
-    #                                     id=step_entity.id,
-    #                                     step_order=step_entity.step_order,
-    #                                     template_id=step_entity.template_id,
-    #                                     autonomous_agent_count=desired_count,  # 새로 생성할 수
-    #                                     execution_time=step_entity.execution_time,
-    #                                     delay_after_completion=step_entity.delay_after_completion,
-    #                                     repeat_count=step_entity.repeat_count
-    #                                 )
-
-    #                                 new_instances = await self.instance_repository.create_instances_batch(
-    #                                     simulation=sim_context,
-    #                                     step=step_context,
-    #                                     session=session,
-    #                                     start_index=step_entity.autonomous_agent_count
-    #                                 )
-                                    
-    #                                 pod_creation_tasks = [
-    #                                     PodService.create_pod_v2(
-    #                                         instance=instance,
-    #                                         simulation=simulation,
-    #                                         step=step_entity
-    #                                     )
-    #                                     for instance in new_instances
-    #                                 ]
-    #                                 print(f"  -> {len(pod_creation_tasks)}개 Pod 동시 생성 시작...")        
-    #                                 results = await asyncio.gather(*pod_creation_tasks, return_exceptions=True)
-
-    #                                 # 결과 집계
-    #                                 created = len(results)
-    #                                 success = sum(1 for r in results if not isinstance(r, Exception))
-    #                                 failed = sum(1 for r in results if isinstance(r, Exception))
-    #                                 logger.info(f"Step {step.step_order}: Pod 생성 완료 - 총:{created}, 성공:{success}, 실패:{failed}")
-
-    #                             elif desired_count < 0:
-    #                                 # DB에서 기존 Instance 제거
-    #                                 debug_print("DB 에서 기존 Instance 제거 필요")
-    #                     else:
-    #                         """새 단계 생성"""
-    #                         print("새 단계 생성")
-    #                         step_context = StepContext(
-    #                             id=0,  # DB 저장 후 채워짐
-    #                             step_order=step_update.step_order,
-    #                             template_id=step_update.template_id,
-    #                             autonomous_agent_count=step_update.autonomous_agent_count,
-    #                             execution_time=step_update.execution_time,
-    #                             delay_after_completion=step_update.delay_after_completion,
-    #                             repeat_count=step_update.repeat_count
-    #                         )
-
-    #                         sim_context = SimulationContext(
-    #                             id=simulation.id,
-    #                             name=simulation.name,
-    #                             pattern_type=simulation.pattern_type,
-    #                             namespace=simulation.namespace
-    #                         )
-                            
-    #                         step, instances, template = await self.create_step_or_group(
-    #                             simulation_data=sim_context,
-    #                             step_data=step_context,
-    #                             session=session
-    #                         )
-                            
-    #                         # Pod 생성 (동시 처리로 성능 향상)
-    #                         pod_creation_tasks = [
-    #                             PodService.create_pod_v2(instance, simulation, step)
-    #                             for instance in instances
-    #                         ]
-                            
-    #                         # 동시 Pod 생성 실행
-    #                         print(f"  -> {len(pod_creation_tasks)}개 Pod 동시 생성 시작...")
-    #                         results = await asyncio.gather(*pod_creation_tasks, return_exceptions=True)
-                            
-    #                         # 결과 집계
-    #                         step_created = len(results)
-    #                         step_successful = sum(1 for r in results if not isinstance(r, Exception))
-    #                         step_failed = sum(1 for r in results if isinstance(r, Exception))
-    #                         print(f"Step {step.step_order}: 생성 {step_created}, 성공 {step_successful}, 실패 {step_failed}")
                                 
     async def create_step_or_group(
         self, 
