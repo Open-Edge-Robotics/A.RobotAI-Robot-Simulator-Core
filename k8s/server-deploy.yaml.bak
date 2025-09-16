@@ -30,7 +30,7 @@ spec:
     spec:
       containers:
         - name: robot-deploy
-          image: pbc9236/robot:v0.0.134
+          image: pbc9236/robot:v0.0.151
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
@@ -62,6 +62,17 @@ spec:
                   key: minio_bucket_name
             - name: API_STR
               value: /api
+            - name: REDIS_HOST
+              value: "redis.robot.svc.cluster.local"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: redis-password
+            - name: REDIS_DB
+              value: "0"
 #          volumeMounts:
 #            - mountPath: /root/.kube/config
 #              name: kube-config
@@ -90,3 +101,47 @@ spec:
       nodePort: 30020  # 주의: NodePort는 클러스터 전체에서 고유해야 함
   type: NodePort
   externalTrafficPolicy: Cluster
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: robot-admin
+rules:
+  # Pod 관련 권한
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Namespace 관련 권한
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # RoleBinding 관련 권한
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # PVC 조회 권한
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+
+  # Metrics 조회 권한 (metrics-server 필요)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list", "watch"]
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: robot-admin-global
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: robot
+roleRef:
+  kind: ClusterRole
+  name: robot-admin
+  apiGroup: rbac.authorization.k8s.io

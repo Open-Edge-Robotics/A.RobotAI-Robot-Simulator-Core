@@ -2,7 +2,11 @@ import traceback
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
+from typing import Optional
 
+from repositories.instance_repository import InstanceRepository
+from repositories.template_repository import TemplateRepository
+from schemas.simulation_status import CurrentStatus, SimulationStatusResponse
 from crud.template import get_template_service
 from schemas.simulation_status import CurrentStatus, SimulationDeletionStatusData, SimulationDeletionStatusResponse, SimulationStatusResponse
 from models.enums import ViewType
@@ -23,7 +27,9 @@ def get_simulation_service(
 ) -> SimulationService:
     """SimulationService 의존성 주입"""
     repository = SimulationRepository(async_session)
-    return SimulationService(db, async_session, repository, template_service, simulation_state)
+    template_repository = TemplateRepository(async_session)
+    instance_repository = InstanceRepository(async_session)
+    return SimulationService(db, async_session, repository, template_service, template_repository, instance_repository, simulation_state)
 
 
 @router.post(
@@ -186,6 +192,30 @@ async def get_simulations(
         print(f"[Exception] {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="시뮬레이션 목록 조회 중 오류가 발생했습니다")
+    
+# @router.put("/{simulation_id}")
+# async def update_simulation(
+#     simulation_id: int,
+#     update_data: SimulationUpdateRequest,
+#     background_tasks: BackgroundTasks,
+#     service: SimulationService = Depends(get_simulation_service)
+# ):
+#     """시뮬레이션 설정 업데이트"""
+#     if update_data.description:
+#         try:
+#             await service.update_simulation_description(simulation_id, update_data.description)
+#         except ValueError as e:
+#             # 존재하지 않는 시뮬레이션 → 404
+#             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+#         except Exception as e:
+#             # 기타 DB 에러 → 500
+#             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Simulation update failed")
+        
+#     if update_data.pattern_update:
+#         print("백그라운드 패턴 업데이트 태스크 생성")
+#         background_tasks.add_task(service.update_pattern_background, simulation_id, update_data.pattern_update)
+        
+#     return {"message": "Simulation updated"}
 
 @router.put("/{simulation_id}/pattern", response_model=SimulationPatternUpdateResponseModel,
             status_code=status.HTTP_200_OK)

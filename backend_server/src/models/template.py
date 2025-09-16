@@ -4,6 +4,7 @@ from typing import List
 from sqlalchemy import String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from .instance import Instance
 from database.db_conn import Base
 
 
@@ -18,7 +19,7 @@ class Template(Base):
     topics: Mapped[str] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    instances: Mapped[List["Instance"]] = relationship(back_populates="template", lazy="selectin")
+    instances: Mapped[List[Instance]] = relationship(back_populates="template", lazy="selectin")
 
     def __repr__(self) -> str:
         return f"Template => {self.type} ({self.template_id})"

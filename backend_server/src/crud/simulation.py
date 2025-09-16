@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from datetime import datetime, timezone
 import traceback
 from typing import Any, Dict, Tuple, List, Optional
@@ -7,8 +8,11 @@ from sqlalchemy import select, exists, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from starlette.status import HTTP_409_CONFLICT
-from kubernetes.client import V1Pod
 
+from schemas.context import SimulationContext, StepContext
+from repositories.instance_repository import InstanceRepository
+from repositories.template_repository import TemplateRepository
+# from schemas.simulation_update import PatternUpdateRequest
 from database.redis_simulation_client import RedisSimulationClient
 from schemas.simulation_status import CurrentStatus, CurrentTimestamps, GroupDetail, ParallelProgress, SequentialProgress, StepDetail
 from crud.metrics_collector import MetricsCollector
@@ -25,6 +29,7 @@ from models.enums import ExecutionStatus, GroupStatus, PatternType, SimulationSt
 from utils.simulation_background import (
     handle_parallel_pattern_background,
     handle_sequential_pattern_background,
+    process_single_step,
 )
 from .template import TemplateService
 
@@ -32,8 +37,6 @@ from .pod import PodService
 from .rosbag import RosService
 from models.instance import Instance
 from models.simulation import Simulation
-from models.simulation_groups import SimulationGroup
-from models.simulation_steps import SimulationStep
 from schemas.simulation import (
     SimulationCreateRequest,
     SimulationListItem,
@@ -54,10 +57,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 class SimulationService:
-    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository, template_service: TemplateService, state: SimulationState):
+    def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository, template_service: TemplateService , template_repository: TemplateRepository, instance_repository: InstanceRepository, state: SimulationState):
         self.session = session
         self.sessionmaker = sessionmaker
         self.repository = repository
+        self.template_repository = template_repository
+        self.instance_repository = instance_repository
         self.state = state
         self.pod_service = PodService()
         self.template_service = template_service
@@ -839,7 +844,7 @@ class SimulationService:
                     await redis_client.set_simulation_status(simulation_id, current_status)
 
                 # Pod 조회
-                pod_list = self.pod_service.get_pods_by_filter(
+                pod_list = PodService.get_pods_by_filter(
                     namespace=simulation.namespace,
                     filter_params=StepOrderFilter(step_order=step.step_order)
                 )
@@ -1268,7 +1273,7 @@ class SimulationService:
                     await redis_client.set_simulation_status(simulation_id, current_status)
 
                 # Pod 조회
-                pod_list = self.pod_service.get_pods_by_filter(
+                pod_list = PodService.get_pods_by_filter(
                     namespace=simulation.namespace,
                     filter_params=StepOrderFilter(step_order=step.step_order)
                 )
@@ -1923,7 +1928,7 @@ class SimulationService:
 
         try:
             # 1️⃣ 그룹 Pod 조회
-            pod_list = self.pod_service.get_pods_by_filter(
+            pod_list = PodService.get_pods_by_filter(
                 namespace=simulation.namespace,
                 filter_params=GroupIdFilter(group_id=group.id)
             )
@@ -2632,7 +2637,7 @@ class SimulationService:
                 await redis_client.client.close()
                 redis_client.client = None
 
-    async def find_simulation_by_id(self, simulation_id: int, api: str) -> Simulation:
+    async def find_simulation_by_id(self, simulation_id: int, api: str = "") -> Simulation:
         simulation = await self.repository.find_by_id(simulation_id)
 
         if not simulation:
@@ -3048,7 +3053,7 @@ class SimulationService:
             
             # 각 스텝별로 역순 처리
             for step in steps_reversed:
-                pod_list = self.pod_service.get_pods_by_filter(
+                pod_list = PodService.get_pods_by_filter(
                     namespace=simulation.namespace,
                     filter_params=StepOrderFilter(step_order=step.step_order)
                 )
@@ -3105,7 +3110,7 @@ class SimulationService:
             all_pods = []
             
             for group in groups:
-                pod_list = self.pod_service.get_pods_by_filter(
+                pod_list = PodService.get_pods_by_filter(
                     namespace=simulation.namespace,
                     filter_params=GroupIdFilter(group_id=group.id)
                 )
@@ -3687,3 +3692,79 @@ class SimulationService:
             group_details=group_details,
             message=message
         )
+
+    async def update_simulation_description(self, simulation_id: int, description: str):
+        success = await self.repository.update_simulation_description(simulation_id, description)
+        if not success:
+            raise ValueError(f"Simulation ID {simulation_id} not found")
+        return True
+                                
+    async def create_step_or_group(
+        self, 
+        simulation_data: SimulationContext, 
+        step_data: StepContext = None, 
+        group_data=None,
+        session: Optional[AsyncSession] = None
+    ):
+        manage_session = False
+        if session is None:
+            session = self.sessionmaker()
+            manage_session = True
+            
+        async with session if manage_session else contextlib.nullcontext(session):
+            # Template 조회
+            debug_print("템플릿 조회")
+            template = await self.template_repository.find_by_id(
+                step_data.template_id, session=session
+            )
+            if not template:
+                raise ValueError(f"Template {step_data.template_id} not found")
+            
+            if simulation_data.pattern_type == PatternType.SEQUENTIAL:
+                if not step_data:
+                    raise ValueError("StepContext is required for sequential pattern")
+                
+                # Step 생성
+                debug_print("Step 생성 요청")
+                db_step  = await self.repository.create_simulation_step(
+                    session=session,
+                    simulation_id=simulation_data.id,
+                    step_order=step_data.step_order,
+                    template_id=step_data.template_id,
+                    autonomous_agent_count=step_data.autonomous_agent_count,
+                    execution_time=step_data.execution_time,
+                    delay_after_completion=step_data.delay_after_completion,
+                    repeat_count=step_data.repeat_count,
+                )
+                debug_print("Step 생성 완료")
+
+                # Instance batch 생성
+                step_data.id = db_step.id
+                
+                debug_print("Instance 생성 요청")
+                instances = await self.instance_repository.create_instances_batch(
+                    simulation=simulation_data,
+                    step=step_data,
+                    session=session
+                )
+                debug_print("Instance 생성 완료")
+
+                return db_step, instances, template
+    
+            else:
+                raise ValueError(f"Unknown pattern type: {simulation_data.pattern_type}")
+            
+    def build_simulation_config(self, simulation, step):
+        return {
+            'bag_file_path': step.template.bag_file_path,
+            'repeat_count': step.repeat_count,
+            'max_execution_time': f"{step.execution_time}s" if step.execution_time else "3600s",
+            'communication_port': 11311,
+            'data_format': 'ros-bag',
+            'debug_mode': False,
+            'log_level': 'INFO',
+            'delay_after_completion': step.delay_after_completion,
+            'simulation_name': simulation.name,
+            'pattern_type': simulation.pattern_type,
+            'mec_id': simulation.mec_id
+        }

@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
+
 from .simulation_groups import SimulationGroup
 from .simulation_steps import SimulationStep
+from .instance import Instance
 
 from .enums import PatternType, SimulationStatus
 from sqlalchemy import Float, String, DateTime, Integer, ForeignKey, Enum as PgEnum
@@ -54,13 +56,13 @@ class Simulation(Base):
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 관계
-    steps: Mapped[Optional[List["SimulationStep"]]] = relationship(
-        backref="simulation", cascade="all, delete-orphan", lazy="selectin"
+    steps: Mapped[Optional[List[SimulationStep]]] = relationship(
+        backref="simulation", cascade="all, delete-orphan", lazy="select"
     )
-    groups: Mapped[Optional[List["SimulationGroup"]]] = relationship(
-        backref="simulation", cascade="all, delete-orphan", lazy="selectin"
+    groups: Mapped[Optional[List[SimulationGroup]]] = relationship(
+        backref="simulation", cascade="all, delete-orphan", lazy="select"
     )
-    instances: Mapped[List["Instance"]] = relationship(back_populates="simulation", lazy="selectin")
+    instances: Mapped[List[Instance]] = relationship(back_populates="simulation", lazy="select")
 
     def __repr__(self) -> str:
         return f"Simulation => {self.name} ({self.pattern_type})"
