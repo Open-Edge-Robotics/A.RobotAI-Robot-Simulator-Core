@@ -7,6 +7,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 import logging
 
+from exception.simulation_exceptions import SimulationError
+from exception.template_exceptions import TemplateError
 from schemas.format import GlobalResponseModel
 
 app = FastAPI()
@@ -119,6 +121,26 @@ async def validation_exception_handler(request: Request, exception: RequestValid
         data=None,
         message=error_details
     )
+    return JSONResponse(status_code=400, content=response.model_dump())
+
+@app.exception_handler(SimulationError)
+async def simulation_pattern_exception_handler(request: Request, exception: SimulationError):
+    response = safe_create_response(
+        status_code=400,
+        data=None,
+        message=str(exception)
+    )
+    
+    return JSONResponse(status_code=400, content=response.model_dump())
+
+@app.exception_handler(TemplateError)
+async def template_exception_handler(request: Request, exception: TemplateError):
+    response = safe_create_response(
+        status_code=400,
+        data=None,
+        message=str(exception)
+    )
+    
     return JSONResponse(status_code=400, content=response.model_dump())
 
 
