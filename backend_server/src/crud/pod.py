@@ -405,9 +405,6 @@ class PodService:
                 {"name": "PATTERN_TYPE", "value": pattern_type},
                 {"name": "STEP_ORDER", "value": str(step_order) if step_order else "0"},
                 {"name": "GROUP_ID", "value": str(group_id) if group_id else "default"},
-                {"name": "REPEAT_COUNT", "value": str(repeat_count)},
-                {"name": "MAX_EXECUTION_TIME", "value": max_execution_time},
-                {"name": "DELAY_AFTER_COMPLETION", "value": str(delay_after_completion)},
                 {"name": "DEBUG_MODE", "value": "false"},
                 {"name": "LOG_LEVEL", "value": "INFO"},
                 {"name": "COMMUNICATION_PORT", "value": "11311"},
@@ -702,7 +699,7 @@ class PodService:
         """
         필터 조건에 맞는 모든 Pod 삭제
         """
-        pods = await PodService.get_pods_by_filter(namespace, filter_params)
+        pods = PodService.get_pods_by_filter(namespace, filter_params)
         if not pods:
             debug_print(f"[delete_pods_by_filter] No pods found for filter={filter_params}")
             return
@@ -885,20 +882,22 @@ class PodService:
         except Exception as e:
             raise RuntimeError(f"Failed to get pods: {str(e)}")
     
-    async def get_pods_by_step_order(self, namespace: str, step_order: int) -> List[V1Pod]:
+    @staticmethod
+    def get_pods_by_step_order(namespace: str, step_order: int) -> List[V1Pod]:
         """
         step_order로 pod 목록 조회 (편의 메서드)
         """
-        return await PodService.get_pods_by_filter(
+        return PodService.get_pods_by_filter(
             namespace, 
             {"step_order": step_order}
         )
     
-    async def get_pods_by_group_id(self, namespace: str, group_id: int) -> List[V1Pod]:
+    @staticmethod
+    def get_pods_by_group_id(namespace: str, group_id: int) -> List[V1Pod]:
         """
         group_id로 pod 목록 조회 (편의 메서드)
         """
-        return await PodService.get_pods_by_filter(
+        return PodService.get_pods_by_filter(
             namespace, 
             {"group_id": group_id}
         )
@@ -925,9 +924,9 @@ class PodService:
 
         # 1. 현재 Pod 목록 조회
         if pattern_type == "sequential":
-            pods = await self.get_pods_by_step_order(namespace, step_order)
+            pods = PodService.get_pods_by_step_order(namespace, step_order)
         else:  # "parallel"
-            pods = await self.get_pods_by_group_id(namespace, group_id)
+            pods = PodService.get_pods_by_group_id(namespace, group_id)
 
         current_count = len(pods)
 

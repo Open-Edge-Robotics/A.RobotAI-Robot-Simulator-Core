@@ -1,156 +1,144 @@
-from typing import List, Optional
-from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Optional, Union
+from pydantic import BaseModel, Field, model_validator
+
+from schemas.format import BaseSchema
 
 # -----------------------------
-# Step / Group 생성 DTO
+# Step 공통 필드
 # -----------------------------
-class StepCreateDTO(BaseModel):
-    step_order: int = Field(..., description="단계 순서", ge=1, alias="stepOrder", example=1)
-    template_id: int = Field(..., description="템플릿 ID", alias="templateId", example=101)
-    autonomous_agent_count: int = Field(..., description="자율행동체 개수", ge=1, le=50,
-                                        alias="autonomousAgentCount", example=3)
-    execution_time: Optional[int] = Field(None, description="실행 시간(초)", ge=60, le=86400,
-                                          alias="executionTime", example=3600)
-    delay_after_completion: Optional[int] = Field(None, description="완료 후 지연 시간(초)", ge=0,
-                                                  alias="delayAfterCompletion", example=10)
-    repeat_count: Optional[int] = Field(None, description="반복 횟수", ge=1, le=100,
-                                        alias="repeatCount", example=2)
+class StepBaseDTO(BaseModel):
+    step_order: int = Field(..., ge=1, alias="stepOrder", description="단계 순서")
 
-    class Config:
-        populate_by_name = True
+class StepTimingMixin(BaseModel):
+    template_id: int = Field(..., alias="templateId", description="템플릿 ID")
+    autonomous_agent_count: int = Field(..., ge=1, le=50, alias="autonomousAgentCount")
+    execution_time: Optional[int] = Field(None, ge=60, le=86400, alias="executionTime")
+    delay_after_completion: Optional[int] = Field(None, ge=0, alias="delayAfterCompletion")
+    repeat_count: Optional[int] = Field(None, ge=1, le=100, alias="repeatCount")
 
+# -----------------------------
+# Group 공통 필드
+# -----------------------------
+class GroupBaseDTO(BaseModel):
+    group_id: int = Field(..., ge=1, alias="groupId", description="그룹 ID")
 
-class GroupCreateDTO(BaseModel):
-    template_id: int = Field(..., description="템플릿 ID", alias="templateId", example=102)
-    autonomous_agent_count: int = Field(..., description="자율행동체 개수", ge=1, le=50,
-                                        alias="autonomousAgentCount", example=5)
-    execution_time: Optional[int] = Field(None, description="실행 시간(초)", ge=60, le=86400,
-                                          alias="executionTime", example=1800)
-    repeat_count: Optional[int] = Field(None, description="반복 횟수", ge=1, le=100,
-                                        alias="repeatCount", example=3)
+class GroupTimingMixin(BaseModel):
+    template_id: int = Field(..., alias="templateId", description="템플릿 ID")
+    autonomous_agent_count: int = Field(..., ge=1, le=50, alias="autonomousAgentCount")
+    execution_time: Optional[int] = Field(None, ge=60, le=86400, alias="executionTime")
+    repeat_count: Optional[int] = Field(None, ge=1, le=100, alias="repeatCount")
 
-    class Config:
-        populate_by_name = True
+# -----------------------------
+# Step DTO
+# -----------------------------
+class StepCreateDTO(StepBaseDTO, StepTimingMixin):
+    """Step 생성용 DTO"""
+    pass
 
+class StepUpdateDTO(StepBaseDTO):
+    """Step 수정용 DTO"""
+    template_id: Optional[int] = Field(None, alias="templateId")
+    autonomous_agent_count: Optional[int] = Field(None, alias="autonomousAgentCount")
+    execution_time: Optional[int] = Field(None, alias="executionTime")
+    delay_after_completion: Optional[int] = Field(None, alias="delayAfterCompletion")
+    repeat_count: Optional[int] = Field(None, alias="repeatCount")
 
+class StepDeleteDTO(StepBaseDTO):
+    """Step 삭제용 DTO"""
+    pass
+
+# -----------------------------
+# Group DTO
+# -----------------------------
+class GroupCreateDTO(GroupTimingMixin):
+    """Group 생성용 DTO"""
+    pass
+
+class GroupUpdateDTO(GroupBaseDTO):
+    """Group 수정용 DTO"""
+    template_id: Optional[int] = Field(None, alias="templateId")
+    autonomous_agent_count: Optional[int] = Field(None, alias="autonomousAgentCount")
+    execution_time: Optional[int] = Field(None, alias="executionTime")
+    repeat_count: Optional[int] = Field(None, alias="repeatCount")
+
+class GroupDeleteDTO(GroupBaseDTO):
+    """Group 삭제용 DTO"""
+    pass
+
+# -----------------------------
+# Pattern Request DTO
+# -----------------------------
 class PatternCreateRequestDTO(BaseModel):
-    step: Optional[StepCreateDTO] = Field(None, description="순차 패턴 단계 생성", alias="step")
-    group: Optional[GroupCreateDTO] = Field(None, description="병렬 패턴 그룹 생성", alias="group")
+    """패턴 생성 요청 DTO"""
+    step: Optional[StepCreateDTO] = None
+    group: Optional[GroupCreateDTO] = None
 
     @model_validator(mode="before")
-    @classmethod
-    def check_step_or_group(cls, values):
-        step = values.get("step")
-        group = values.get("group")
+    def validate_step_or_group(cls, values):
+        step, group = values.get("step"), values.get("group")
         if step and group:
-            raise ValueError("step과 group은 동시에 사용할 수 없습니다")
+            raise ValueError("❌ Step과 Group을 동시에 요청할 수 없습니다")
         if not step and not group:
-            raise ValueError("step 또는 group 중 하나는 필수입니다")
+            raise ValueError("❌ Step 또는 Group 중 하나는 필수입니다")
         return values
-
-    class Config:
-        populate_by_name = True
-
-
-# -----------------------------
-# Pattern 생성 응답 DTO
-# -----------------------------
-class PatternCreateResponseDTO(BaseModel):
-    status_code: int = Field(..., alias="statusCode")
-    data: dict = Field(..., alias="data")
-    message: str
-
-
-# -----------------------------
-# Step / Group 수정 DTO
-# -----------------------------
-class StepUpdateDTO(BaseModel):
-    step_id: int = Field(..., description="단계 ID", ge=1, alias="stepId", example=1)
-    execution_time: Optional[int] = Field(None, description="실행 시간(초)", ge=60, le=86400,
-                                          alias="executionTime", example=3600)
-    delay_after_completion: Optional[int] = Field(None, description="완료 후 지연 시간(초)", ge=0,
-                                                  alias="delayAfterCompletion", example=5)
-    repeat_count: Optional[int] = Field(None, description="반복 횟수", ge=1, le=100,
-                                        alias="repeatCount", example=2)
-
-    @field_validator("execution_time")
-    @classmethod
-    def validate_execution_time(cls, v):
-        if v is not None and (v < 60 or v > 86400):
-            raise ValueError("실행 시간은 60초 이상 86400초 이하여야 합니다")
-        return v
-
-    class Config:
-        populate_by_name = True
-
-
-class GroupUpdateDTO(BaseModel):
-    group_id: int = Field(..., description="그룹 ID", ge=1, alias="groupId", example=1)
-    execution_time: Optional[int] = Field(None, description="실행 시간(초)", ge=60, le=86400,
-                                          alias="executionTime", example=1800)
-    repeat_count: Optional[int] = Field(None, description="반복 횟수", ge=1, le=100,
-                                        alias="repeatCount", example=3)
-
-    @field_validator("execution_time")
-    @classmethod
-    def validate_execution_time(cls, v):
-        if v is not None and (v < 60 or v > 86400):
-            raise ValueError("실행 시간은 60초 이상 86400초 이하여야 합니다")
-        return v
-
-    class Config:
-        populate_by_name = True
 
 
 class PatternUpdateRequestDTO(BaseModel):
-    step_update: Optional[StepUpdateDTO] = Field(None, description="순차 패턴 단계 업데이트", alias="stepUpdate")
-    group_update: Optional[GroupUpdateDTO] = Field(None, description="병렬 패턴 그룹 업데이트", alias="groupUpdate")
+    """패턴 수정 요청 DTO"""
+    step: Optional[StepUpdateDTO] = None
+    group: Optional[GroupUpdateDTO] = None
 
     @model_validator(mode="before")
-    @classmethod
     def validate_step_or_group(cls, values):
-        step = values.get("step_update")
-        group = values.get("group_update")
+        step, group = values.get("step"), values.get("group")
         if step and group:
-            raise ValueError("stepUpdate와 groupUpdate는 동시에 사용할 수 없습니다")
+            raise ValueError("❌ Step과 Group을 동시에 요청할 수 없습니다")
         if not step and not group:
-            raise ValueError("stepUpdate 또는 groupUpdate 중 하나는 필수입니다")
+            raise ValueError("❌ Step 또는 Group 중 하나는 필수입니다")
         return values
 
-    class Config:
-        populate_by_name = True
 
-
-class PatternUpdateResponseDTO(BaseModel):
-    status_code: int = Field(..., alias="statusCode")
-    data: dict = Field(..., alias="data")
-    message: str
-
-
-# -----------------------------
-# Step / Group 삭제 DTO
-# -----------------------------
 class PatternDeleteRequestDTO(BaseModel):
-    step_order: Optional[int] = Field(None, description="삭제할 단계 순서", alias="stepOrder")
-    group_id: Optional[int] = Field(None, description="삭제할 그룹 ID", alias="groupId")
+    """패턴 삭제 요청 DTO"""
+    step: Optional[StepDeleteDTO] = None
+    group: Optional[GroupDeleteDTO] = None
 
     @model_validator(mode="before")
-    @classmethod
-    def check_step_or_group(cls, values):
-        step = values.get('stepOrder')
-        group = values.get('groupId')
+    def validate_step_or_group(cls, values):
+        step, group = values.get("step"), values.get("group")
         if step and group:
-            raise HTTPException(status_code=400, detail="stepOrder와 groupId는 동시에 사용할 수 없습니다")
+            raise ValueError("❌ Step과 Group을 동시에 요청할 수 없습니다")
         if not step and not group:
-            raise HTTPException(status_code=400, detail="stepOrder 또는 groupId 중 하나는 필수입니다")
+            raise ValueError("❌ Step 또는 Group 중 하나는 필수입니다")
         return values
 
-    class Config:
-        populate_by_name = True
+# -----------------------------
+# Pattern Response DTO
+# -----------------------------
+class StepResponseData(BaseSchema):
+    step_order: int
+    id: Optional[int] = None
+    template_id: Optional[int] = None
+    template_name: Optional[str] = None
+    template_type: Optional[str] = None
+    autonomous_agent_count: Optional[int] = None
+    execution_time: Optional[int] = None
+    delay_after_completion: Optional[int] = None
+    repeat_count: Optional[int] = None
 
 
-class PatternDeleteResponseDTO(BaseModel):
+class GroupResponseData(BaseSchema):
+    group_id: int
+    group_name: Optional[str] = None
+    template_id: Optional[int] = None
+    template_name: Optional[str] = None
+    template_type: Optional[str] = None
+    autonomous_agent_count: Optional[int] = None
+    execution_time: Optional[int] = None
+    repeat_count: Optional[int] = None
+    assigned_area: Optional[str] = None
+    
+class PatternResponseDTO(BaseModel):
     status_code: int = Field(..., alias="statusCode")
-    data: dict = Field(..., alias="data")
+    data: Optional[dict] = Field(None, alias="data") 
     message: str
