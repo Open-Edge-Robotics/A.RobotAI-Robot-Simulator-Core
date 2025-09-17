@@ -36,6 +36,7 @@ class StepModel(BaseSchema):
     delay_after_completion: Optional[int] = 0
 
 class GroupModel(BaseSchema):
+    group_id: int
     template_id: int
     template_type: str
     autonomous_agent_count: int
