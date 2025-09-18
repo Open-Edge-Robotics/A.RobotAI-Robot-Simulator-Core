@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str
     MINIO_SECRET_KEY: str
     MINIO_BUCKET_NAME: str
+    MINIO_EXTERNAL_HOST: str
+    MINIO_NODEPORT_API: str
     REDIS_HOST: str
     REDIS_PORT: str
     REDIS_PASSWORD: str

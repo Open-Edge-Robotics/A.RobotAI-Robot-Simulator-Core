@@ -1,3 +1,4 @@
+from typing import List
 from pydantic import ConfigDict, field_validator, Field
 
 from .format import GlobalResponseModel
@@ -11,6 +12,10 @@ class TemplateCreateRequest(BaseSchema):
     type: str = Field(examples=["robot-arm"])
     description: str = Field(examples=["This is robot-arm"])
     topics: str = Field(examples=["/navi_motion_traj, /nav_vel, /scan_unified"])
+    
+class TemplateFileInfo(BaseSchema):
+    file_name: str
+    download_url: str
 
 class TemplateCreateResponse(BaseSchema):
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
@@ -22,6 +27,8 @@ class TemplateCreateResponse(BaseSchema):
     bag_file_path: str
     topics: str
     created_at : str
+    metadata_file: TemplateFileInfo
+    db_file: TemplateFileInfo 
 
     @field_validator('created_at', mode='before')
     def format_datetime(cls, value):
@@ -48,13 +55,16 @@ class TemplateCreateResponseModel(GlobalResponseModel):
     pass
 
 
-###### 목록 조회 #######
+###### 목록 조회 #######    
 class TemplateListResponse(BaseSchema):
     template_id: int
+    template_name: str
     template_type: str
     template_description: str
     topics : str
     created_at : str
+    metadata_file: TemplateFileInfo
+    db_file: TemplateFileInfo 
 
 class TemplateListResponseModel(GlobalResponseModel):
     model_config = {
@@ -65,6 +75,7 @@ class TemplateListResponseModel(GlobalResponseModel):
                 "data": [
                     {
                         "templateId": 1,
+                        "templateName": "LG Robotic-Arm",
                         "templateType": "Robotic-Arm",
                         "templateDescription": "This is robot arm",
                         "topics" : "/cmd_vel, /scan, /navi_local_path",

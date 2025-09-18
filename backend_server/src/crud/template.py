@@ -12,7 +12,7 @@ from storage.minio_client import MinioStorageClient
 from storage.client import StorageClient
 from utils.rosbag_file_validator import RosbagFileValidator
 from models.template import Template
-from schemas.template import TemplateListResponse, TemplateCreateRequest, TemplateCreateResponse, \
+from schemas.template import TemplateFileInfo, TemplateListResponse, TemplateCreateRequest, TemplateCreateResponse, \
     TemplateDeleteResponse
 from utils.my_enum import API
 
@@ -26,16 +26,45 @@ class TemplateService:
         statement = select(Template).order_by(Template.template_id.desc())
         selected_template = await self.db.execute(statement)
         templates = selected_template.scalars().all()
+        
+        template_list = []
+        for template in templates:
+            # 1. 디렉토리 내 파일 리스트 조회
+            file_names = self.storage_client.list_files(template.bag_file_path)
+            
+            # 2. 파일명별 URL 생성
+            metadata_file_name = next((f for f in file_names if f.endswith("metadata.yaml")), None)
+            db_file_name = next((f for f in file_names if f.endswith(".db3")), None)
+            
+            if not metadata_file_name or not db_file_name:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"템플릿 {template.template_id}에 필요한 파일 누락"
+                )
+            
+            metadata_file_info = TemplateFileInfo(
+                file_name=metadata_file_name,
+                download_url=self.storage_client.get_presigned_url(f"{template.bag_file_path}/{metadata_file_name}")
+            ).model_dump()
+            db_file_info = TemplateFileInfo(
+                file_name=db_file_name,
+                download_url=self.storage_client.get_presigned_url(f"{template.bag_file_path}/{db_file_name}")
+            ).model_dump()
+            
+            template_list.append(
+                TemplateListResponse(
+                    template_id=template.template_id,
+                    template_name=template.name,
+                    template_type=template.type,
+                    template_description=template.description,
+                    topics=template.topics,
+                    created_at=str(template.created_at),
+                    metadata_file=metadata_file_info,
+                    db_file=db_file_info
+                ).model_dump()
+            )
 
-        return [
-            TemplateListResponse(
-                template_id=template.template_id,
-                template_type=template.type,
-                template_description=template.description,
-                topics=template.topics,
-                created_at=str(template.created_at)
-            ) for template in templates
-        ]
+        return template_list
 
     async def create_template(self, template: TemplateCreateRequest):
         new_template = Template(
@@ -51,6 +80,7 @@ class TemplateService:
         return TemplateCreateResponse.model_validate(new_template).model_dump()
     
     async def create_template_with_files(self, template_data: TemplateCreateRequest, metadata_file: UploadFile, db_file: UploadFile) -> TemplateCreateResponse:
+        # 1. 중복 템플릿 이름 확인
         query = select(Template).where(Template.name == template_data.name)
         result = await self.db.execute(query)
         existing_template = result.scalar_one_or_none()
@@ -60,27 +90,27 @@ class TemplateService:
                 detail=f'템플릿 이름 "{template_data.name}" 은(는) 이미 존재합니다.'
             )
         
-        # 1. 로컬 임시 디렉토리 생성
+        # 2. 로컬 임시 디렉토리 생성
         dir_name = f"{template_data.type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         local_dir = os.path.join("/tmp", dir_name)
         os.makedirs(local_dir, exist_ok=True)
 
-        # 2. 임시 파일 저장
+        # 3. 임시 파일 저장
         metadata_path = os.path.join(local_dir, metadata_file.filename)
         db_path = os.path.join(local_dir, db_file.filename)
         for f, path in [(metadata_file, metadata_path), (db_file, db_path)]:
             with open(path, "wb") as buffer:
                 shutil.copyfileobj(f.file, buffer)
 
-        # 3. 파일 검증
+        # 4. 파일 검증
         RosbagFileValidator.validate_files([metadata_path, db_path])
 
-        # 4. MinIO 업로드 (디렉토리 단위)
+        # 5. MinIO 업로드 (디렉토리 단위)
         self.storage_client.create_directory(dir_name)
         self.storage_client.upload_file(metadata_path, f"{dir_name}/{metadata_file.filename}")
         self.storage_client.upload_file(db_path, f"{dir_name}/{db_file.filename}")
 
-        # 5. DB 저장
+        # 6. DB 저장
         # Pod에서 접근할 때는 /rosbag-data/bagfiles/<directory> 구조로 사용
         bag_file_path_for_db = dir_name  # 디렉토리명만 저장
         new_template = Template(
@@ -94,10 +124,19 @@ class TemplateService:
         await self.db.commit()
         await self.db.refresh(new_template)
 
-        # 6. 로컬 임시 파일 삭제
+        # 7. 로컬 임시 파일 삭제
         shutil.rmtree(local_dir)
         
         template_response = TemplateCreateResponse.model_validate(new_template).model_dump()
+        template_response["metadata_file"] = TemplateFileInfo(
+            file_name=metadata_file.filename,
+            download_url=self.storage_client.get_presigned_url(f"{dir_name}/{metadata_file.filename}")
+        ).model_dump()
+        template_response["db_file"] = TemplateFileInfo(
+            file_name=db_file.filename,
+            download_url=self.storage_client.get_presigned_url(f"{dir_name}/{db_file.filename}")
+        ).model_dump()
+        
         return template_response
     
 

@@ -1,17 +1,19 @@
 import os
 
 class RosbagFileValidator:
-    REQUIRED_FILES = ["metadata.yaml", ".db3"]
-
     @staticmethod
-    def validate_files(file_paths: list):
-        has_metadata = any(f.endswith("metadata.yaml") for f in file_paths)
-        has_db3 = any(f.endswith(".db3") for f in file_paths)
+    def validate_files(file_paths: list[str]):
+        if len(file_paths) != 2:
+            raise ValueError("rosbag2 업로드에는 정확히 2개의 파일(.yaml/.yml, .db3)이 필요합니다.")
 
-        if not has_metadata or not has_db3:
-            raise ValueError("rosbag2 업로드에는 metadata.yaml과 .db3 파일이 모두 필요합니다.")
-
-        # 확장자 추가 검증 가능
+        yaml_file, db3_file = None, None
         for f in file_paths:
-            if not (f.endswith(".yaml") or f.endswith(".db3")):
+            if f.endswith((".yaml", ".yml")):
+                yaml_file = f
+            elif f.endswith(".db3"):
+                db3_file = f
+            else:
                 raise ValueError(f"허용되지 않은 파일 형식입니다: {f}")
+
+        if not yaml_file or not db3_file:
+            raise ValueError("rosbag2 업로드에는 .yaml/.yml 파일과 .db3 파일이 모두 필요합니다.")
