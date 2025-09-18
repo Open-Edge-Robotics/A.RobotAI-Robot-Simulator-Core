@@ -35,7 +35,7 @@ class TemplateService:
         """
         file_names = self.storage_client.list_files(template.bag_file_path)
 
-        metadata_file_name = next((f for f in file_names if f.endswith("metadata.yaml")), None)
+        metadata_file_name = next((f for f in file_names if f.endswith(("metadata.yaml", "metadata.yml"))), None)
         db_file_name = next((f for f in file_names if f.endswith(".db3")), None)
 
         if not metadata_file_name or not db_file_name:
@@ -201,7 +201,7 @@ class TemplateService:
             async with self.session_factory() as session:
                 existing_template = await self.template_repository.find_by_id(template_id, session)
                 if not existing_template:
-                    raise HTTPException(status_code=404, detail=f"템플릿 {template_id} 없음")
+                    raise HTTPException(status_code=400, detail=f"템플릿을 찾을 수 없습니다. ID: {template_id}")
 
                 if template_data.name and template_data.name == existing_template.name:
                     raise HTTPException(
@@ -290,7 +290,7 @@ class TemplateService:
         template = await self.template_repository.find_by_id(template_id)
 
         if template is None:
-            raise TemplateNotFoundError(template.id)
+            raise HTTPException(status_code=400, detail=f"템플릿을 찾을 수 없습니다. ID: {template_id}")
         return template
 
 # FastAPI DI 제공
