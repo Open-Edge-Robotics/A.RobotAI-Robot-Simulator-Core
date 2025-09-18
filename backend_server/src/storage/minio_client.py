@@ -1,8 +1,6 @@
 import os
 from .client import StorageClient
-from minio import Minio
-from settings import settings
-
+from minio import Minio, S3Error
 class MinioStorageClient(StorageClient):
     _instance = None  # 싱글톤 인스턴스
     
@@ -72,3 +70,29 @@ class MinioStorageClient(StorageClient):
         url = f"{base_url}/{self.bucket}/{object_name}"
         print(f"Generated direct URL: {url}")
         return url
+    
+    def delete_file(self, remote_path: str):
+        """
+        원격 스토리지에서 파일 삭제
+        :param remote_path: 버킷 내 파일 경로
+        """
+        try:
+            self.client.remove_object(self.bucket, remote_path)
+            print(f"Deleted file: {remote_path}")
+        except Exception as e:
+            print(f"Failed to delete file {remote_path}: {e}")
+            raise
+        
+    def delete_directory(self, dir_path: str):
+        objects_to_delete = self.client.list_objects(self.bucket, prefix=f"{dir_path}/", recursive=True)
+        object_names = [obj.object_name for obj in objects_to_delete]
+
+        if not object_names:
+            return  # 삭제할 객체 없음
+
+        try:
+            delete_results = self.client.remove_objects(self.bucket, object_names)
+            for del_err in delete_results:
+                print(f"Failed to delete {del_err.object_name}, {del_err}")
+        except S3Error as e:
+            raise RuntimeError(f"Failed to delete directory {dir_path}: {e}")

@@ -17,7 +17,8 @@ class Template(Base):
     description: Mapped[str] = mapped_column(String(100), nullable=False)
     bag_file_path: Mapped[str] = mapped_column(nullable=False)
     topics: Mapped[str] = mapped_column(nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
 
     instances: Mapped[List[Instance]] = relationship(back_populates="template", lazy="selectin")
 
