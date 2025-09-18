@@ -14,6 +14,12 @@ class TemplateCreateRequest(BaseSchema):
     topics: str = Field(examples=["/navi_motion_traj, /nav_vel, /scan_unified"])
     bag_file_path: Optional[str] = Field(None, examples=["directory"])
     
+    @field_validator("name", "type", "description", "topics", mode="before")
+    def not_empty_string(cls, value):
+        if not value or not value.strip():
+            raise ValueError("빈 문자열 또는 공백만으로 구성된 값은 허용되지 않습니다.")
+        return value
+    
 class TemplateFileInfo(BaseSchema):
     file_name: str
     download_url: str
@@ -60,6 +66,13 @@ class TemplateUpdateRequest(BaseSchema):
     type: Optional[str] = Field(None, examples=["robot-arm"])
     description: Optional[str] = Field(None, examples=["This is robot-arm"])
     topics: Optional[str] = Field(None, examples=["/navi_motion_traj, /nav_vel, /scan_unified"])
+    
+    @field_validator("name", "type", "description", "topics", mode="before")
+    def not_empty_string(cls, value):
+        if value is not None:
+            if not value.strip():  # 공백만 있는 경우도 체크
+                raise ValueError("빈 문자열 또는 공백만으로 구성된 값은 허용되지 않습니다.")
+        return value
     
 class TemplateUpdateResponse(BaseSchema):
     template_id: int

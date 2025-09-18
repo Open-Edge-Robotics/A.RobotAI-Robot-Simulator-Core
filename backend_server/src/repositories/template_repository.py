@@ -115,13 +115,13 @@ class TemplateRepository:
                     
                 
                 # 필드 업데이트
-                if existing_template.name is not None: 
+                if template_data.name is not None: 
                     existing_template.name = template_data.name
-                if existing_template.type is not None:
+                if template_data.type is not None:
                     existing_template.type = template_data.type 
-                if existing_template.description is not None:
+                if template_data.description is not None:
                     existing_template.description = template_data.description
-                if existing_template.topics is not None:
+                if template_data.topics is not None:
                     existing_template.topics = template_data.topics
                 
                 

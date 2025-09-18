@@ -203,7 +203,7 @@ class TemplateService:
                 if not existing_template:
                     raise HTTPException(status_code=404, detail=f"템플릿 {template_id} 없음")
 
-                if template_data.name and template_data.name != existing_template.name:
+                if template_data.name and template_data.name == existing_template.name:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
                         detail=f'템플릿 이름 "{template_data.name}" 은(는) 이미 존재합니다.'
@@ -250,12 +250,43 @@ class TemplateService:
 
 
     async def delete_template(self, template_id: int):
-        await self.template_repository.delete_template(template_id)
-        return TemplateDeleteResponse(
-            template_id=template_id
-        ).model_dump()
+        # ----------------------------
+        # 1. DB에서 템플릿 조회
+        # ----------------------------
+        template = await self.find_template_by_id(template_id)    
+        bag_path = template.bag_file_path
 
-    async def find_template_by_id(self, template_id: int, api: str):
+        # ----------------------------
+        # 2. MinIO 파일 삭제 (디렉토리 + 하위 파일)
+        # ----------------------------
+        try:
+            files_in_dir = self.storage_client.list_files(bag_path)
+            for file_name in files_in_dir:
+                self.storage_client.delete_file(f"{bag_path}/{file_name}")
+            self.storage_client.delete_directory(bag_path)
+            logger.info(f"MinIO 파일 삭제 완료: {bag_path}")
+
+        except Exception as e:
+            logger.error(f"MinIO 파일 삭제 실패: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"템플릿 파일 삭제 실패: {e}"
+            )
+
+        # ----------------------------
+        # 3. DB 삭제
+        # ----------------------------
+        async with self.session_factory() as session:
+            await self.template_repository.delete_template(template_id, session)
+            await session.commit()
+            logger.info(f"DB 템플릿 삭제 완료: {template_id}")
+
+        # ----------------------------
+        # 4. 응답 반환
+        # ----------------------------
+        return TemplateDeleteResponse(template_id=template_id).model_dump()
+
+    async def find_template_by_id(self, template_id: int):
         template = await self.template_repository.find_by_id(template_id)
 
         if template is None:
