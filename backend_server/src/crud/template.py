@@ -257,32 +257,16 @@ class TemplateService:
         bag_path = template.bag_file_path
 
         # ----------------------------
-        # 2. MinIO 파일 삭제 (디렉토리 + 하위 파일)
-        # ----------------------------
-        try:
-            files_in_dir = self.storage_client.list_files(bag_path)
-            for file_name in files_in_dir:
-                self.storage_client.delete_file(f"{bag_path}/{file_name}")
-            self.storage_client.delete_directory(bag_path)
-            logger.info(f"MinIO 파일 삭제 완료: {bag_path}")
-
-        except Exception as e:
-            logger.error(f"MinIO 파일 삭제 실패: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"템플릿 파일 삭제 실패: {e}"
-            )
-
-        # ----------------------------
-        # 3. DB 삭제
+        # 2. DB 삭제
         # ----------------------------
         async with self.session_factory() as session:
-            await self.template_repository.delete_template(template_id, session)
+            template.mark_as_deleted()  # deleted_at 필드 업데이트
+            session.add(template)       # 변경 반영
             await session.commit()
             logger.info(f"DB 템플릿 삭제 완료: {template_id}")
 
         # ----------------------------
-        # 4. 응답 반환
+        # 3. 응답 반환
         # ----------------------------
         return TemplateDeleteResponse(template_id=template_id).model_dump()
 

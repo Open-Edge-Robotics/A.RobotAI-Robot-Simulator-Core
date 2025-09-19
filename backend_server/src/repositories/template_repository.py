@@ -31,7 +31,7 @@ class TemplateRepository:
         current_session, session_context = self._get_session_context(session)
 
         async with session_context:
-                stmt = select(Template).where(Template.template_id == template_id)
+                stmt = select(Template).where(Template.deleted_at.is_(None)).where(Template.template_id == template_id)
                 result = await current_session.execute(stmt)
                 return result.scalars().first()
             
@@ -39,14 +39,14 @@ class TemplateRepository:
         current_session, session_context = self._get_session_context(session)
 
         async with session_context:
-                stmt = select(Template).where(Template.name == template_name)
+                stmt = select(Template).where(Template.deleted_at.is_(None)).where(Template.name == template_name)
                 result = await current_session.execute(stmt)
                 return result.scalars().first()
     
     async def find_all(self, session: Optional[AsyncSession] = None) -> List[Template]:
         current_session, session_context = self._get_session_context(session)
         async with session_context:
-            stmt = select(Template).order_by(Template.template_id.desc())
+            stmt = select(Template).where(Template.deleted_at.is_(None)).order_by(Template.template_id.desc())
             result = await current_session.execute(stmt)
             return result.scalars().all()
         
