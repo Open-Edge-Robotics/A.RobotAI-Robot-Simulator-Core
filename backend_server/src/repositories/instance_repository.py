@@ -19,6 +19,35 @@ class InstanceRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         """AsyncSession Factory 주입"""
         self.session_factory = session_factory
+        
+    async def find_instances(
+        self,
+        simulation_id: int,
+        step_order: Optional[int] = None,
+        group_id: Optional[int] = None,
+        session: Optional[AsyncSession] = None,
+    ) -> list["Instance"]:
+        """
+        simulation_id 기반 Instance 조회
+        - step_order 지정 시 해당 step에 속한 Instance만
+        - group_id 지정 시 해당 group에 속한 Instance만
+        """
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+
+        async with session if manage_session else contextlib.nullcontext(session):
+            stmt = select(Instance).where(Instance.simulation_id == simulation_id)
+
+            if step_order is not None:
+                stmt = stmt.where(Instance.step_order == step_order)
+
+            if group_id is not None:
+                stmt = stmt.where(Instance.group_id == group_id)
+
+            result = await session.execute(stmt)
+            return result.scalars().all()
     
     async def count_all(self) -> int:
         """전체 인스턴스 개수 조회"""

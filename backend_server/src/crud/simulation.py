@@ -191,7 +191,7 @@ class SimulationService:
             
             for template_id in template_ids:
                 try:
-                    template = await self.template_service.find_template_by_id(template_id, api)
+                    template = await self.template_service.find_template_by_id(template_id)
                     existing_template_ids.append(template.template_id)
                     print(f"  ✅ 템플릿 ID {template_id}: 존재함 (타입: {template.type})")
                     
@@ -441,11 +441,18 @@ class SimulationService:
         self, 
         pagination: PaginationParams,
         pattern_type: Optional[PatternType] = None,
-        status: Optional[SimulationStatus] = None
+        status: Optional[SimulationStatus] = None,
+        start_date: Optional[str] = None,  # YYYY-MM-DD
+        end_date: Optional[str] = None     # YYYY-MM-DD
     ) -> Tuple[List[SimulationListItem], PaginationMeta]:
-        """페이지네이션된 시뮬레이션 목록 조회 (선택적 필터링 지원"""
+        """페이지네이션된 시뮬레이션 목록 조회 (선택적 필터링 지원 + 기간 지원)"""
         # 1. 전체 데이터 개수 조회 (페이지 범위 검증용)
-        total_count = await self.repository.count_all(pattern_type=pattern_type, status=status)
+        total_count = await self.repository.count_all(
+            pattern_type=pattern_type,
+            status=status,
+            start_date=start_date,
+            end_date=end_date
+        )
         
         # 2. 페이지 범위 검증
         self._validate_pagination_range(pagination, total_count)
@@ -454,7 +461,9 @@ class SimulationService:
         simulations = await self.repository.find_all_with_pagination(
             pagination,
             pattern_type=pattern_type,
-            status=status
+            status=status,
+            start_date=start_date,
+            end_date=end_date
         )
         
         # 4. 비즈니스 로직: 응답 데이터 변환
@@ -668,6 +677,13 @@ class SimulationService:
                     status_code=409,
                     detail=f"이미 실행 중인 시뮬레이션입니다 (ID: {simulation_id})"
                 )
+                
+            # 리소스(Pod) 생성
+            await self._create_pods_for_simulation(simulation)
+            
+            # 모든 Pod Running 상태 될 때까지 대기
+            await PodService.wait_for_pods_running(simulation.namespace)
+            debug_print(f"✅ 네임스페이스 '{simulation.namespace}'의 모든 Pod가 Running 상태임 확인 완료")
 
             simulation_data = {
                 "id": simulation.id,
@@ -730,19 +746,82 @@ class SimulationService:
             
         except HTTPException:
             raise
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
         except Exception as e:
             failure_reason = f"시뮬레이션 시작 중 예상치 못한 오류: {str(e)}"
             print(f"❌ {failure_reason}")
+            
+            # 네임스페이스 리소스 정리
+            try:
+                await PodService.delete_all_pods_in_namespace(namespace=f"simulation-{simulation.id}")
+                print(f"♻️ 네임스페이스 'simulation-{simulation.id}' 리소스 모두 삭제 완료")
+            except Exception as cleanup_err:
+                print(f"⚠️ 네임스페이스 정리 중 오류 발생: {cleanup_err}")
+                
             raise HTTPException(
                 status_code=500,
                 detail="시뮬레이션 시작 중 내부 오류가 발생했습니다"
             )
+            
+    async def _create_pods_for_simulation(self, simulation: "Simulation"):
+        """
+        시뮬레이션 실행 전 필요한 Pod 리소스 생성
+        하나라도 실패하면 예외 발생
+        """
+        failed_pods = []
+        
+        if simulation.pattern_type == PatternType.SEQUENTIAL:
+            steps = await self.repository.find_simulation_steps(simulation.id)
+            
+            for step in steps:
+                instances = await self.instance_repository.find_instances(simulation.id, step_order=step.step_order)
+                for instance in instances:
+                    pod_name = instance.name
+                    try:
+                        debug_print(f"🚀 [Pod Creation] 시작 - {pod_name}")
+                        await PodService.create_pod_if_not_exists(
+                            instance=instance,
+                            simulation=simulation,
+                            step=step,
+                            template=step.template
+                        )
+                        debug_print(f"✅ [Pod Creation] 성공 - {pod_name}")
+                    except Exception as e:
+                        failed_pods.append((instance.id, str(e)))
+                
+        elif simulation.pattern_type == PatternType.PARALLEL:
+            groups = await self.repository.find_simulation_groups(simulation.id)
+            
+            for group in groups:
+                instances = await self.instance_repository.find_instances(simulation.id, group_id=group.id)
+                for instance in instances:
+                    pod_name = instance.name
+                    try:
+                        debug_print(f"🚀 [Pod Creation] 시작 - {pod_name}")
+                        await PodService.create_pod_if_not_exists(
+                            instance=instance,
+                            simulation=simulation,
+                            group=group,
+                            template=group.template
+                        )
+                        debug_print(f"✅ [Pod Creation] 성공 - {pod_name}")
+                    except Exception as e:
+                        failed_pods.append((instance.id, str(e)))
+                        
+        if failed_pods:
+            error_messages = "; ".join([f"instance_id={iid}, step/group={sg}, error={msg}" for iid, sg, msg in failed_pods])
+            raise RuntimeError(f"Pod 생성 실패: {error_messages}")
 
-    def _cleanup_simulation(self, simulation_id: int):
+    async def _cleanup_simulation(self, simulation_id: int):
         """시뮬레이션 완료/취소 후 정리"""
         if simulation_id in self.state.running_simulations:
             print(f"시뮬레이션 {simulation_id} 정리 완료")
             del self.state.running_simulations[simulation_id]
+            
+        # simulation-{simulation_id} 네임스페이스의 모든 Pod 삭제
+        namespace = f"simulation-{simulation_id}"
+        await PodService.delete_all_pods_in_namespace(namespace)
    
     async def _run_sequential_simulation(self, simulation_id: int, stop_event: asyncio.Event):
         """
@@ -1160,7 +1239,7 @@ class SimulationService:
             # Redis 정리는 TTL에 맡기고, 연결만 정리
             if redis_client.client:
                 await redis_client.client.close()
-            self._cleanup_simulation(simulation_id)
+            await self._cleanup_simulation(simulation_id)
        
     async def _run_sequential_simulation_with_progress(self, simulation_id: int, stop_event: asyncio.Event):
         """
@@ -1382,6 +1461,7 @@ class SimulationService:
 
                     for pod_name, status in zip(status_tasks.keys(), pod_statuses):
                         debug_print(f"🔍 === Pod [{pod_name}] 상태 체크 시작 ===")
+                        debug_print(f"Pod status: {status}")
                         # 이미 완료된 Pod는 바로 100% 처리
                         if pod_name in completed_pods:
                             pod_progress = 1.0
@@ -1648,7 +1728,7 @@ class SimulationService:
             # Redis 정리는 TTL에 맡기고, 연결만 정리
             if redis_client.client:
                 await redis_client.client.close()
-            self._cleanup_simulation(simulation_id)
+            await self._cleanup_simulation(simulation_id)
 
     async def _run_parallel_simulation_with_progress(self, simulation_id: int, stop_event: asyncio.Event):
         """
@@ -1920,7 +2000,7 @@ class SimulationService:
         finally:
             if redis_client.client:
                 await redis_client.client.close()
-            self._cleanup_simulation(simulation_id)
+            await self._cleanup_simulation(simulation_id)
 
     async def _execute_single_group_with_memory_tracking(self, simulation, group, redis_client, simulation_id, group_progress_tracker):
         debug_print("🔸 그룹 실행 시작", group_id=group.id, simulation_id=simulation.id)
@@ -2021,6 +2101,7 @@ class SimulationService:
 
                 for pod_name, status in zip(status_tasks.keys(), pod_statuses):
                     debug_print(f"🔍 === Pod [{pod_name}] 상태 체크 시작 ===")
+                    debug_print(f"Pod status 정보: {status}")
                     
                     # 이미 완료된 Pod는 바로 100% 처리
                     if pod_name in completed_pods:
@@ -2896,6 +2977,7 @@ class SimulationService:
         순차 시뮬레이션 중지
         """
         print(f"🔄 순차 시뮬레이션 중지 (polling 위임): {simulation_id}")
+        namespace = f"simulation-{simulation_id}"
 
         try:
             sim_info = self.state.running_simulations[simulation_id]
@@ -2976,12 +3058,22 @@ class SimulationService:
             except:
                 pass
             raise
-
+        finally:
+            # -----------------------------
+            # 모든 Pod 삭제
+            # -----------------------------
+            try:
+                await PodService.delete_all_pods_in_namespace(namespace)
+                print(f"🧹 네임스페이스 '{namespace}'의 모든 Pod 삭제 완료")
+            except Exception as e:
+                print(f"❌ 네임스페이스 '{namespace}' Pod 삭제 중 오류: {e}")
+                
     async def _stop_parallel_simulation_via_polling(self, simulation_id: int) -> Dict[str, Any]:
         """
         ⚡ 병렬 시뮬레이션 중지
         """
         print(f"⚡ 병렬 시뮬레이션 중지 (polling 위임): {simulation_id}")
+        namespace = f"simulation-{simulation_id}"
 
         try:
             sim_info = self.state.running_simulations.get(simulation_id)
@@ -3034,6 +3126,15 @@ class SimulationService:
             except:
                 pass
             raise
+        finally:
+            # -----------------------------
+            # 모든 Pod 삭제
+            # -----------------------------
+            try:
+                await PodService.delete_all_pods_in_namespace(namespace)
+                print(f"🧹 네임스페이스 '{namespace}'의 모든 Pod 삭제 완료")
+            except Exception as e:
+                print(f"❌ 네임스페이스 '{namespace}' Pod 삭제 중 오류: {e}")
 
     async def _direct_sequential_stop(self, simulation_id: int) -> Dict[str, Any]:
         """
