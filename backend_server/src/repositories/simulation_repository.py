@@ -60,7 +60,9 @@ class SimulationRepository:
         self, 
         pagination: "PaginationParams",
         pattern_type: Optional[PatternType] = None,
-        status: Optional[SimulationStatus] = None
+        status: Optional[SimulationStatus] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> List[Simulation]:
         if not MODELS_AVAILABLE:
             return []
@@ -72,7 +74,10 @@ class SimulationRepository:
                     query = query.where(Simulation.pattern_type == pattern_type)
                 if status:
                     query = query.where(Simulation.status == status)
-
+                if start_date:
+                    query = query.where(Simulation.created_at >= start_date)
+                if end_date:
+                    query = query.where(Simulation.created_at <= end_date)
                 status_priority = case(
                     (Simulation.status == "RUNNING", 1),
                     (Simulation.status == "INITIATING", 2),
@@ -125,7 +130,9 @@ class SimulationRepository:
     async def count_all(
         self,
         pattern_type: Optional[PatternType] = None,
-        status: Optional[SimulationStatus] = None
+        status: Optional[SimulationStatus] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> int:
         if not MODELS_AVAILABLE:
             return 0
@@ -136,6 +143,10 @@ class SimulationRepository:
                     query = query.where(Simulation.pattern_type == pattern_type)
                 if status:
                     query = query.where(Simulation.status == status)
+                if start_date:
+                    query = query.where(Simulation.created_at >= start_date)
+                if end_date:
+                    query = query.where(Simulation.created_at <= end_date)
                 result = await session.execute(query)
                 return result.scalar_one()
         except Exception as e:

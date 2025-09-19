@@ -60,7 +60,7 @@ async def create_template(
     )
     
 # 템플릿 수정
-@router.put(
+@router.patch(
     "/{template_id}", 
     response_model=TemplateUpdateResponseModel,
     summary="기존 ROSBAG 템플릿 수정",

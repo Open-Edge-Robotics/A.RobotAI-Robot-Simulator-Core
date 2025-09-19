@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional, Union, Dict, Any
 from pydantic import BaseModel, Field, field_validator, validator
 
@@ -110,12 +110,19 @@ class SimulationFilterRequest(PaginationParams):
     시뮬레이션 필터 요청 DTO
     - 패턴 타입과 상태값 기준 필터링 가능
     - PaginationParams를 상속받아 페이징 지원
+    - start_date, end_date로 기간 필터링 가능
     """
     pattern_type: Optional[PatternType] = Field(
         None, description="필터링할 시뮬레이션 패턴 타입 (선택)"
     )
     status: Optional[SimulationStatus] = Field(
         None, description="필터링할 시뮬레이션 상태값 (선택)"
+    )
+    start_date: Optional[date] = Field(
+        None, description="조회 시작일 (YYYY-MM-DD, 선택)"
+    )
+    end_date: Optional[date] = Field(
+        None, description="조회 종료일 (YYYY-MM-DD, 선택)"
     )
 
 class SimulationListResponse(BaseSchema):
