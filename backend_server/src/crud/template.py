@@ -210,10 +210,24 @@ class TemplateService:
                     )
 
             # 기존 파일 삭제 및 업로드
-            if upload_files:
+            if metadata_file:
+                # 기존 yaml/yml 파일만 삭제
                 existing_files = self.storage_client.list_files(existing_template.bag_file_path)
                 for file_name in existing_files:
-                    self.storage_client.delete_file(f"{existing_template.bag_file_path}/{file_name}")
+                    if file_name.endswith((".yaml", ".yml")):
+                        self.storage_client.delete_file(f"{existing_template.bag_file_path}/{file_name}")
+                # 새 파일 업로드
+                self.storage_client.upload_file(metadata_path, f"{existing_template.bag_file_path}/{metadata_file.filename}")
+
+            if db_file:
+                # 기존 db3 파일만 삭제
+                existing_files = self.storage_client.list_files(existing_template.bag_file_path)
+                for file_name in existing_files:
+                    if file_name.endswith(".db3"):
+                        self.storage_client.delete_file(f"{existing_template.bag_file_path}/{file_name}")
+                # 새 파일 업로드
+                self.storage_client.upload_file(db_path, f"{existing_template.bag_file_path}/{db_file.filename}")
+
 
 
             if metadata_file:
