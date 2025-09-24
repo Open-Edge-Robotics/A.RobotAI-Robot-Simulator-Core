@@ -16,7 +16,10 @@ minio_client = Minio(
 # -----------------------------
 # 2️⃣ 싱글톤 MinioStorageClient 생성
 # -----------------------------
-MinioStorageClient.get_instance(minio_client, settings.MINIO_BUCKET_NAME)
+# NodePort 환경에서 외부에서 접근 가능한 주소
+EXTERNAL_HOST = f"{settings.MINIO_EXTERNAL_HOST}:{settings.MINIO_NODEPORT_API}" 
+
+MinioStorageClient.get_instance(minio_client, settings.MINIO_BUCKET_NAME, external_host=EXTERNAL_HOST)
 
 # -----------------------------
 # 3️⃣ FastAPI DI용 getter

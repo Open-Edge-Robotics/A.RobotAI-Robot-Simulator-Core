@@ -1,4 +1,5 @@
-from fastapi import APIRouter, File, Form, UploadFile
+from typing import Optional
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.params import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
@@ -8,7 +9,7 @@ from crud.template import TemplateService, get_template_service
 from database.db_conn import get_db
 from database.minio_conn import get_storage_client
 from schemas.template import TemplateCreateRequest, TemplateCreateResponseModel, \
-    TemplateListResponseModel, TemplateDeleteResponseModel
+    TemplateListResponseModel, TemplateDeleteResponseModel, TemplateUpdateRequest, TemplateUpdateResponseModel
 from utils.my_enum import API
 
 router = APIRouter(prefix="/template", tags=["Template"])
@@ -56,6 +57,42 @@ async def create_template(
         status_code=status.HTTP_201_CREATED,
         data=new_template,
         message=API.CREATE_TEMPLATE.value
+    )
+    
+# 템플릿 수정
+@router.put(
+    "/{template_id}", 
+    response_model=TemplateUpdateResponseModel,
+    summary="기존 ROSBAG 템플릿 수정",
+    description="""
+    기존 ROSBAG 템플릿을 수정합니다.
+    - name: 템플릿 이름 (고유값, 템플릿 식별)
+    - type: 템플릿 타입 (예: robot-arm, robot-leg)
+    - description: 템플릿 설명
+    - topics: 구독할 ROS 토픽 목록 (쉼표로 구분)
+    - metadata_file, db_file: rosbag2 재생에 필요한 파일 첨부
+    """
+)
+async def update_template(
+    template_id: int,
+    name: Optional[str] = Form(None),
+    type: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    topics: Optional[str] = Form(None), 
+    metadata_file: Optional[UploadFile] = File(None),
+    db_file: Optional[UploadFile] = File(None),
+    service: TemplateService = Depends(get_template_service)  
+):
+    # 최소 한 필드 체크
+    if not any([name, type, description, topics, metadata_file, db_file]):
+        raise HTTPException(status_code=400, detail="최소 하나의 필드 또는 파일을 입력해야 합니다.")
+    
+    template_data = TemplateUpdateRequest(name=name, type=type, description=description, topics=topics)
+    updated_template = await service.update_template(template_id, template_data, metadata_file, db_file)
+    return TemplateCreateResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=updated_template,
+        message=API.UPDATE_TEMPLATE.value
     )
 
 

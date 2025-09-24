@@ -22,6 +22,7 @@ class API(Enum):
     GET_TEMPLATES = "템플릿 목록 조회"
     CREATE_TEMPLATE = "템플릿 생성"
     DELETE_TEMPLATE = "템플릿 삭제"
+    UPDATE_TEMPLATE = "템플릿 수정"
 
     # 인스턴스
     CREATE_INSTANCE = "인스턴스 생성"
