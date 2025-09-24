@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -48,7 +49,8 @@ class StatusUpdateManager:
         self, 
         simulation_id: int, 
         status: str = None,
-        total_pods: int = None
+        total_pods: int = None,
+        total_instances: int = None,
     ):
         """시뮬레이션 상태 원자적 업데이트 (안정화)"""
         
@@ -63,6 +65,8 @@ class StatusUpdateManager:
                     simulation.status = status
                 if total_pods is not None:
                     simulation.total_pods = total_pods
+                if total_instances is not None:
+                    simulation.total_pods = total_instances
                 
                 simulation.updated_at = datetime.now()
                 session.add(simulation)
@@ -79,7 +83,8 @@ class StatusUpdateManager:
         current_repeat: int = None,
         successful_agents: int = None,
         failed_agents: int = None,
-        created_pods_count: int = None
+        created_pods_count: int = None,
+        created_instances_count: Optional[int] = None,
     ):
         """단계별 상태 원자적 업데이트 (안정화)"""
         
@@ -106,6 +111,8 @@ class StatusUpdateManager:
                     step.failed_agents = failed_agents
                 if created_pods_count is not None:
                     step.created_pods_count = created_pods_count
+                if created_instances_count is not None:
+                    step.created_pods_count = created_instances_count
                 
                 step.updated_at = datetime.now()
                 session.add(step)
@@ -125,7 +132,8 @@ class StatusUpdateManager:
         created_pods_count: int = None,
         total_expected_agents: int = None,
         execution_started_at: datetime = None,
-        execution_completed_at: datetime = None
+        execution_completed_at: datetime = None,
+        created_instances_count: Optional[int] = None
     ):
         """그룹별 상태 원자적 업데이트 (안정화)"""
         
@@ -153,6 +161,8 @@ class StatusUpdateManager:
                     group.failed_agents = failed_agents
                 if created_pods_count is not None:
                     group.created_pods_count = created_pods_count
+                if created_instances_count is not None:
+                    group.created_pods_count = created_instances_count
                 if total_expected_agents is not None:
                     group.total_expected_agents = total_expected_agents
                 if execution_started_at is not None:

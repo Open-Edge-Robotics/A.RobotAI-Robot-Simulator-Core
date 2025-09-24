@@ -26,10 +26,9 @@ from schemas.pod import GroupIdFilter, StepOrderFilter
 from repositories.simulation_repository import SimulationRepository
 from schemas.pagination import PaginationMeta, PaginationParams
 from models.enums import ExecutionStatus, GroupStatus, PatternType, SimulationStatus, StepStatus
-from utils.simulation_background import (
+from utils.simulation_background_2 import (
     handle_parallel_pattern_background,
     handle_sequential_pattern_background,
-    process_single_step,
 )
 from .template import TemplateService
 
@@ -551,6 +550,7 @@ class SimulationService:
 
         dto_groups = [
             GroupModel(
+                group_id=g.id,
                 template_id=g.template.template_id,
                 template_type=g.template.type,  # join으로 가져온 Template.name
                 autonomous_agent_count=g.autonomous_agent_count,

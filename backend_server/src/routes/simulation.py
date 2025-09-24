@@ -193,45 +193,6 @@ async def get_simulations(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="시뮬레이션 목록 조회 중 오류가 발생했습니다")
     
-# @router.put("/{simulation_id}")
-# async def update_simulation(
-#     simulation_id: int,
-#     update_data: SimulationUpdateRequest,
-#     background_tasks: BackgroundTasks,
-#     service: SimulationService = Depends(get_simulation_service)
-# ):
-#     """시뮬레이션 설정 업데이트"""
-#     if update_data.description:
-#         try:
-#             await service.update_simulation_description(simulation_id, update_data.description)
-#         except ValueError as e:
-#             # 존재하지 않는 시뮬레이션 → 404
-#             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-#         except Exception as e:
-#             # 기타 DB 에러 → 500
-#             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Simulation update failed")
-        
-#     if update_data.pattern_update:
-#         print("백그라운드 패턴 업데이트 태스크 생성")
-#         background_tasks.add_task(service.update_pattern_background, simulation_id, update_data.pattern_update)
-        
-#     return {"message": "Simulation updated"}
-
-@router.put("/{simulation_id}/pattern", response_model=SimulationPatternUpdateResponseModel,
-            status_code=status.HTTP_200_OK)
-async def update_simulation_pattern(
-        simulation_id: int,
-        pattern_data: SimulationPatternUpdateRequest,
-        service: SimulationService = Depends(get_simulation_service)
-):
-    """시뮬레이션 패턴 설정 업데이트"""
-    result = await service.update_simulation_pattern(simulation_id, pattern_data)
-
-    return SimulationPatternUpdateResponseModel(
-        status_code=status.HTTP_200_OK,
-        data=result,
-        message="UPDATE_SIMULATION_PATTERN"
-    )
 
 @router.post("/action", response_model=SimulationControlResponseModel, status_code=status.HTTP_200_OK)
 async def control_simulation(
