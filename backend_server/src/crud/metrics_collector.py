@@ -305,7 +305,7 @@ class MetricsCollector:
 
         # 3️⃣ rosbag 아직 play 안 됨
         if rosbag_status == "waiting":
-            return "waiting"
+            return "pending"
 
         # 4️⃣ Pod 종료 상태
         phase = pod.status.phase
@@ -315,7 +315,7 @@ class MetricsCollector:
             return "failed"
 
         # 기본 fallback
-        return "waiting"
+        return "pending"
 
     
     def _get_resource_status(self, usage_percent: float) -> str:
@@ -344,7 +344,7 @@ class MetricsCollector:
             overall_health_percent=0.0,
             status_breakdown={
                 "success": StatusBreakdown(count=0, percentage=0.0),
-                "waiting": StatusBreakdown(count=0, percentage=0.0),
+                "pending": StatusBreakdown(count=0, percentage=0.0),
                 "failed": StatusBreakdown(count=0, percentage=0.0)
             }
         )
