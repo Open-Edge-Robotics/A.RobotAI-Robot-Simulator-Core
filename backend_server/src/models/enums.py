@@ -4,12 +4,22 @@ class ViewType(str, Enum):
     """API 응답 뷰 타입"""
     DETAIL = "detail"
     DASHBOARD = "dashboard"
+    
 class ExecutionStatus(Enum):
+    """rosbag 실행 상태"""
     SUCCESS = "success"
     FAILED = "failed"
     TIMEOUT = "timeout"
     CANCELLED = "cancelled"
     STOPPED = "stopped"
+    
+class SimulationExecutionStatus(Enum):
+    """시뮬레이션 실행 상태"""
+    PENDING = "PENDING"
+    RUNNING = "RUNNING" 
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    STOPPED = "STOPPED"
 
 class PatternType(str, Enum):
     SEQUENTIAL = "sequential"

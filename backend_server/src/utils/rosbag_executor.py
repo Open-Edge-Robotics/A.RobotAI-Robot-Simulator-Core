@@ -262,9 +262,8 @@ class RosbagExecutor:
     async def execute_single_pod(
         self,
         pod: V1Pod,
-        simulation,
-        group: Optional[SimulationGroup] = None,
-        step: Optional[SimulationStep] = None
+        step_order: Optional[int] = None,
+        group_id: Optional[int] = None
     ) -> PodExecutionResult:
         """
         단일 Pod에서 rosbag 실행
@@ -275,21 +274,20 @@ class RosbagExecutor:
         pod_name = pod.metadata.name
         start_time = datetime.now(timezone.utc)
 
-        # prefix 설정
         prefix = ""
-        if group:
-            prefix += f"[Group {group.id}] "
-        if step:
-            prefix += f"[Step {step.step_order}] "
+        if group_id is not None:
+            prefix += f"[Group {group_id}] "
+        if step_order is not None:
+            prefix += f"[Step {step_order}] "
         prefix += f"[Pod {pod_name}]"
 
         debug_print(f"{prefix} ▶ Pod 실행 시작")
 
         try:
-            # 1️⃣ Pod 실행 요청
+            # Pod 실행
             await self._start_rosbag_on_single_pod(pod, execution_context=prefix)
 
-            # 2️⃣ Pod 완료까지 폴링
+            # 완료까지 폴링
             poll_interval = 1
             max_wait = 3600
             elapsed = 0
@@ -322,7 +320,6 @@ class RosbagExecutor:
             )
 
         except asyncio.CancelledError:
-            # Cancel 감지 시 즉시 stop 호출
             debug_print(f"{prefix} 🛑 CancelledError 감지, 즉시 중지 시작")
             stop_result = await self._stop_single_pod_rosbag_with_result(pod, execution_context=prefix)
             debug_print(f"{prefix} 🛑 Cancel 처리 완료, 상태={stop_result.status}")

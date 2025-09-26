@@ -8,6 +8,10 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 import logging
 
+from models.group_execution import GroupExecution
+from models.step_execution import StepExecution
+from models.enums import SimulationExecutionStatus
+from models.simulation_execution import SimulationExecution
 from utils.simulation_utils import generate_final_group_name, generate_temp_group_name
 from database.db_conn import get_async_sessionmaker
 from schemas.context import StepContext
@@ -253,6 +257,7 @@ class SimulationRepository:
                     select(SimulationGroup)
                     .options(selectinload(SimulationGroup.template))
                     .where(SimulationGroup.simulation_id == simulation_id)
+                    .order_by(SimulationGroup.id)
                 )
                 result = await session.execute(stmt)
                 return result.scalars().all()
@@ -390,25 +395,41 @@ class SimulationRepository:
 
 
     async def update_simulation_status(
-        self, simulation_id: int, status: str, failure_reason: Optional[str] = None
+        self,
+        simulation_id: int,
+        status: str,
+        failure_reason: Optional[str] = None,
+        session: Optional[AsyncSession] = None
     ) -> bool:
+        manage_session = False
         try:
+            if session is None:
+                session = self.session_factory()
+                manage_session = True
+
             current_time = datetime.now(timezone.utc)
-            async with self.session_factory() as session:
-                update_data = {"status": status}
-                if status == "RUNNING":
-                    update_data["started_at"] = current_time
-                elif status in ["COMPLETED", "FAILED"]:
-                    update_data["completed_at"] = current_time
-                stmt = update(Simulation).where(Simulation.id == simulation_id).values(**update_data)
-                result = await session.execute(stmt)
-                if result.rowcount == 0:
-                    raise ValueError(f"시뮬레이션 ID {simulation_id}를 찾을 수 없습니다.")
+            
+            update_data = {"status": status}
+            if status == "RUNNING":
+                update_data["started_at"] = current_time
+            elif status in ["COMPLETED", "FAILED", "STOPPED"]:
+                update_data["completed_at"] = current_time
+
+            stmt = update(Simulation).where(Simulation.id == simulation_id).values(**update_data)
+            result = await session.execute(stmt)
+            if result.rowcount == 0:
+                raise ValueError(f"시뮬레이션 ID {simulation_id}를 찾을 수 없습니다.")
+
+            if manage_session:
                 await session.commit()
-                return True
+
+            return True
         except Exception as e:
             logger.error(f"시뮬레이션 상태 업데이트 실패: {str(e)}")
             raise
+        finally:
+            if manage_session:
+                await session.close()
         
     async def update_simulation_step_status(
         self, 
@@ -418,7 +439,8 @@ class SimulationRepository:
         completed_at: datetime = None,
         stopped_at: datetime = None,
         failed_at: datetime = None,
-        current_repeat: int = None
+        current_repeat: int = None,
+        session: Optional[AsyncSession] = None
     ):
         """
         SimulationStep의 상태와 시간 정보를 업데이트
@@ -435,33 +457,53 @@ class SimulationRepository:
             update_data["failed_at"] = failed_at
         if current_repeat is not None:
             update_data["current_repeat"] = current_repeat
+            
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
 
-        async with self.session_factory() as session:
-            await session.execute(
-                update(SimulationStep)
-                .where(SimulationStep.id == step_id)
-                .values(**update_data)
-            )
-            await session.commit()
+        async with session if manage_session else contextlib.nullcontext(session):
+            try:
+                stmt = update(SimulationStep).where(SimulationStep.id == step_id).values(**update_data)
+                result = await session.execute(stmt)
+                if result.rowcount == 0:
+                    raise ValueError(f"SimulationStep ID {step_id}를 찾을 수 없습니다.")
+                if manage_session:
+                    await session.commit()
+            except Exception as e:
+                logger.error(f"SimulationStep {step_id} 업데이트 실패: {str(e)}")
+                raise
             
     async def update_simulation_step_current_repeat(
         self, 
         step_id: int, 
-        current_repeat: int
+        current_repeat: int,
+        session: Optional[AsyncSession] = None
     ):
         """
         SimulationStep의 현재 반복 진행 상황을 업데이트
         """
-        async with self.session_factory() as session:
-            await session.execute(
-                update(SimulationStep)
-                .where(SimulationStep.id == step_id)
-                .values(
-                    current_repeat=current_repeat,
-                    updated_at=datetime.now()
+        manage_session = False
+        if session is None:
+            session = self.session_factory()
+            manage_session = True
+        
+        async with session if manage_session else contextlib.nullcontext(session):
+            try:
+                stmt = (
+                    update(SimulationStep)
+                    .where(SimulationStep.id == step_id)
+                    .values(current_repeat=current_repeat)
                 )
-            )
-            await session.commit()
+                result = await session.execute(stmt)
+                if result.rowcount == 0:
+                    raise ValueError(f"SimulationStep ID {step_id}를 찾을 수 없습니다.")
+                if manage_session:
+                    await session.commit()
+            except Exception as e:
+                logger.error(f"SimulationStep {step_id} current_repeat 업데이트 실패: {str(e)}")
+                raise
       
     async def update_simulation_step_configuration(
         self,
@@ -540,7 +582,6 @@ class SimulationRepository:
                 .values(**update_data)
             )
             await session.commit()
-            
             
     async def update_simulation_group_current_repeat(
         self, 
@@ -847,6 +888,416 @@ class SimulationRepository:
         group = await session.get(SimulationGroup, group_id)
         if group:
             await session.delete(group)
+
+    # ------------------------
+    # 생성
+    # ------------------------
+    async def create_execution(
+        self,
+        simulation_id: int,
+        status: SimulationExecutionStatus = SimulationExecutionStatus.PENDING,
+        result_summary: Optional[dict] = None,
+        message: Optional[str] = None,
+        session: Optional[AsyncSession] = None
+    ) -> SimulationExecution:
+        own_session = False
+        if session is None:
+            own_session = True
+            session = self.session_factory()
+        try:
+            execution = SimulationExecution(
+                simulation_id=simulation_id,
+                status=status,
+                result_summary=result_summary,
+                message=message,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
+            )
+            session.add(execution)
+            if own_session:
+                await session.commit()
+                await session.refresh(execution)
+            else:
+                await session.flush()
+            return execution
+        except Exception:
+            if own_session:
+                await session.rollback()
+            raise
+        finally:
+            if own_session:
+                await session.close()
+
+    # ------------------------
+    # 조회
+    # ------------------------
+    async def get_execution(
+        self,
+        execution_id: int,
+        session: Optional[AsyncSession] = None
+    ) -> Optional[SimulationExecution]:
+        own_session = False
+        if session is None:
+            own_session = True
+            session = self.session_factory()
+        try:
+            execution = await session.get(SimulationExecution, execution_id)
+            return execution
+        finally:
+            if own_session:
+                await session.close()
+
+    # ------------------------
+    # 상태 변경 (스키마 메서드 활용)
+    # ------------------------
+    async def start_execution(
+        self,
+        execution: SimulationExecution,
+        session: Optional[AsyncSession] = None
+    ):
+        execution.start_execution()
+        await self._flush_or_commit(execution, session)
+
+    async def complete_execution(
+        self,
+        execution: SimulationExecution,
+        result_summary: Optional[dict] = None,
+        message: Optional[str] = None,
+        session: Optional[AsyncSession] = None
+    ):
+        execution.complete_execution(result_summary=result_summary, message=message)
+        await self._flush_or_commit(execution, session)
+
+    async def fail_execution(
+        self,
+        execution: SimulationExecution,
+        message: Optional[str] = None,
+        session: Optional[AsyncSession] = None
+    ):
+        execution.fail_execution(message=message)
+        await self._flush_or_commit(execution, session)
+
+    async def stop_execution(
+        self,
+        execution: SimulationExecution,
+        message: Optional[str] = None,
+        session: Optional[AsyncSession] = None
+    ):
+        execution.stop_execution(message=message)
+        await self._flush_or_commit(execution, session)
+        
+    # ----------------------------
+    # Execution 단일 조회
+    # ----------------------------
+    async def find_execution_by_id(
+        self, execution_id: int, session: Optional[AsyncSession] = None
+    ) -> Optional[SimulationExecution]:
+        """
+        execution_id 기준 단일 SimulationExecution 조회
+        """
+        manage_session = False
+        if session:
+            db_session = session
+        else:
+            db_session = self.session_factory()
+            manage_session = True
+
+        stmt = select(SimulationExecution).where(SimulationExecution.id == execution_id)
+
+        if manage_session:
+            async with db_session as s:
+                result = await s.execute(stmt)
+                return result.scalars().first()
+        else:
+            result = await db_session.execute(stmt)
+            return result.scalars().first()
+
+    # ----------------------------
+    # Execution 기준 StepExecution 조회
+    # ----------------------------
+    async def get_step_executions_by_execution(
+        self, execution_id: int, session: Optional[AsyncSession] = None
+    ) -> list[StepExecution]:
+        """
+        execution_id 기준 StepExecution 전체 조회 (step_order 순서)
+        """
+        manage_session = False
+        if session:
+            db_session = session
+        else:
+            db_session = self.session_factory()
+            manage_session = True
+
+        stmt = (
+            select(StepExecution)
+            .where(StepExecution.execution_id == execution_id)
+            .order_by(StepExecution.step_order)
+        )
+
+        if manage_session:
+            async with db_session as s:
+                result = await s.execute(stmt)
+                return result.scalars().all()
+        else:
+            result = await db_session.execute(stmt)
+            return result.scalars().all()
+        
+    # ----------------------------
+    # Execution 기준 GroupExecution 조회
+    # ----------------------------
+    async def get_group_executions_by_execution(
+        self, execution_id: int, session: Optional[AsyncSession] = None
+    ) -> list[GroupExecution]:
+        """
+        execution_id 기준 GroupExecution 전체 조회 (group_id 순서)
+        """
+        manage_session = False
+        if session:
+            db_session = session
+        else:
+            db_session = self.session_factory()
+            manage_session = True
+
+        stmt = (
+            select(GroupExecution)
+            .where(GroupExecution.execution_id == execution_id)
+            .order_by(GroupExecution.group_id)   # 필요시 다른 정렬 기준 사용 가능
+        )
+
+        if manage_session:
+            async with db_session as s:
+                result = await s.execute(stmt)
+                return result.scalars().all()
+        else:
+            result = await db_session.execute(stmt)
+            return result.scalars().all()
+
+    
+    # ----------------------------
+    # 최신 SimulationExecution 조회
+    # ----------------------------
+    async def find_latest_simulation_execution(
+        self, simulation_id: int, session: Optional[AsyncSession] = None
+    ) -> Optional[SimulationExecution]:
+        """
+        주어진 simulation_id에 대해 최신 SimulationExecution 조회
+        """
+        manage_session = False
+        if session:
+            db_session = session
+        else:
+            db_session = self.session_factory()
+            manage_session = True
+
+        stmt = (
+            select(SimulationExecution)
+            .where(SimulationExecution.simulation_id == simulation_id)
+            .order_by(SimulationExecution.created_at.desc())
+            .limit(1)
+        )
+
+        if manage_session:
+            async with db_session as s:
+                result = await s.execute(stmt)
+                return result.scalars().first()
+        else:
+            result = await db_session.execute(stmt)
+            return result.scalars().first()
+    
+    
+    async def update_execution_status(
+        self,
+        execution_id: int,
+        status: SimulationStatus,
+        reason: Optional[str] = None,
+        completed_at: Optional[datetime] = None,
+        failed_at: Optional[datetime] = None,
+        stopped_at: Optional[datetime] = None,
+        message: Optional[str] = None,
+        session: Optional[AsyncSession] = None,
+    ) -> Optional[SimulationExecution]:
+        try:
+            stmt = (
+                update(SimulationExecution)
+                .where(SimulationExecution.id == execution_id)
+                .values(
+                    status=status,
+                    failure_reason=reason,
+                    completed_at=completed_at,
+                    failed_at=failed_at,
+                    stopped_at=stopped_at,
+                    message=message,
+                    updated_at=datetime.now(timezone.utc),
+                )
+                .returning(SimulationExecution)
+            )
+            result = await session.execute(stmt) if session else await self.session_factory().execute(stmt)
+            execution = result.scalar_one_or_none()
+
+            if execution:
+                await self._flush_or_commit(execution, session)
+
+            return execution
+        except Exception:
+            if not session:
+                # 세션이 내부에서 열렸으면 롤백
+                async with self.session_factory() as s:
+                    await s.rollback()
+            raise
+
+    # ===============================
+    # StepExecution 생성/업데이트
+    # ===============================
+    async def create_or_update_step_execution(
+        self,
+        execution_id: int,
+        step_order: int,
+        status: str,
+        autonomous_agent_count: int = 0,
+        current_repeat: int = 0,
+        total_repeats: int = 1,
+        error: Optional[str] = None,
+        stopped_at: Optional[datetime] = None,
+        failed_at: Optional[datetime] = None,
+        completed_at: Optional[datetime] = None,
+        session: Optional[AsyncSession] = None
+    ):
+        async def _inner(db: AsyncSession):
+            stmt = select(StepExecution).where(
+                StepExecution.execution_id == execution_id,
+                StepExecution.step_order == step_order
+            )
+            result = await db.execute(stmt)
+            step_exec = result.scalars().first()
+
+            now = datetime.now(timezone.utc)
+            if step_exec:
+                step_exec.status = status
+                step_exec.error = error
+                if stopped_at:
+                    step_exec.stopped_at = stopped_at
+                if failed_at:
+                    step_exec.failed_at = failed_at
+                if completed_at:
+                    step_exec.completed_at = completed_at
+                if autonomous_agent_count:
+                    step_exec.autonomous_agent_count = autonomous_agent_count
+                if current_repeat:
+                    step_exec.current_repeat = current_repeat
+                if total_repeats:
+                    step_exec.total_repeats = total_repeats
+                step_exec.updated_at = now
+            else:
+                step_exec = StepExecution(
+                    execution_id=execution_id,
+                    step_order=step_order,
+                    status=status,
+                    error=error,
+                    stopped_at=stopped_at,
+                    failed_at=failed_at,
+                    completed_at=completed_at,
+                    autonomous_agent_count=autonomous_agent_count,
+                    current_repeat=current_repeat,
+                    total_repeats=total_repeats,
+                    created_at=now,
+                    updated_at=now
+                )
+                db.add(step_exec)
+
+            await self._flush_or_commit(step_exec, session)
+            return step_exec
+
+        if session:
+            return await _inner(session)
+        async with self.session_factory() as db_session:
+            async with db_session.begin():
+                return await _inner(db_session)
+
+    # ===============================
+    # GroupExecution 생성/업데이트
+    # ===============================
+    async def create_or_update_group_execution(
+        self,
+        execution_id: int,
+        group_id: int,
+        status: str,
+        autonomous_agent_count: int = 0,
+        current_repeat: int = 0,
+        total_repeats: int = 1,
+        reason: Optional[str] = None,
+        stopped_at: Optional[datetime] = None,
+        failed_at: Optional[datetime] = None,
+        completed_at: Optional[datetime] = None,
+        session: Optional[AsyncSession] = None
+    ):
+        async def _inner(db: AsyncSession):
+            stmt = select(GroupExecution).where(
+                GroupExecution.execution_id == execution_id,
+                GroupExecution.group_id == group_id
+            )
+            result = await db.execute(stmt)
+            group_exec = result.scalars().first()
+
+            now = datetime.now(timezone.utc)
+            if group_exec:
+                group_exec.status = status
+                if reason:
+                    group_exec.error = reason
+                if stopped_at:
+                    group_exec.stopped_at = stopped_at
+                if failed_at:
+                    group_exec.failed_at = failed_at
+                if completed_at:
+                    group_exec.completed_at = completed_at
+                if autonomous_agent_count:
+                    group_exec.autonomous_agent_count = autonomous_agent_count
+                if current_repeat:
+                    group_exec.current_repeat = current_repeat
+                if total_repeats:
+                    group_exec.total_repeats = total_repeats
+                group_exec.updated_at = now
+            else:
+                group_exec = GroupExecution(
+                    execution_id=execution_id,
+                    group_id=group_id,
+                    status=status,
+                    error=reason,
+                    stopped_at=stopped_at,
+                    failed_at=failed_at,
+                    completed_at=completed_at,
+                    autonomous_agent_count=autonomous_agent_count,
+                    current_repeat=current_repeat,
+                    total_repeats=total_repeats,
+                    created_at=now,
+                    updated_at=now
+                )
+                db.add(group_exec)
+
+            await self._flush_or_commit(group_exec, session)
+            return group_exec
+
+        if session:
+            return await _inner(session)
+        async with self.session_factory() as db_session:
+            async with db_session.begin():
+                return await _inner(db_session)
+
+    
+    # ------------------------
+    # 내부 헬퍼: flush or commit
+    # ------------------------
+    async def _flush_or_commit(
+        self,
+        execution: SimulationExecution,
+        session: Optional[AsyncSession]
+    ):
+        if session:
+            await session.flush()
+        else:
+            async with self.session_factory() as s:
+                s.add(execution)
+                await s.commit()
+                await s.refresh(execution)
 
 
 # Repository 생성 팩토리

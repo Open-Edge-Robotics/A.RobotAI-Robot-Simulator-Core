@@ -262,7 +262,7 @@ async def delete_simulation(
     description=(
         "삭제 요청 후 특정 시뮬레이션의 삭제 진행 상태를 조회합니다.\n"
         "- 단계별 상태: namespace, Redis, DB\n"
-        "- 상태: PENDING, RUNNING, SUCCESS, FAILED\n"
+        "- 상태: PENDING, RUNNING, COMPLETED, FAILED\n"
         "- 진행률(progress), 시작/완료 시간, 오류 메시지 포함\n"
         "- 프론트엔드에서 polling 방식으로 UI 업데이트 가능"
     ),
@@ -274,14 +274,14 @@ async def get_delete_status(simulation_id: int, service: SimulationService = Dep
         raise HTTPException(status_code=404, detail="삭제 상태 정보 없음")
     
     steps = deletion_status.get("steps", {})
-    completed_steps = sum(1 for v in steps.values() if v == "SUCCESS")
+    completed_steps = sum(1 for v in steps.values() if v == "COMPLETED")
     total_steps = len(steps)
     progress = int((completed_steps / total_steps) * 100) if total_steps else 0
 
     overall_status = (
         "FAILED" if "FAILED" in steps.values() else
         "PENDING" if "PENDING" in steps.values() else
-        "SUCCESS"
+        "COMPLETED"
     )
     
     return SimulationDeletionStatusResponse(
