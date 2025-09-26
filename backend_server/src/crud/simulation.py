@@ -174,7 +174,7 @@ class SimulationService:
                             await self.repository.update_execution_status(
                                 execution_id=execution_id,
                                 status=status,
-                                reason=reason if status == "FAILED" else None,
+                                reason=reason if status == "FAILED" or status == "STOPPED" else None,
                                 stopped_at=now if status == "STOPPED" else None,
                                 failed_at=now if status == "FAILED" else None,
                                 completed_at=now if status == "COMPLETED" else None,
@@ -204,12 +204,10 @@ class SimulationService:
         # ----------------------------
         if redis_client is None:
             return
-        debug_print("Redis 업데이트 중이야")
         redis_key = f"simulation:{simulation_id}:execution:{execution_id}"
         raw_status = await redis_client.client.get(redis_key)
         if not raw_status:
             return
-        debug_print(f"raw_status: {raw_status}")
 
         # Redis에서 bytes → str → dict
         if isinstance(raw_status, bytes):
@@ -237,8 +235,6 @@ class SimulationService:
             items = []
             key_name = None
             list_key = None
-            
-        debug_print(f"key_name: {key_name}, list_key: {list_key}, item: {current_status.get(list_key, [])}")
         
         for item in items:
             if item[key_name] == entity_identifier:
@@ -315,6 +311,9 @@ class SimulationService:
         if "timestamps" not in current_status:
             current_status["timestamps"] = {}
         current_status["timestamps"]["lastUpdated"] = now.isoformat()
+        current_status["timestamps"]["completedAt"] = now.isoformat() if status == "COMPLETED" else None
+        current_status["timestamps"]["stoppedAt"] = now.isoformat() if status == "STOPPED" else None
+        current_status["timestamps"]["failedAt"] = now.isoformat() if status == "FAILED" else None
         current_status["status"] = status
         current_status["message"] = status_message
 
@@ -359,7 +358,10 @@ class SimulationService:
                 simulation_data["created_at"] = simulation.created_at
 
                 # RUNNING 상태인 SimulationExecution 생성
-                execution = SimulationExecution(simulation_id=simulation.id)
+                execution = SimulationExecution(
+                    simulation_id=simulation.id,
+                    pattern_type=simulation.pattern_type
+                )
                 execution.start_execution()
                 db_session.add(execution)
                 await db_session.flush()  # execution.id 확보
@@ -522,6 +524,7 @@ class SimulationService:
                         redis_client=redis_client,
                         update_db=True
                     )    
+                    await self.update_execution_result_from_redis(simulation_id, execution_id, redis_client)
                     
                     break
                 
@@ -540,6 +543,8 @@ class SimulationService:
                     redis_client=redis_client,
                     update_db=True
                 )
+                await self.update_execution_result_from_redis(simulation_id, execution_id, redis_client)
+                
                 total_execution_summary["simulation_status"] = "COMPLETED"
                 debug_print(f"🎉 시뮬레이션 {simulation_id} 완료")
 
@@ -559,6 +564,7 @@ class SimulationService:
                     redis_client=redis_client,
                     update_db=True
                 )
+                await self.update_execution_result_from_redis(simulation_id, execution_id, redis_client)
             except Exception as cleanup_error:
                 traceback.print_exc()
                 debug_print(f"💥 시뮬레이션 정리 작업 중 추가 오류: {cleanup_error}")
@@ -1429,7 +1435,7 @@ class SimulationService:
             # 패턴 타입에 따른 분기 처리 (simulation_data 사용)
             if simulation_data["pattern_type"] == "sequential":
                 pattern_name = "순차"
-                background_task = self._run_sequential_simulation_with_progress_v2(simulation_id, stop_event)
+                background_task = self._run_sequential_simulation_with_progress(simulation_id, stop_event)
                 debug_print("🔄 순차 패턴 선택", simulation_id=simulation_id)
             elif simulation_data["pattern_type"] == "parallel":
                 pattern_name = "병렬"
@@ -1550,7 +1556,7 @@ class SimulationService:
         namespace = f"simulation-{simulation_id}"
         await PodService.delete_all_pods_in_namespace(namespace)
 
-    async def _run_sequential_simulation_with_progress_v2(
+    async def _run_sequential_simulation_with_progress(
         self, simulation_id: int, stop_event: asyncio.Event
     ):
         """
@@ -1605,7 +1611,10 @@ class SimulationService:
                     ))
                 
                 # status 가 RUNNING 인 SimulationExecution 생성
-                execution = SimulationExecution(simulation_id=simulation.id)
+                execution = SimulationExecution(
+                    simulation_id=simulation.id,
+                    pattern_type=simulation.pattern_type
+                )
                 execution.start_execution()
                 db_session.add(execution)
 
@@ -1676,6 +1685,7 @@ class SimulationService:
             # Redis 초기화
             await redis_client.client.set(primary_redis_key, json.dumps(initial_status))
             await redis_client.client.set(execution_redis_key, json.dumps(initial_status))
+            await self.update_execution_result_from_redis(simulation_id, execution_id, redis_client)
             
             total_execution_summary = {
                 "execution_id": execution_id,
@@ -1701,6 +1711,7 @@ class SimulationService:
                 
                 # stop_event 조기 체크
                 if stop_event.is_set():
+                    # 현재 실행 중인 Step 중단
                     await self._handle_entity_status(
                         entity_type="step",
                         simulation_id=simulation_id,
@@ -1712,7 +1723,23 @@ class SimulationService:
                         current_repeat=current_step_repeat,
                         update_db=True
                     )
+                    # Simulation 중단
+                    await self._handle_entity_status(
+                        entity_type="simulation",
+                        simulation_id=simulation_id,
+                        execution_id=execution_id,
+                        entity_identifier=simulation_id,
+                        status="STOPPED",
+                        reason="사용자 요청에 의한 중지",
+                        redis_client=redis_client,
+                        update_db=True
+                    )
+                    await asyncio.sleep(0)  # 다른 코루틴들이 Redis set 완료할 시간을 줌
                     total_execution_summary["simulation_status"] = "STOPPED"
+                    
+                    # Execution 결과 반영
+                    await self.update_execution_result_from_redis(simulation_id, execution_id, redis_client)
+                    
                     return total_execution_summary
                 
                 # Pod 조회
@@ -1892,6 +1919,10 @@ class SimulationService:
             )
             total_execution_summary["simulation_status"] = "COMPLETED"
             debug_print(f"🎉 시뮬레이션 {simulation_id} 완료")
+            
+            # ✅ SimulationExecution.result 업데이트
+            await self.update_execution_result_from_redis(simulation_id, execution_id, redis_client)
+            
             return total_execution_summary
         
         except Exception as e:
@@ -1909,17 +1940,19 @@ class SimulationService:
                         current_repeat=current_step_repeat,
                         update_db=True
                     )
-                else:
-                    await self._handle_entity_status(
-                        entity_type="simulation",
-                        simulation_id=simulation_id,
-                        execution_id=execution_id,
-                        entity_identifier=simulation_id,
-                        status="FAILED",
-                        reason=str(e),
-                        redis_client=redis_client,
-                        update_db=True
-                    )
+                
+                await self._handle_entity_status(
+                    entity_type="simulation",
+                    simulation_id=simulation_id,
+                    execution_id=execution_id,
+                    entity_identifier=simulation_id,
+                    status="FAILED",
+                    reason=str(e),
+                    redis_client=redis_client,
+                    update_db=True
+                )
+                    
+                await self.update_execution_result_from_redis(simulation_id, execution_id, redis_client)
             except Exception as cleanup_error:
                 debug_print(f"💥 정리 작업 중 추가 오류: {cleanup_error}")
             raise
@@ -2005,107 +2038,6 @@ class SimulationService:
 
     
     # ===== 안전한 헬퍼 메서드들 =====
-
-    async def _update_redis_status_safe(
-        self, redis_client, primary_key: str, execution_key: str,
-        step_order: int = None, step_status: str = None, step_progress: float = None,
-        overall_progress: float = None, current_repeat: int = None,
-        message: str = None, started_at: datetime = None
-    ):
-        """Redis 상태 업데이트 (안전한 버전)"""
-        try:
-            # 기본 키로 상태 가져오기
-            current_status = await redis_client.get(primary_key)
-            if not current_status:
-                return
-            
-            # 공통 업데이트
-            update_data = {
-                "timestamps": {
-                    **current_status.get("timestamps", {}),
-                    "lastUpdated": datetime.now(timezone.utc).isoformat()
-                }
-            }
-            
-            if message:
-                update_data["message"] = message
-            if overall_progress is not None:
-                update_data["progress"] = {
-                    **current_status.get("progress", {}),
-                    "overallProgress": overall_progress
-                }
-            
-            # 스텝별 업데이트
-            if step_order and current_status.get("stepDetails"):
-                for redis_step in current_status["stepDetails"]:
-                    if redis_step["step_order"] == step_order:
-                        step_update = {}
-                        if step_status:
-                            step_update["status"] = step_status
-                        if step_progress is not None:
-                            step_update["progress"] = step_progress
-                        if current_repeat is not None:
-                            step_update["current_repeat"] = current_repeat
-                        if started_at:
-                            step_update["started_at"] = started_at.isoformat()
-                        
-                        redis_step.update(step_update)
-                        break
-            
-            current_status.update(update_data)
-            
-            # 두 키 모두 업데이트
-            await redis_client.client.set(primary_key, current_status)
-            await redis_client.client.set(execution_key, current_status)
-            
-        except Exception as e:
-            debug_print(f"⚠️ Redis 상태 업데이트 실패: {e}")
-
-
-
-    async def _handle_step_failure_safe(
-        self, simulation_id: int, execution_id: int, step, current_repeat: int,
-        failure_reason: str, redis_client, error_time: datetime
-    ):
-        """스텝 실패 처리 (안전한 버전)"""
-        try:
-            # ✅ DB 업데이트: Simulation + SimulationExecution + Step 모두
-            async with self.sessionmaker() as db_session:
-                # Simulation 상태 업데이트
-                await self.repository.update_simulation_status(
-                    simulation_id=simulation_id,
-                    status=SimulationStatus.FAILED,
-                    reason=failure_reason,
-                    session=db_session
-                )
-                
-                # SimulationExecution 상태 업데이트
-                if execution_id:
-                    await self.repository.update_execution_status(
-                        execution_id=execution_id,
-                        status=SimulationExecutionStatus.FAILED,
-                        reason=failure_reason,
-                        failed_at=error_time,
-                        session=db_session
-                    )
-                
-                # Step 상태 업데이트
-                if step:
-                    await self.repository.update_simulation_step_status(
-                        step_id=step.id,
-                        status=StepStatus.FAILED,
-                        failed_at=error_time,
-                        session=db_session
-                    )
-                    await self.repository.update_simulation_step_current_repeat(
-                        step_id=step.id,
-                        current_repeat=current_repeat,
-                        session=db_session
-                    )
-        
-        except Exception as e:
-            debug_print(f"💥 DB 상태 업데이트 실패: {e}")
-
     async def _cleanup_resources_safe(
         self, redis_client, pod_tasks: dict, simulation_id: int
     ):
@@ -2136,1385 +2068,6 @@ class SimulationService:
             await self._cleanup_simulation(simulation_id)
         except Exception as e:
             debug_print(f"⚠️ 시뮬레이션 정리 중 오류: {e}")
-
-      
-    async def _run_sequential_simulation_with_progress(self, simulation_id: int, stop_event: asyncio.Event):
-        """
-        순차 패턴 시뮬레이션 실행
-        - 각 스텝을 순차적으로 처리
-        - 1초 단위 Pod 진행상황 모니터링
-        - Redis를 통한 실시간 진행상황 업데이트 (DB 업데이트 최소화)
-        - 실패/중단 시 해당 스텝만 정확히 DB에 기록
-        """
-        redis_client = RedisSimulationClient()
-        await redis_client.connect()
-        
-        # 현재 실행 중인 스텝 정보 추적용
-        current_step = None
-        current_step_progress = 0.0
-        current_step_repeat = 0
-    
-        try:
-            debug_print(f"백그라운드에서 시뮬레이션 실행 시작: {simulation_id}")
-
-            # ----------------------------
-            # 1️⃣ 시작 트랜잭션: SimulationExecution + RUNNING 상태
-            # ----------------------------
-            async with self.sessionmaker() as db_session:
-                # 스텝 조회
-                simulation = await self.repository.find_by_id(simulation_id, db_session)
-                if not simulation:
-                    raise SimulationNotFoundError(simulation.id)
-                
-                # 🔹 Detached 방지: 필요한 필드만 추출
-                namespace = simulation.namespace
-                created_at = simulation.created_at
-                
-                steps = await self.repository.find_simulation_steps(simulation_id, db_session)
-                debug_print(f"📊 스텝 조회 완료: {len(steps)}개")
-                
-                # DetachedInstanceError 방지용 StepSummary 리스트
-                step_summaries = [
-                    StepSummary(
-                        id=step.id,
-                        step_order=step.step_order,
-                        status="PENDING",
-                        autonomous_agent_count=step.autonomous_agent_count,
-                        current_repeat=0,
-                        total_repeats=step.repeat_count or 1,
-                        delay_after_completion=getattr(step, "delay_after_completion", 0),
-                    )
-                    for step in steps
-                ]
-
-                # ✅ DB 업데이트 - 시뮬레이션 시작 시에만
-                await self._update_simulation_status_and_log(simulation_id, "RUNNING", "시뮬레이션 실행 시작", session=db_session)
-                
-                # SimulationExecution 생성
-                execution = SimulationExecution(simulation_id=simulation.id)
-                execution.start_execution() # 상태 RUNNING + started_at 기록
-                db_session.add(execution)
-                await db_session.commit()
-
-            # ----------------------------
-            # 2️⃣ Redis 초기 상태 설정
-            # ----------------------------
-            redis_step_statuses = [
-                RedisStepStatus(
-                    stepOrder=s.step_order,
-                    totalRepeats=s.total_repeats,
-                )
-                for s in step_summaries
-            ]
-            
-            current_time = datetime.now(timezone.utc)
-            initial_status = {
-                "status": "RUNNING",
-                "progress": {
-                    "overallProgress": 0.0,
-                    "currentStep": 0,
-                    "completedSteps": 0,
-                    "totalSteps": len(step_summaries)
-                },
-                "timestamps": {
-                    "createdAt": created_at.isoformat() if created_at else None,
-                    "lastUpdated": current_time.isoformat(),
-                    "startedAt": current_time.isoformat(),
-                    "completedAt": None,
-                    "failedAt": None,
-                    "stoppedAt": None
-                },
-                "message": f"시뮬레이션 시작 - 총 {len(steps)}개 스텝",
-                "stepDetails":  [s.__dict__ for s in redis_step_statuses]
-            }
-            await redis_client.set_simulation_status(simulation_id, initial_status)
-
-            total_execution_summary = {
-                "total_steps": len(step_summaries),
-                "completed_steps": 0,
-                "failed_steps": 0,
-                "total_pods_executed": 0,
-                "total_success_pods": 0,
-                "total_failed_pods": 0,
-                "step_results": [],
-                "simulation_status": "RUNNING",
-                "failure_reason": None
-            }
-
-            # ----------------------------
-            # 3️⃣ 스텝 단위 실행
-            # ----------------------------
-            for i, step in enumerate(step_summaries, 1):
-                debug_print(f"\n🔄 스텝 {i}/{len(step_summaries)} 처리 시작 - Step Order: {step.step_order}")
-                
-                
-                # 현재 실행 중인 스텝 추적 정보 업데이트
-                step_start_time = datetime.now(timezone.utc)
-                current_step = step
-                current_step_progress = 0.0
-                current_step_repeat = 0
-                
-                debug_print(f"📝 Step {step.step_order} 실행 시작 - Redis에만 상태 업데이트")
-
-                # Redis 상태 업데이트 (스텝 RUNNING)
-                current_status = await redis_client.get_simulation_status(simulation_id)
-                if current_status:
-                    # 현재 스텝 정보 업데이트
-                    current_status["progress"]["currentStep"] = step.step_order
-                    current_status["message"] = f"스텝 {step.step_order}/{len(step_summaries)} 실행 중"
-                    current_status["timestamps"]["lastUpdated"] = step_start_time.isoformat()
-                    
-                    # 스텝 디테일 업데이트
-                    for step_detail in current_status["stepDetails"]:
-                        if step_detail["stepOrder"] == step.step_order:
-                            step_detail.update({
-                                "status": "RUNNING",
-                                "startedAt": step_start_time.isoformat(),
-                                "progress": 0.0
-                            })
-                            break
-                            
-                    await redis_client.set_simulation_status(simulation_id, current_status)
-
-                # Pod 조회
-                pod_list = PodService.get_pods_by_filter(
-                    namespace=namespace,
-                    filter_params=StepOrderFilter(step_order=step.step_order)
-                )
-
-                if not pod_list:
-                    failure_reason = f"스텝 {step.step_order}에서 Pod를 찾을 수 없음"
-                    debug_print(f"❌ {failure_reason}")
-                    
-                    failed_time = datetime.now(timezone.utc)
-                    
-                    # ✅ DB 업데이트 - 실패한 스텝만 정확히 기록
-                    await self.repository.update_simulation_step_status(
-                        step_id=step.id,
-                        status=StepStatus.FAILED,
-                        failed_at=failed_time
-                    )
-                    # 추가 실패 정보 업데이트 (current_repeat, progress 등)
-                    await self.repository.update_simulation_step_current_repeat(
-                        step_id=step.id, 
-                        current_repeat=current_step_repeat
-                    )
-                    debug_print(f"✅ DB 업데이트 완료 - Step {step.step_order} FAILED 상태 기록")
-                    
-                    # ⚡ Redis 실패 상태 업데이트
-                    current_status = await redis_client.get_simulation_status(simulation_id)
-                    if current_status:
-                        current_status["status"] = "FAILED"
-                        current_status["message"] = failure_reason
-                        current_status["timestamps"].update({
-                            "lastUpdated": failed_time.isoformat(),
-                            "failedAt": failed_time.isoformat()
-                        })
-                        
-                        # 스텝 디테일 업데이트
-                        for step_detail in current_status["stepDetails"]:
-                            if step_detail["stepOrder"] == step.step_order:
-                                step_detail.update({
-                                    "status": "FAILED",
-                                    "failedAt": failed_time.isoformat(),
-                                    "error": failure_reason,
-                                    "currentRepeat": current_step_repeat,
-                                    "progress": current_step_progress
-                                })
-                                break
-                        
-                        await redis_client.set_simulation_status(simulation_id, current_status)
-                    
-                    total_execution_summary.update({
-                        "failed_steps": total_execution_summary["failed_steps"] + 1,
-                        "simulation_status": "FAILED",
-                        "failure_reason": failure_reason
-                    })
-                    
-                    # ✅ DB 업데이트 - 최종 시뮬레이션 실패 상태
-                    await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason)
-                    return total_execution_summary
-
-                # Pod Task 생성
-                pod_tasks = {
-                    asyncio.create_task(
-                        self.rosbag_executor.execute_single_pod(
-                            pod,
-                            step_order=step.step_order
-                        )
-                    ): pod.metadata.name
-                    for pod in pod_list
-                }
-
-                completed_pods = set()
-                poll_interval = 1  # 1초 단위 진행상황
-                
-                debug_print(f"📋 Step {step.step_order} Pod Task 생성 완료: {len(pod_tasks)}개 Pod 병렬 실행 시작")
-
-                # 3️⃣ Pod 진행상황 루프 - Redis Only 실시간 업데이트
-                last_recorded_repeat = 0  # 메모리 기반 반복 횟수 관리
-                
-                while len(completed_pods) < len(pod_list):
-                    done_tasks = [t for t in pod_tasks if t.done()]
-
-                    # 완료된 Pod 처리
-                    for task in done_tasks:
-                        pod_name = pod_tasks.pop(task)
-                        try:
-                            result = task.result()
-                            debug_print(f"✅ Pod 완료: {result.pod_name} ({len(completed_pods)}/{len(pod_list)})")
-                        except asyncio.CancelledError:
-                            debug_print(f"🛑 Pod CancelledError 감지: {pod_name}")
-                        except Exception as e:
-                            debug_print(f"💥 Pod 실행 실패: {pod_name}: {e}")
-
-                    # 진행 중 Pod 상태 확인 및 로그
-                    total_progress = 0.0
-                    running_info = []
-                    
-                    debug_print(f"🔍 Pod 상태 체크 시작 - completed_pods: {completed_pods}")
-
-                    status_tasks = {
-                        pod.metadata.name: asyncio.create_task(self.rosbag_executor._check_pod_rosbag_status(pod))
-                        for pod in pod_list
-                    }
-
-                    pod_statuses = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
-                    
-                    current_total_loops = 0
-                    max_total_loops = 0
-                    
-                    # 🔍 각 Pod별 상세 디버깅
-                    debug_print(f"📊 === Pod별 진행률 상세 분석 (Step {step.step_order}) ===")
-
-                    loops = []  # (current_loop, max_loops) 집계용
-
-                    for pod_name, status in zip(status_tasks.keys(), pod_statuses):
-                        debug_print(f"🔍 === Pod [{pod_name}] 상태 체크 시작 ===")
-                        debug_print(f"Pod status: {status}")
-                        # 이미 완료된 Pod는 바로 100% 처리
-                        if pod_name in completed_pods:
-                            pod_progress = 1.0
-                            running_info.append(f"{pod_name}(완료)")
-                        elif isinstance(status, dict):           
-                            is_playing = status.get("is_playing", False)
-                            current_loop = status.get("current_loop", 0)
-                            max_loops = max(status.get("max_loops") or 1, 1)
-                            
-                            # 집계용 리스트에 기록
-                            loops.append((current_loop, max_loops)) 
-                            
-                            debug_print(f"  🎮 {pod_name}: is_playing = {is_playing} (기본값: False)")
-                            debug_print(f"  🔄 {pod_name}: current_loop = {current_loop} (기본값: 0)")
-                            debug_print(f"  🎯 {pod_name}: max_loops = {max_loops} (기본값: 1, 원본값: {status.get('max_loops')})")
-                            
-                            # 전체 진행률 계산을 위한 루프 수 집계
-                            current_total_loops += current_loop
-                            max_total_loops += max_loops
-                            
-                            pod_progress = min(current_loop / max_loops, 1.0)
-                            
-                            if current_loop >= max_loops and not is_playing:
-                                # 실제로 완료된 경우
-                                completed_pods.add(pod_name)
-                                pod_progress = 1.0
-                                running_info.append(f"{pod_name}(완료)")
-                                debug_print(f"  ✅ {pod_name}: 상태체크로 완료 감지 -> completed_pods에 추가")
-                            elif is_playing:
-                                running_info.append(f"{pod_name}({current_loop}/{max_loops})")
-                                debug_print(f"  ⏳ {pod_name}: 실행중 -> 진행률 {pod_progress:.1%}")
-                            else:
-                                # is_playing이 False이지만 아직 완료되지 않은 경우
-                                # 무조건 1.0이 아닌 실제 진행률 사용
-                                running_info.append(f"{pod_name}({current_loop}/{max_loops}-중지됨)")
-                                debug_print(f"  ⏸️ {pod_name}: 중지됨 -> 진행률 {pod_progress:.1%}")
-                        else:
-                            pod_progress = 0.0
-                            running_info.append(f"{pod_name}(상태체크실패)")
-                            debug_print(f"  ❌ {pod_name}: 상태체크 실패 -> 0%")
-
-                        total_progress += pod_progress
-                        debug_print(f"  📊 {pod_name}: pod_progress={pod_progress:.2f}, 누적 total_progress={total_progress:.2f}")
-
-                    # 그룹 반복 갱신 (Redis Only)
-                    if loops:
-                        group_current_loop = min(cl for cl, _ in loops)
-                        group_max_loops = min(ml for _, ml in loops)
-                        target_cap = step.total_repeats or group_max_loops
-                        new_repeat = min(group_current_loop, target_cap)
-
-                        if new_repeat > last_recorded_repeat:
-                            last_recorded_repeat = new_repeat
-                            current_step_repeat = new_repeat  # 추적 정보 업데이트
-                            debug_print(f"🔁 Step {step.step_order} 반복 갱신: {new_repeat}/{target_cap} (Redis Only)")
-
-                    group_progress = (total_progress / len(pod_list)) * 100
-                    step_progress = total_progress / len(pod_list)
-                    current_step_progress = step_progress  # 추적 정보 업데이트
-                    
-                    # ⚡ Redis Only - 실시간 진행률 업데이트
-                    current_status = await redis_client.get_simulation_status(simulation_id)
-                    if current_status:
-                        # 전체 진행률 계산 (완료된 스텝 + 현재 스텝 진행률)
-                        overall_progress = (total_execution_summary["completed_steps"] + step_progress) / len(steps)
-                        
-                        current_status["progress"]["overallProgress"] = overall_progress
-                        current_status["message"] = f"스텝 {step.step_order}/{len(steps)} - {group_progress:.1f}% ({len(completed_pods)}/{len(pod_list)} pods)"
-                        current_status["timestamps"]["lastUpdated"] = datetime.now(timezone.utc).isoformat()
-                        
-                        # 스텝 디테일 업데이트
-                        for step_detail in current_status["stepDetails"]:
-                            if step_detail["stepOrder"] == step.step_order:
-                                step_detail.update({
-                                    "progress": step_progress,
-                                    "autonomousAgents": len(pod_list),
-                                    "currentRepeat": new_repeat if loops else 0,
-                                    "totalRepeats": step.total_repeats or 1
-                                })
-                                break
-                        
-                        await redis_client.set_simulation_status(simulation_id, current_status)
-                    
-                    debug_print(f"⏳ Step {step.step_order} 진행률: {group_progress:.1f}% ({len(completed_pods)}/{len(pod_list)}) | 진행중: {', '.join(running_info)}")
-
-                    # stop_event 감지
-                    if stop_event.is_set():
-                        debug_print(f"⏹️ 중지 이벤트 감지 - 스텝 {step.step_order} 즉시 종료")
-                        
-                        stopped_time = datetime.now(timezone.utc)
-                        await self._handle_step_stopped(
-                            simulation_id=simulation_id,
-                            step=current_step,
-                            current_repeat=current_step_repeat,
-                            execution=execution,
-                            stopped_time=stopped_time,
-                            redis_client=redis_client,
-                            pod_tasks=pod_tasks  # 현재 진행 중 Pod tasks
-                        )
-                        total_execution_summary["simulation_status"] = "STOPPED"
-                        
-                        return total_execution_summary
-
-                    await asyncio.sleep(poll_interval)
-
-                # 스텝 완료 처리
-                step_end_time = datetime.now(timezone.utc)
-                step_execution_time = (step_end_time - step_start_time).total_seconds()
-                
-                # 실행 결과 요약 생성
-                execution_summary = self.rosbag_executor.get_execution_summary([
-                    task.result() for task in done_tasks if not isinstance(task.result(), Exception)
-                ])
-                
-                await self._handle_step_completed(
-                    simulation_id=simulation_id,
-                    step=current_step,
-                    step_end_time=step_end_time,
-                    execution_summary=execution_summary,
-                    redis_client=redis_client
-                )
-                
-                # 추적 정보 초기화 (스텝 완료됨)
-                current_step = None
-                current_step_progress = 0.0
-                current_step_repeat = 0
-                
-                debug_print(f"✅ Step {step.step_order} 완료 (실행시간: {step_execution_time:.1f}초)")
-                
-                # 전체 실행 요약 업데이트
-                total_execution_summary.update({
-                    "completed_steps": total_execution_summary["completed_steps"] + 1,
-                    "total_pods_executed": total_execution_summary["total_pods_executed"] + execution_summary['total_pods'],
-                    "total_success_pods": total_execution_summary["total_success_pods"] + execution_summary['success_count']
-                })
-                
-                total_execution_summary["step_results"].append({
-                    "step_id": step.id,
-                    "step_order": step.step_order,
-                    "status": "success",
-                    "execution_summary": execution_summary,
-                    "execution_time": step_execution_time,
-                    "pod_count": len(pod_list)
-                })
-
-                # 스텝 간 지연
-                if i < len(steps) and step.delay_after_completion:
-                    await asyncio.sleep(step.delay_after_completion)
-
-            # ----------------------------
-            # 4️⃣ 모든 스텝 완료 처리
-            # ----------------------------
-            completed_time = datetime.now(timezone.utc)
-            await self._handle_simulation_completed(
-                simulation_id=simulation_id,
-                completed_time=completed_time,
-                execution=execution,
-                execution_summary=total_execution_summary,
-                redis_client=redis_client
-            )
-            
-            total_execution_summary["simulation_status"] = "COMPLETED"
-            
-            debug_print(f"🎉 시뮬레이션 {simulation_id} 완료")
-            return total_execution_summary
-        except Exception as e:
-            debug_print(f"❌ 시뮬레이션 {simulation_id} 실행 중 예외: {e}")
-            
-            error_time = datetime.now(timezone.utc)
-            
-            # ✅ DB 업데이트 - 현재 실행 중인 스텝만 정확히 실패 기록
-            if current_step:
-                await self._handle_step_failure(
-                    simulation_id=simulation_id,
-                    step=current_step,
-                    current_repeat=current_step_repeat,
-                    failure_reason=str(e),
-                    execution=execution,
-                    redis_client=redis_client,
-                    error_time=error_time
-                )
-            raise
-        finally:
-            # Redis 정리는 TTL에 맡기고, 연결만 정리
-            if redis_client.client:
-                await redis_client.client.close()
-            await self._cleanup_simulation(simulation_id)
-
-    async def _handle_step_failure(
-        self,
-        simulation_id: int,
-        step: SimulationStep,
-        current_repeat: int,
-        failure_reason: str,
-        execution: SimulationExecution,
-        redis_client: RedisSimulationClient,
-        error_time: Optional[datetime] = None
-    ):
-        error_time = error_time or datetime.now(timezone.utc)
-        
-        # DB 트랜잭션
-        async with self.sessionmaker() as db_session:
-            await self.repository.update_simulation_step_status(
-                step_id=step.id,
-                status=StepStatus.FAILED,
-                failed_at=error_time,
-                session=db_session
-            )
-            await self.repository.update_simulation_step_current_repeat(
-                step_id=step.id,
-                current_repeat=current_repeat,
-                session=db_session
-            )
-
-            # SimulationExecution 실패 처리
-            if execution:
-                execution.fail_execution(message=failure_reason)
-                db_session.add(execution)
-            await db_session.commit()
-
-            # 전체 시뮬레이션 상태 FAILED
-            await self._update_simulation_status_and_log(simulation_id, "FAILED", failure_reason, session=db_session)
-
-        # Redis 업데이트
-        current_status = await redis_client.get_simulation_status(simulation_id)
-        if current_status:
-            current_status["status"] = "FAILED"
-            current_status["message"] = failure_reason
-            current_status["timestamps"].update({
-                "lastUpdated": error_time.isoformat(),
-                "failedAt": error_time.isoformat()
-            })
-            for step_detail in current_status["stepDetails"]:
-                if step_detail["stepOrder"] == step.step_order:
-                    step_detail.update({
-                        "status": "FAILED",
-                        "failedAt": error_time.isoformat(),
-                        "error": failure_reason,
-                        "currentRepeat": current_repeat
-                    })
-                    break
-            await redis_client.set_simulation_status(simulation_id, current_status)
-
-    async def _handle_step_stopped(
-        self,
-        simulation_id: int,
-        step: SimulationStep,
-        current_repeat: int,
-        execution: SimulationExecution,
-        stopped_time: datetime,
-        redis_client: RedisSimulationClient,
-        pod_tasks: dict
-    ):
-        # DB 트랜잭션
-        async with self.sessionmaker() as db_session:
-            await self.repository.update_simulation_step_status(
-                step_id=step.id,
-                status=StepStatus.STOPPED,
-                stopped_at=stopped_time,
-                session=db_session
-            )
-            await self.repository.update_simulation_step_current_repeat(
-                step_id=step.id,
-                current_repeat=current_repeat,
-                session=db_session
-            )
-
-            # SimulationExecution STOPPED 처리
-            if execution:
-                execution.mark_stopped(stopped_time)
-                db_session.add(execution)
-            await db_session.commit()
-
-            # 전체 시뮬레이션 상태 STOPPED
-            await self._update_simulation_status_and_log(
-                simulation_id, "STOPPED", "사용자 중지", session=db_session
-            )
-
-        # Redis 업데이트
-        current_status = await redis_client.get_simulation_status(simulation_id)
-        if current_status:
-            current_status["status"] = "STOPPED"
-            current_status["message"] = "시뮬레이션이 사용자에 의해 중지되었습니다"
-            current_status["timestamps"].update({
-                "lastUpdated": stopped_time.isoformat(),
-                "stoppedAt": stopped_time.isoformat()
-            })
-            for step_detail in current_status["stepDetails"]:
-                if step_detail["stepOrder"] == step.step_order:
-                    step_detail.update({
-                        "status": "STOPPED",
-                        "stoppedAt": stopped_time.isoformat(),
-                        "currentRepeat": current_repeat
-                    })
-                    break
-            await redis_client.set_simulation_status(simulation_id, current_status)
-
-        # Pod Task 취소
-        for t in pod_tasks.keys():
-            t.cancel()
-        await asyncio.gather(*pod_tasks.keys(), return_exceptions=True)
-
-    async def _handle_step_completed(
-        self,
-        simulation_id: int,
-        step: StepSummary,
-        step_end_time: datetime,
-        execution_summary: dict,
-        redis_client: RedisSimulationClient
-    ):
-        async with self.sessionmaker() as db_session:
-            # 스텝 완료 DB 업데이트
-            await self.repository.update_simulation_step_status(
-                step_id=step.id,
-                status=StepStatus.COMPLETED,
-                completed_at=step_end_time,
-                session=db_session
-            )
-            await self.repository.update_simulation_step_current_repeat(
-                step_id=step.id,
-                current_repeat=step.total_repeats or 1,
-                session=db_session
-            )
-            await db_session.commit()
-
-        # Redis 업데이트
-        current_status = await redis_client.get_simulation_status(simulation_id)
-        if current_status:
-            current_status["progress"]["completedSteps"] += 1
-            overall_progress = current_status["progress"]["completedSteps"] / len(current_status["stepDetails"])
-            current_status["progress"]["overallProgress"] = overall_progress
-            current_status["message"] = f"스텝 {step.step_order} 완료 ({current_status['progress']['completedSteps']}/{len(current_status['stepDetails'])})"
-            current_status["timestamps"]["lastUpdated"] = step_end_time.isoformat()
-
-            for step_detail in current_status["stepDetails"]:
-                if step_detail["stepOrder"] == step.step_order:
-                    step_detail.update({
-                        "status": "COMPLETED",
-                        "progress": 1.0,
-                        "completedAt": step_end_time.isoformat(),
-                        "currentRepeat": step.total_repeats or 1
-                    })
-                    break
-            await redis_client.set_simulation_status(simulation_id, current_status)
-
-    async def _handle_simulation_completed(
-        self,
-        simulation_id: int,
-        completed_time: datetime,
-        execution: SimulationExecution,
-        execution_summary: dict,
-        redis_client: RedisSimulationClient
-    ):
-        async with self.sessionmaker() as db_session:
-            # SimulationExecution 완료 처리
-            if execution:
-                execution.complete_execution(result_summary=execution_summary)
-                db_session.add(execution)
-            await db_session.commit()
-
-            # 시뮬레이션 상태 완료
-            await self._update_simulation_status_and_log(simulation_id, "COMPLETED", "모든 스텝 성공", session=db_session)
-
-        # Redis 상태 업데이트
-        current_status = await redis_client.get_simulation_status(simulation_id)
-        if current_status:
-            current_status["status"] = "COMPLETED"
-            current_status["progress"]["overallProgress"] = 1.0
-            current_status["message"] = f"시뮬레이션 완료 - 모든 {len(current_status['stepDetails'])}개 스텝 성공"
-            current_status["timestamps"].update({
-                "lastUpdated": completed_time.isoformat(),
-                "completedAt": completed_time.isoformat()
-            })
-            await redis_client.set_simulation_status(simulation_id, current_status)
-
-
-    async def _run_parallel_simulation_with_progress(self, simulation_id: int, stop_event: asyncio.Event):
-        """
-        순차 시뮬레이션 패턴 적용한 병렬 시뮬레이션 실행
-        - 메모리 기반 current_repeat 추적 (순차 시뮬레이션과 동일 패턴)
-        - Redis + DB 동시 업데이트 (Redis 1차 조회 대응)
-        - 단순하고 효율적인 진행률 관리
-        """
-        debug_print("🚀 병렬 시뮬레이션 실행 시작", simulation_id=simulation_id)
-        
-        redis_client = RedisSimulationClient()
-        await redis_client.connect()
-        
-        # 📊 각 그룹별 메모리 기반 진행률 추적 (순차 시뮬레이션 패턴)
-        group_progress_tracker = {}  # {group_id: {"last_recorded_repeat": int, "current_progress": float}}
-        
-        try:
-            # 1️⃣ 시뮬레이션 조회 및 초기화
-            simulation = await self.find_simulation_by_id(simulation_id, "background parallel run")
-            groups = await self.repository.find_simulation_groups(simulation_id)
-            debug_print("✅ 시뮬레이션 조회 완료", simulation_id=simulation.id, group_count=len(groups))
-
-            # 그룹별 추적 정보 초기화
-            for group in groups:
-                group_progress_tracker[group.id] = {
-                    "last_recorded_repeat": 0,
-                    "current_progress": 0.0,
-                    "start_time": datetime.now(timezone.utc)
-                }
-
-            # ✅ DB 업데이트 - 시뮬레이션 시작 시에만
-            await self._update_simulation_status_and_log(simulation_id, "RUNNING", "병렬 시뮬레이션 실행 시작")
-
-            # Redis 초기 상태 설정
-            current_time = datetime.now(timezone.utc)
-            initial_status = {
-                "status": "RUNNING",
-                "progress": {
-                    "overallProgress": 0.0,
-                    "completedGroups": 0,
-                    "runningGroups": len(groups),
-                    "totalGroups": len(groups)
-                },
-                "timestamps": {
-                    "createdAt": simulation.created_at.isoformat() if simulation.created_at else None,
-                    "lastUpdated": current_time.isoformat(),
-                    "startedAt": current_time.isoformat(),
-                    "completedAt": None,
-                    "failedAt": None,
-                    "stoppedAt": None
-                },
-                "message": f"병렬 시뮬레이션 시작 - 총 {len(groups)}개 그룹",
-                "groupDetails": [
-                    {
-                        "groupId": group.id,
-                        "status": "RUNNING",
-                        "progress": 0.0,
-                        "startedAt": current_time.isoformat(),
-                        "completedAt": None,
-                        "failedAt": None,
-                        "stoppedAt": None,
-                        "autonomousAgents": group.autonomous_agent_count,
-                        "currentRepeat": 0,
-                        "totalRepeats": group.repeat_count or 1,
-                        "error": None
-                    } for group in groups
-                ]
-            }
-            await redis_client.set_simulation_status(simulation_id, initial_status)
-
-            # 2️⃣ 모든 그룹 병렬 실행
-            group_tasks = []
-            
-            # 각 그룹을 비동기 태스크로 생성
-            for group in groups:
-                task = asyncio.create_task(
-                    self._execute_single_group_with_memory_tracking(
-                        simulation, group, redis_client, simulation_id, group_progress_tracker
-                    )
-                )
-                task.group_id = group.id # 태스크에 그룹 ID 할당
-                group_tasks.append(task)
-
-            debug_print("🎯 모든 그룹 병렬 실행 시작", simulation_id=simulation_id, total_groups=len(groups))
-
-            total_summary = {
-                "total_groups": len(groups),
-                "completed_groups": 0,
-                "failed_groups": 0,
-                "total_pods_executed": 0,
-                "total_success_pods": 0,
-                "total_failed_pods": 0,
-                "group_results": [],
-                "simulation_status": "RUNNING",
-                "failure_reason": None
-            }
-
-            # 3️⃣ 실행 중 진행상황 감시 + 즉시 취소 처리
-            poll_interval = 1.0
-            while group_tasks:
-                # 루프 시작 시 상태 체크
-                debug_print(f"🔍 루프 시작: {len(group_tasks)}개 태스크 대기")
-                for i, t in enumerate(group_tasks):
-                    gid = getattr(t, 'group_id', None)
-                    debug_print(f"  태스크 {i}: 그룹{gid} done={t.done()}")
-                
-                try:
-                    done, pending = await asyncio.wait(
-                        group_tasks, 
-                        timeout=poll_interval, 
-                        return_when=asyncio.FIRST_COMPLETED
-                    )
-
-                    debug_print(f"📊 wait 결과: done={len(done)}, pending={len(pending)}")
-        
-                    # 완료된 그룹 처리
-                    for t in done:
-                        group_id = getattr(t, 'group_id', None)
-                        debug_print(f"🎯 그룹 {group_id} 결과 처리 시작")
-                        try:
-                            group_result = t.result()
-                            debug_print(f"✅ 그룹 {group_id} 정상 완료: {group_result}")
-                        except asyncio.CancelledError:
-                            debug_print("🛑 그룹 CancelledError 감지", group_id=group_id)
-                            group_result = {
-                                "group_id": group_id,
-                                "status": "stopped",
-                                "total_pod_count": 0,
-                                "success_pod_count": 0,
-                                "failed_pod_count": 0,
-                                "failure_reason": "사용자 요청으로 중지"
-                            }
-                        except Exception as e:
-                            debug_print(f"그룹 {group_id} 실행 실패", error=str(e))
-                            traceback.print_exception(type(e), e, e.__traceback__)
-
-                        debug_print(f"그룹 {group_id} 최종 결과: {group_result}")
-                        total_summary["group_results"].append(group_result)
-                        
-                        # 태스크 제거
-                        if t in group_tasks:
-                            group_tasks.remove(t)
-
-                        # 그룹 완료/실패 처리 - ✅ DB + Redis 동시 업데이트
-                        if group_result["status"] == "success":
-                            debug_print(f"그룹 {group.id} 완료 처리됨")
-                            total_summary["completed_groups"] += 1
-                            total_summary["total_success_pods"] += group_result["success_pod_count"]
-                            
-                            # 📊 최종 current_repeat를 DB + Redis에 동시 기록
-                            final_repeat = group_progress_tracker.get(group_id, {}).get("last_recorded_repeat", 0)
-                            await self._update_group_final_status_with_redis(
-                                group_id, GroupStatus.COMPLETED, final_repeat, 
-                                redis_client, simulation_id,
-                                group_result["total_pod_count"]
-                            )
-                            
-                        elif group_result["status"] == "failed":
-                            total_summary["failed_groups"] += 1
-                            total_summary["total_failed_pods"] += group_result.get("failed_pod_count", 0)
-                            if not total_summary["failure_reason"]:
-                                total_summary["failure_reason"] = group_result.get("failure_reason")
-                            
-                            # 📊 최종 current_repeat를 DB + Redis에 동시 기록
-                            final_repeat = group_progress_tracker.get(group_id, {}).get("last_recorded_repeat", 0)
-                            await self._update_group_final_status_with_redis(
-                                group_id, GroupStatus.FAILED, final_repeat,
-                                redis_client, simulation_id,
-                                group_result["total_pod_count"],
-                                failure_reason=group_result.get("failure_reason")
-                            )
-                            
-                        elif group_result["status"] == "stopped":
-                            debug_print("🛑 그룹 취소 감지", group_id=group_result["group_id"])
-                            
-                            # 📊 최종 current_repeat를 DB + Redis에 동시 기록
-                            final_repeat = group_progress_tracker.get(group_id, {}).get("last_recorded_repeat", 0)
-                            await self._update_group_final_status_with_redis(
-                                group_id, GroupStatus.STOPPED, final_repeat,
-                                redis_client, simulation_id,
-                                group_result["total_pod_count"]
-                            )
-
-                        total_summary["total_pods_executed"] += group_result["total_pod_count"]
-
-                    # ⚡ Redis 전체 진행률 업데이트 (순차 시뮬레이션 패턴)
-                    await self._update_overall_progress_redis(redis_client, simulation_id, total_summary, len(groups), group_tasks)
-
-                    # stop_event 감지 시 남은 모든 그룹 취소
-                    if stop_event.is_set():
-                        debug_print("🛑 시뮬레이션 중지 감지, 남은 그룹 취소 시작", pending_groups=len(pending))
-                        
-                        stopped_time = datetime.now(timezone.utc)
-                        
-                        # ✅ DB + Redis 동시 업데이트 - 현재 실행 중인 그룹들의 최종 상태만 기록
-                        for task in pending:
-                            group_id = getattr(task, 'group_id', None)
-                            if group_id and group_id in group_progress_tracker:
-                                final_repeat = group_progress_tracker[group_id]["last_recorded_repeat"]
-                                await self._update_group_final_status_with_redis(
-                                    group_id, GroupStatus.STOPPED, final_repeat,
-                                    redis_client, simulation_id, 0  # Pod 수는 알 수 없으므로 0
-                                )
-                        
-                        # 그룹 태스크 취소
-                        for t in pending:
-                            t.cancel()
-                        await asyncio.gather(*pending, return_exceptions=True)
-
-                        # ⚡ Redis 전체 시뮬레이션 중지 상태 업데이트
-                        await self._update_simulation_stopped_redis(redis_client, simulation_id, stopped_time, group_progress_tracker)
-
-                        total_summary["simulation_status"] = "STOPPED"
-                        
-                        break
-                except Exception as loop_error:
-                    debug_print(f"❌ 루프 실행 중 치명적 오류: {loop_error}")
-                    traceback.print_exc()
-                    break
-                
-                debug_print(f"🔄 루프 종료, 남은 태스크: {len(group_tasks)}개")
-
-            # 4️⃣ 최종 상태 결정
-            debug_print("최종 상태 결정")
-            if total_summary["simulation_status"] != "STOPPED":
-                completed_time = datetime.now(timezone.utc)
-                
-                if total_summary["failed_groups"] > 0:
-                    total_summary["simulation_status"] = "FAILED"
-                    reason = total_summary["failure_reason"] or f"{total_summary['failed_groups']}개 그룹 실패"
-                    
-                    # ⚡ Redis 최종 실패 상태 업데이트
-                    current_status = await redis_client.get_simulation_status(simulation_id)
-                    if current_status:
-                        current_status["status"] = "FAILED"
-                        current_status["message"] = reason
-                        current_status["timestamps"].update({
-                            "lastUpdated": completed_time.isoformat(),
-                            "failedAt": completed_time.isoformat()
-                        })
-                        await redis_client.set_simulation_status(simulation_id, current_status)
-                    
-                    await self._update_simulation_status_and_log(simulation_id, "FAILED", reason)
-                else:
-                    total_summary["simulation_status"] = "COMPLETED"
-                    
-                    # ⚡ Redis 최종 완료 상태 업데이트
-                    current_status = await redis_client.get_simulation_status(simulation_id)
-                    if current_status:
-                        current_status["status"] = "COMPLETED"
-                        current_status["progress"]["overallProgress"] = 1.0
-                        current_status["message"] = f"병렬 시뮬레이션 완료 - 모든 {len(groups)}개 그룹 성공"
-                        current_status["timestamps"].update({
-                            "lastUpdated": completed_time.isoformat(),
-                            "completedAt": completed_time.isoformat()
-                        })
-                        await redis_client.set_simulation_status(simulation_id, current_status)
-                    
-                    await self._update_simulation_status_and_log(simulation_id, "COMPLETED", "모든 그룹 완료")
-
-            debug_print("🎉 병렬 시뮬레이션 실행 완료", simulation_id=simulation_id)
-            return total_summary
-            
-        except Exception as e:
-            traceback.print_exception()
-            # 📊 예외 시에도 DB + Redis 동시 기록
-            await self._handle_failed_groups_with_redis(group_progress_tracker, redis_client, simulation_id, str(e))
-            raise
-        finally:
-            if redis_client.client:
-                await redis_client.client.close()
-            await self._cleanup_simulation(simulation_id)
-
-    async def _execute_single_group_with_memory_tracking(self, simulation, group, redis_client, simulation_id, group_progress_tracker):
-        debug_print("🔸 그룹 실행 시작", group_id=group.id, simulation_id=simulation.id)
-        start_time = datetime.now(timezone.utc)
-
-        try:
-            # 1️⃣ 그룹 Pod 조회
-            pod_list = PodService.get_pods_by_filter(
-                namespace=simulation.namespace,
-                filter_params=GroupIdFilter(group_id=group.id)
-            )
-            if not pod_list:
-                return {
-                    "group_id": group.id,
-                    "status": "failed",
-                    "execution_time": (datetime.now(timezone.utc) - start_time).total_seconds(),
-                    "total_pod_count": 0,
-                    "success_pod_count": 0,
-                    "failed_pod_count": 0,
-                    "failure_reason": f"그룹 {group.id}에서 Pod를 찾을 수 없음"
-                }
-
-            total_pod_count = len(pod_list)
-            debug_print(f"📋 그룹 {group.id} Pod 목록", pod_names=[pod.metadata.name for pod in pod_list], total_count=total_pod_count)
-
-            # 2️⃣ Pod Task 실행 시작 (rosbag 시작 요청)
-            pod_tasks = {asyncio.create_task(
-                self.rosbag_executor.execute_single_pod(
-                    pod,
-                    group_id=group.id if group else None
-                )
-            ): pod.metadata.name for pod in pod_list}
-
-            completed_pods = set()
-            failed_pods = {}
-            poll_interval = 1  # 1초 단위 진행상황 확인
-            
-            # ✅ 메모리 기반 반복 횟수 관리
-            last_recorded_repeat = group_progress_tracker[group.id]["last_recorded_repeat"]
-                
-
-            # 3️⃣ Pod 진행상황 루프 - Redis 실시간 업데이트 (순차 시뮬레이션 패턴 적용)
-            while len(completed_pods) < total_pod_count:
-                # 완료된 Pod Task 처리
-                done_tasks = [t for t in pod_tasks if t.done()]
-                
-                for task in done_tasks:
-                    pod_name = pod_tasks.pop(task)
-                    try:
-                        result = task.result()
-                        completed_pods.add(pod_name)
-                        debug_print(f"✅ Pod 완료: {pod_name} ({len(completed_pods)}/{total_pod_count})")
-                    except (asyncio.CancelledError, Exception) as e:
-                        debug_print(f"💥 Pod 실행 실패: {pod_name}: {e}")
-                        
-                        # ✅ 실패한 Pod의 current_loop 조회
-                        try:
-                            failed_pod = next(pod for pod in pod_list if pod.metadata.name == pod_name)
-                            failure_status = await self.rosbag_executor._check_pod_rosbag_status(failed_pod)
-                            
-                            if isinstance(failure_status, dict):
-                                current_loop = failure_status.get("current_loop", 0)
-                                max_loops = max(failure_status.get("max_loops") or 1, 1)
-                                failure_progress = min(current_loop / max_loops, 1.0)
-                            else:
-                                failure_progress = 0.0
-                                
-                            failed_pods[pod_name] = failure_progress
-                            debug_print(f"💥 Pod {pod_name} 실패 시점 진행률: {failure_progress:.1%} ({current_loop}/{max_loops})")
-                            
-                        except Exception as status_error:
-                            debug_print(f"⚠️ 실패한 Pod {pod_name}의 상태 조회 실패: {status_error}")
-                            failed_pods[pod_name] = 0.0
-                        
-                        # ✅ 즉시 시뮬레이션 종료
-                        debug_print(f"🛑 Pod 실패로 인한 그룹 {group.id} 즉시 종료")
-                        break
-                    
-                # ✅ 실패 감지 시 즉시 루프 종료
-                if failed_pods:
-                    debug_print(f"🛑 실패 감지 - 그룹 {group.id} 실행 중단")
-                    break
-
-                # ✅ 진행 중 Pod 상태 확인 및 로그 (asyncio.gather 패턴)
-                total_progress = 0.0
-                running_info = []
-                
-                debug_print(f"🔍 Pod 상태 체크 시작 - completed_pods: {completed_pods}")
-
-                # 모든 Pod 상태를 동시에 확인
-                status_tasks = {
-                    pod.metadata.name: asyncio.create_task(self.rosbag_executor._check_pod_rosbag_status(pod))
-                    for pod in pod_list
-                }
-
-                pod_statuses = await asyncio.gather(*status_tasks.values(), return_exceptions=True)
-                
-                # 🔍 각 Pod별 상세 디버깅
-                debug_print(f"📊 === 그룹 {group.id} Pod별 진행률 상세 분석 ===")
-
-                loops = []  # (current_loop, max_loops) 집계용
-
-                for pod_name, status in zip(status_tasks.keys(), pod_statuses):
-                    debug_print(f"🔍 === Pod [{pod_name}] 상태 체크 시작 ===")
-                    debug_print(f"Pod status 정보: {status}")
-                    
-                    # 이미 완료된 Pod는 바로 100% 처리
-                    if pod_name in completed_pods:
-                        pod_progress = 1.0
-                        running_info.append(f"{pod_name}(완료)")
-                        debug_print(f"  ✅ {pod_name}: 이미 완료됨 -> 100%")
-                    elif pod_name in failed_pods:
-                        pod_progress = failed_pods[pod_name]  # 실패 시점까지의 진행률
-                        running_info.append(f"{pod_name}(실패-{pod_progress:.1%})")
-                        debug_print(f"  💥 {pod_name}: 실패 (시점 진행률: {pod_progress:.1%})")
-                    elif isinstance(status, dict):           
-                        is_playing = status.get("is_playing", False)
-                        current_loop = status.get("current_loop", 0)
-                        max_loops = max(status.get("max_loops") or 1, 1)
-                        
-                        # 집계용 리스트에 기록
-                        loops.append((current_loop, max_loops)) 
-                        
-                        debug_print(f"  🎮 {pod_name}: is_playing = {is_playing}")
-                        debug_print(f"  🔄 {pod_name}: current_loop = {current_loop}")
-                        debug_print(f"  🎯 {pod_name}: max_loops = {max_loops}")
-                        
-                        pod_progress = min(current_loop / max_loops, 1.0)
-                        
-                        if current_loop >= max_loops and not is_playing:
-                            # 실제로 완료된 경우
-                            completed_pods.add(pod_name)
-                            pod_progress = 1.0
-                            running_info.append(f"{pod_name}(완료)")
-                            debug_print(f"  ✅ {pod_name}: 상태체크로 완료 감지 -> completed_pods에 추가")
-                        elif is_playing:
-                            running_info.append(f"{pod_name}({current_loop}/{max_loops})")
-                            debug_print(f"  ⏳ {pod_name}: 실행중 -> 진행률 {pod_progress:.1%}")
-                        else:
-                            # is_playing이 False이지만 아직 완료되지 않은 경우
-                            running_info.append(f"{pod_name}({current_loop}/{max_loops}-중지됨)")
-                            debug_print(f"  ⏸️ {pod_name}: 중지됨 -> 진행률 {pod_progress:.1%}")
-                    else:
-                        pod_progress = 0.0
-                        running_info.append(f"{pod_name}(상태체크실패)")
-                        debug_print(f"  ❌ {pod_name}: 상태체크 실패 -> 0%")
-
-                    total_progress += pod_progress
-                    debug_print(f"  📊 {pod_name}: pod_progress={pod_progress:.2f}, 누적 total_progress={total_progress:.2f}")
-
-                # ✅ 그룹 반복 갱신 (Redis + 메모리)
-                if loops:
-                    group_current_loop = min(cl for cl, _ in loops)  # 가장 느린 Pod 기준
-                    new_repeat = group_current_loop
-
-                    if new_repeat > last_recorded_repeat:
-                        last_recorded_repeat = new_repeat
-                        group_progress_tracker[group.id]["last_recorded_repeat"] = new_repeat
-                        debug_print(f"🔁 그룹 {group.id} 반복 갱신: {new_repeat} (Redis + 메모리)")
-
-                # ✅ 그룹 진행률 계산
-                debug_print(f"그룹 ID: {group.id}, total_progress: {total_progress}, total_pod_count: {total_pod_count}")
-                group_progress = total_progress / total_pod_count
-                group_progress_tracker[group.id]["current_progress"] = group_progress
-                
-                # ⚡ Redis 실시간 업데이트 - 그룹별 상태
-                await self._update_group_status_in_redis(
-                    redis_client, simulation_id, group.id, "RUNNING",
-                    group_progress,
-                    current_repeat=last_recorded_repeat
-                )
-                
-                debug_print(f"⏳ 그룹 {group.id} 진행률: {group_progress:.1%} ({len(completed_pods)}/{total_pod_count}) | 진행중: {', '.join(running_info)}")
-
-                # ✅ 실패한 Pod가 너무 많으면 그룹 실패 처리
-                if len(failed_pods) >= total_pod_count:
-                    debug_print(f"💥 그룹 {group.id}: 모든 Pod 실패")
-                    break
-
-                await asyncio.sleep(poll_interval)
-
-            # 4️⃣ 그룹 완료 처리 - ✅ 최종 반복횟수 확정
-            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
-            success_count = len(completed_pods)
-            failed_count = len(failed_pods)
-            status = "success" if failed_count == 0 else "failed"
-
-            # ✅ 최종 반복횟수 확정 및 업데이트
-            final_repeat_count = group_progress_tracker[group.id]["last_recorded_repeat"]
-            debug_print(f"✅ 그룹 {group.id} 최종 반복횟수 확정: {final_repeat_count}")
-
-            debug_print(f"{group.id} 그룹 완료 처리됨")
-            return {
-                "group_id": group.id,
-                "status": status,
-                "execution_time": execution_time,
-                "total_pod_count": total_pod_count,
-                "success_pod_count": success_count,
-                "failed_pod_count": failed_count,
-                "failure_reason": f"{failed_count}개 Pod 실패" if failed_count > 0 else None
-            }
-
-        except asyncio.CancelledError:
-            # ✅ 취소 시에도 현재까지의 최종 반복횟수 업데이트
-            final_repeat_count = group_progress_tracker[group.id]["last_recorded_repeat"]
-            debug_print(f"🛑 그룹 {group.id} 취소 - 최종 반복횟수: {final_repeat_count}")
-            
-            # 남은 Pod Task 취소
-            for t in pod_tasks.keys():
-                t.cancel()
-            await asyncio.gather(*pod_tasks.keys(), return_exceptions=True)
-            return {
-                "group_id": group.id,
-                "status": "stopped",
-                "execution_time": (datetime.now(timezone.utc) - start_time).total_seconds(),
-                "total_pod_count": total_pod_count if 'total_pod_count' in locals() else 0,
-                "success_pod_count": len(completed_pods) if 'completed_pods' in locals() else 0,
-                "failed_pod_count": len(failed_pods) if 'failed_pods' in locals() else 0,
-                "failure_reason": "사용자 요청으로 중지"
-            }
-
-        except Exception as e:
-            # ✅ 예외 시에도 현재까지의 최종 반복횟수 업데이트
-            final_repeat_count = group_progress_tracker[group.id]["last_recorded_repeat"]
-            debug_print(f"💥 그룹 {group.id} 실패 - 최종 반복횟수: {final_repeat_count}")
-            
-            # 남은 Pod Task 취소
-            for t in pod_tasks.keys():
-                t.cancel()
-            await asyncio.gather(*pod_tasks.keys(), return_exceptions=True)
-            return {
-                "group_id": group.id,
-                "status": "failed",
-                "execution_time": (datetime.now(timezone.utc) - start_time).total_seconds(),
-                "total_pod_count": total_pod_count if 'total_pod_count' in locals() else 0,
-                "success_pod_count": len(completed_pods) if 'completed_pods' in locals() else 0,
-                "failed_pod_count": len(failed_pods) if 'failed_pods' in locals() else 0,
-                "failure_reason": str(e)
-            }
-
-
-    # 📊 Redis + DB 동시 업데이트 메서드들
-    async def _update_group_final_status_with_redis(self, group_id: int, status: GroupStatus, final_repeat: int,
-                                            redis_client, simulation_id: int, pod_count: int = 0,
-                                            failure_reason: str = None):
-        """그룹 최종 상태를 DB + Redis에 동시 기록"""
-        timestamp = datetime.now(timezone.utc)
-        
-        try:
-            debug_print(f"🔄 DB 업데이트 시도 - Group {group_id}: {status.value}")
-            
-            # ✅ DB 업데이트
-            if status == GroupStatus.COMPLETED:
-                await self.repository.update_simulation_group_status(
-                    group_id=group_id,
-                    status=status,
-                    completed_at=timestamp
-                )
-            elif status == GroupStatus.FAILED:
-                await self.repository.update_simulation_group_status(
-                    group_id=group_id,
-                    status=status,
-                    failed_at=timestamp
-                )
-            elif status == GroupStatus.STOPPED:
-                await self.repository.update_simulation_group_status(
-                    group_id=group_id,
-                    status=status,
-                    stopped_at=timestamp
-                )
-            
-            # 📊 최종 current_repeat 업데이트
-            await self.repository.update_simulation_group_current_repeat(
-                group_id=group_id,
-                current_repeat=final_repeat
-            )
-            
-            debug_print(f"✅ DB 업데이트 완료 - Group {group_id}: {status.value}")
-            
-        except Exception as db_error:
-            debug_print(f"❌ DB 업데이트 실패 - Group {group_id}: {db_error}")
-            traceback.print_exc()  # 전체 예외 스택 출력
-            # DB 실패해도 Redis는 시도
-            
-            # 추가 디버깅: 트랜잭션 상태 확인
-            try:
-                in_tx = self.repository.session.in_transaction()
-                debug_print(f"ℹ️ 트랜잭션 상태 - in_transaction: {in_tx}")
-            except Exception as tx_error:
-                debug_print(f"⚠️ 트랜잭션 상태 확인 실패: {tx_error}")
-        
-        try:
-            # ⚡ Redis 그룹 상태 동시 업데이트
-            await self._update_group_status_in_redis_final(
-                redis_client, simulation_id, group_id, status.value.upper(),
-                final_repeat, pod_count, timestamp, failure_reason
-            )
-            debug_print(f"✅ Redis 업데이트 완료 - Group {group_id}")
-            
-        except Exception as redis_error:
-            debug_print(f"❌ Redis 업데이트 실패 - Group {group_id}: {redis_error}")
-        
-        debug_print(f"✅ 상태 업데이트 시도 완료 - Group {group_id}: {status.value}, current_repeat: {final_repeat}")
-
-    async def _update_group_status_in_redis_final(self, redis_client, simulation_id: int, group_id: int,
-                                                final_status: str, final_repeat: int, pod_count: int,
-                                                timestamp: datetime, error_message: str = None):
-        """Redis에서 특정 그룹의 최종 상태 업데이트"""
-        current_status = await redis_client.get_simulation_status(simulation_id)
-        if not current_status:
-            return
-        
-        # groupDetails에서 해당 그룹 찾아서 업데이트
-        for group_detail in current_status.get("groupDetails", []):
-            if group_detail.get("groupId") == group_id:
-                group_detail.update({
-                    "status": final_status,
-                    "progress": 100.0 if final_status == "COMPLETED" else group_detail.get("progress", 0.0),
-                    "autonomousAgents": pod_count,
-                    "currentRepeat": final_repeat,
-                    "error": error_message
-                })
-                
-                # 상태별 타임스탬프 설정
-                timestamp_iso = timestamp.isoformat()
-                if final_status == "COMPLETED":
-                    group_detail["completedAt"] = timestamp_iso
-                elif final_status == "FAILED":
-                    group_detail["failedAt"] = timestamp_iso
-                elif final_status == "STOPPED":
-                    group_detail["stoppedAt"] = timestamp_iso
-                
-                debug_print(f"⚡ Redis 그룹 {group_id} 최종 상태 업데이트: {final_status}")
-                break
-        
-        # 전체 상태 timestamps 업데이트
-        current_status["timestamps"]["lastUpdated"] = timestamp.isoformat()
-        
-        await redis_client.set_simulation_status(simulation_id, current_status)
-
-
-    async def _handle_cancelled_groups_with_redis(self, group_progress_tracker, redis_client, simulation_id):
-        """취소된 그룹들의 최종 상태를 DB + Redis에 동시 기록"""
-        cancelled_time = datetime.now(timezone.utc)
-        
-        for group_id, progress_info in group_progress_tracker.items():
-            final_repeat = progress_info["last_recorded_repeat"]
-            await self._update_group_final_status_with_redis(
-                group_id, GroupStatus.STOPPED, final_repeat,
-                redis_client, simulation_id, 0
-            )
-        
-        # ⚡ Redis 전체 시뮬레이션 취소 상태 업데이트
-        current_status = await redis_client.get_simulation_status(simulation_id)
-        if current_status:
-            current_status["status"] = "STOPPED"
-            current_status["message"] = "병렬 시뮬레이션 태스크가 취소되었습니다"
-            current_status["timestamps"].update({
-                "lastUpdated": cancelled_time.isoformat(),
-                "stoppedAt": cancelled_time.isoformat()
-            })
-            await redis_client.set_simulation_status(simulation_id, current_status)
-        
-
-
-    async def _handle_failed_groups_with_redis(self, group_progress_tracker, redis_client, simulation_id, error_msg):
-        debug_print("_handle_failed_groups_with_redis 호출됨")
-        """실패한 그룹들의 최종 상태를 DB + Redis에 동시 기록"""
-        error_time = datetime.now(timezone.utc)
-        
-        for group_id, progress_info in group_progress_tracker.items():
-            final_repeat = progress_info["last_recorded_repeat"]
-            await self._update_group_final_status_with_redis(
-                group_id, GroupStatus.FAILED, final_repeat,
-                redis_client, simulation_id, 0, failure_reason=error_msg
-            )
-        
-        # ⚡ Redis 전체 시뮬레이션 실패 상태 업데이트
-        current_status = await redis_client.get_simulation_status(simulation_id)
-        if current_status:
-            current_status["status"] = "FAILED"
-            current_status["message"] = f"병렬 시뮬레이션 실행 중 오류 발생: {error_msg}"
-            current_status["timestamps"].update({
-                "lastUpdated": error_time.isoformat(),
-                "failedAt": error_time.isoformat()
-            })
-            await redis_client.set_simulation_status(simulation_id, current_status)
-        
-        await self._update_simulation_status_and_log(simulation_id, "FAILED", error_msg)
-
-    async def _update_simulation_stopped_redis(self, redis_client, simulation_id, stopped_time, group_progress_tracker):
-        """Redis 전체 시뮬레이션 중지 상태 업데이트"""
-        current_status = await redis_client.get_simulation_status(simulation_id)
-        if current_status:
-            current_status["status"] = "STOPPED"
-            current_status["message"] = "시뮬레이션이 사용자에 의해 중지되었습니다"
-            current_status["timestamps"].update({
-                "lastUpdated": stopped_time.isoformat(),
-                "stoppedAt": stopped_time.isoformat()
-            })
-            
-            # 실행 중인 그룹들을 STOPPED로 업데이트 (이미 완료된 것들은 그대로 유지)
-            for group_detail in current_status["groupDetails"]:
-                group_id = group_detail["groupId"]
-                if group_id in group_progress_tracker and group_detail["status"] == "RUNNING":
-                    group_detail.update({
-                        "status": "STOPPED",
-                        "stoppedAt": stopped_time.isoformat(),
-                        "progress": group_progress_tracker[group_id]["current_progress"],
-                        "currentRepeat": group_progress_tracker[group_id]["last_recorded_repeat"]
-                    })
-            
-            await redis_client.set_simulation_status(simulation_id, current_status)
-
-
-    # 📊 헬퍼 메서드들
-    async def _update_group_final_status(self, group_id: int, status: GroupStatus, final_repeat: int, 
-                                    failure_reason: str = None):
-        """그룹 최종 상태를 DB에 기록 (current_repeat 포함)"""
-        timestamp = datetime.now(timezone.utc)
-        
-        try:
-            if status == GroupStatus.COMPLETED:
-                await self.repository.update_simulation_group_status(
-                    group_id=group_id,
-                    status=status,
-                    completed_at=timestamp
-                )
-            elif status == GroupStatus.FAILED:
-                await self.repository.update_simulation_group_status(
-                    group_id=group_id,
-                    status=status,
-                    failed_at=timestamp
-                )
-            elif status == GroupStatus.STOPPED:
-                await self.repository.update_simulation_group_status(
-                    group_id=group_id,
-                    status=status,
-                    stopped_at=timestamp
-                )
-            
-            # 📊 최종 current_repeat 업데이트
-            await self.repository.update_simulation_group_current_repeat(
-                group_id=group_id,
-                current_repeat=final_repeat
-            )
-        
-            debug_print(f"✅ DB 최종 상태 기록 완료 - Group {group_id}: {status.value}, current_repeat: {final_repeat}")
-        except Exception as db_error:
-            # DB 실패 시 상세 로그
-            debug_print(f"❌ DB 업데이트 실패 - Group {group_id}: {db_error}")
-            traceback.print_exc()  # 전체 예외 스택 출력
-
-    async def _update_overall_progress_redis(self, redis_client, simulation_id, total_summary, 
-                                        total_groups, remaining_tasks):
-        """전체 진행률 Redis 업데이트 (순차 시뮬레이션 패턴)"""
-        current_status = await redis_client.get_simulation_status(simulation_id)
-        if current_status:
-            running_count = len(remaining_tasks)
-            completed_count = total_summary["completed_groups"]
-            failed_count = total_summary["failed_groups"]
-            
-            # ✅ 각 그룹의 실제 진행률을 고려한 가중 평균 계산
-            overall_progress = await self._calculate_weighted_overall_progress_from_db(
-                redis_client, simulation_id
-            )
-            
-            current_status["progress"].update({
-                "overallProgress": overall_progress,
-                "completedGroups": completed_count,
-                "runningGroups": running_count
-            })
-            current_status["message"] = f"병렬 실행 중 - 완료: {completed_count}, 실행중: {running_count}, 실패: {failed_count}"
-            current_status["timestamps"]["lastUpdated"] = datetime.now(timezone.utc).isoformat()
-            
-            await redis_client.set_simulation_status(simulation_id, current_status)
 
     async def _calculate_weighted_overall_progress_from_db(self, redis_client: RedisSimulationClient, simulation_id):
         """DB에서 그룹 정보를 조회하여 가중 평균 계산"""
@@ -3565,65 +2118,27 @@ class SimulationService:
         except Exception as e:
             debug_print(f"DB 기반 전체 진행률 계산 오류: {e}")
             return 0.0
-
-    async def _handle_cancelled_groups(self, group_progress_tracker, redis_client, simulation_id):
-        """취소된 그룹들의 최종 상태를 DB에 기록"""
-        cancelled_time = datetime.now(timezone.utc)
         
-        for group_id, progress_info in group_progress_tracker.items():
-            final_repeat = progress_info["last_recorded_repeat"]
-            await self._update_group_final_status(group_id, GroupStatus.STOPPED, final_repeat)
-        
-
-    async def _handle_failed_groups(self, group_progress_tracker, redis_client, simulation_id, error_msg):
-        """실패한 그룹들의 최종 상태를 DB에 기록"""
-        error_time = datetime.now(timezone.utc)
-        
-        for group_id, progress_info in group_progress_tracker.items():
-            final_repeat = progress_info["last_recorded_repeat"]
-            await self._update_group_final_status(group_id, GroupStatus.FAILED, final_repeat, 
-                                                failure_reason=error_msg)
-        
-        await self._update_simulation_status_and_log(simulation_id, "FAILED", error_msg)
-
-    async def _update_group_status_in_redis(self, redis_client, simulation_id, group_id, group_status, group_progress, current_repeat=None, error=None):
-        """
-        Redis에서 특정 그룹의 상태 업데이트
-        """
+    async def update_execution_result_from_redis(
+        self, simulation_id: int, execution_id: int, redis_client: RedisSimulationClient
+    ):
+        """Redis에 있는 execution 상태를 DB SimulationExecution.result에 반영"""
         try:
-            current_status = await redis_client.get_simulation_status(simulation_id)
-            if current_status:
-                current_time = datetime.now(timezone.utc).isoformat()
-                current_status["timestamps"]["lastUpdated"] = current_time
-                
-                # 그룹 디테일 업데이트
-                for group_detail in current_status["groupDetails"]:
-                    if group_detail["groupId"] == group_id:
-                        group_detail.update({
-                            "status": group_status,
-                            "progress": round(group_progress * 100, 1),  # 0.65 -> 65.0
-                        })
-                        
-                        if current_repeat is not None:
-                            group_detail["currentRepeat"] = current_repeat
-                        if error:
-                            group_detail["error"] = error
-                            
-                        # 상태별 타임스탬프 업데이트
-                        if status == "COMPLETED":
-                            group_detail["completedAt"] = current_time
-                        elif status == "FAILED":
-                            group_detail["failedAt"] = current_time
-                        elif status == "STOPPED":
-                            group_detail["stoppedAt"] = current_time
-                        
-                        break
-                
-                await redis_client.set_simulation_status(simulation_id, current_status)
+            redis_data = await redis_client.client.get(f"simulation:{simulation_id}:execution:{execution_id}")
+            if not redis_data:
+                debug_print(f"⚠️ Redis에 결과 없음: simulation:{simulation_id}, execution:{execution_id}")
+                return
+
+            async with self.sessionmaker() as db_session:
+                execution = await self.repository.find_execution_by_id(execution_id, db_session)
+                if execution:
+                    execution.result_summary = json.loads(redis_data)
+                    await db_session.commit()
+                    debug_print(f"✅ SimulationExecution.result 업데이트 완료: execution_id={execution_id}")
         except Exception as e:
-            debug_print(f"❌ Redis 그룹 상태 업데이트 실패: {e}")
-    
-    
+            debug_print(f"💥 Execution result 업데이트 실패: {e}")
+
+        
     async def _update_simulation_status_and_log(self, simulation_id: int, status: str, reason: str, session: Optional[AsyncSession] = None):
         """시뮬레이션 상태 업데이트 및 로깅 (Optional 세션 주입 가능)"""
         try:

@@ -5,7 +5,7 @@ from enum import Enum
 from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as PgEnum, JSON, BIGINT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from models.enums import SimulationExecutionStatus
+from models.enums import PatternType, SimulationExecutionStatus
 from database.db_conn import Base
 
 class SimulationExecution(Base):
@@ -17,6 +17,10 @@ class SimulationExecution(Base):
         Integer, 
         ForeignKey('simulations.id', ondelete='CASCADE'),
         nullable=False
+    )
+    pattern_type: Mapped[str] = mapped_column(
+        PgEnum(PatternType, name = "pattern_type_enum", create_constraint = True), 
+        nullable = False 
     )
     
     # 실행 상태
@@ -69,7 +73,7 @@ class SimulationExecution(Base):
     )
     
     def __repr__(self) -> str:
-        return f"SimulationExecution(id={self.id}, simulation_id={self.simulation_id}, status={self.status.value})"
+        return f"SimulationExecution(id={self.id}, simulation_id={self.simulation_id}, pattern_type={self.pattern_type}, status={self.status.value})"
     
     def start_execution(self):
         """실행 시작 처리"""

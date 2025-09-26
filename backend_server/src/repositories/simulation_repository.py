@@ -895,6 +895,7 @@ class SimulationRepository:
     async def create_execution(
         self,
         simulation_id: int,
+        pattern_type: PatternType,
         status: SimulationExecutionStatus = SimulationExecutionStatus.PENDING,
         result_summary: Optional[dict] = None,
         message: Optional[str] = None,
@@ -907,6 +908,7 @@ class SimulationRepository:
         try:
             execution = SimulationExecution(
                 simulation_id=simulation_id,
+                pattern_type=pattern_type,
                 status=status,
                 result_summary=result_summary,
                 message=message,
