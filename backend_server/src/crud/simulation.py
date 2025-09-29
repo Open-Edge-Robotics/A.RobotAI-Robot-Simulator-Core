@@ -136,7 +136,8 @@ class SimulationService:
                             execution_id=execution_id,
                             step_order=entity_identifier,
                             status=status,
-                            error=reason if status == "FAILED" else None,
+                            reason=reason if status == "FAILED" or status == "STOPPED" else None,
+                            started_at=now if status == "RUNNING" else None,
                             stopped_at=now if status == "STOPPED" else None,
                             failed_at=now if status == "FAILED" else None,
                             completed_at=now if status == "COMPLETED" else None,
@@ -152,6 +153,7 @@ class SimulationService:
                             group_id=entity_identifier,
                             status=status,
                             reason=reason if status == "FAILED" or status == "STOPPED" else None,
+                            started_at=now if status == "RUNNING" else None,
                             stopped_at=now if status == "STOPPED" else None,
                             failed_at=now if status == "FAILED" else None,
                             completed_at=now if status == "COMPLETED" else None,
@@ -245,6 +247,11 @@ class SimulationService:
                     "failedAt": now.isoformat() if status == "FAILED" else None,
                     "completedAt": now.isoformat() if status == "COMPLETED" else None,
                 })
+                
+                # startedAt은 RUNNING 상태이면서 기존 값이 없을 때만 설정
+                if status == "RUNNING" and not item.get("startedAt"):
+                    item["startedAt"] = now.isoformat()
+                
                 if current_repeat is not None:
                     item["currentRepeat"] = current_repeat
                 if total_repeats is not None:
@@ -618,6 +625,19 @@ class SimulationService:
                 asyncio.create_task(self.rosbag_executor.execute_single_pod(pod, group_id=group.id)): pod.metadata.name
                 for pod in pod_list
             }
+            
+            # Pod 작업 시작 직후 Group을 RUNNING으로 전환하며 started_at 기록
+            await self._handle_entity_status(
+                entity_type="group",
+                simulation_id=simulation_id,
+                execution_id=execution_id,
+                entity_identifier=group.id,
+                status="RUNNING",
+                redis_client=redis_client,
+                current_repeat=0,
+                progress=0.0,
+                update_db=True
+            )
 
             completed_pods = set()
             failed_pods = {}
@@ -1691,6 +1711,19 @@ class SimulationService:
                     for pod in pod_list
                 }
                 
+                # Pod 작업 시작 직후 Step을 RUNNING으로 전환하며 started_at 기록
+                await self._handle_entity_status(
+                    entity_type="step",
+                    simulation_id=simulation_id,
+                    execution_id=execution_id,
+                    entity_identifier=step.step_order,
+                    status="RUNNING",
+                    redis_client=redis_client,
+                    current_repeat=0,
+                    progress=0.0,
+                    update_db=True
+                )
+                
                 completed_pods = set()
                 poll_interval = 1
                 last_recorded_repeat = 0
@@ -2354,14 +2387,27 @@ class SimulationService:
                 status_code=500,
                 detail="시뮬레이션 중지 중 내부 오류가 발생했습니다"
             )
-            
-    async def _polling_stop(self, simulation_id: int, execution_id: int, stop_event: asyncio.Event, redis_client: RedisSimulationClient):
+     
+    async def _polling_stop(
+        self,
+        simulation_id: int,
+        execution_id: int,
+        stop_event: asyncio.Event,
+        redis_client: RedisSimulationClient
+    ):
         """
         Polling 방식으로 stop 이벤트 확인 후 상태 반영
+        - DB + Redis 동기화
+        - STOPPED 시점 timestamp 포함
+        - stepDetails / groupDetails를 simulation type에 맞춰 반영
+        - partial update 지원
         """
         max_wait_time = 120  # 초
         start_wait = datetime.now(timezone.utc)
 
+        # -------------------------------
+        # 1️⃣ Polling으로 stop 이벤트 확인
+        # -------------------------------
         while (datetime.now(timezone.utc) - start_wait).total_seconds() < max_wait_time:
             if simulation_id not in self.state.running_simulations:
                 print(f"✅ polling 로직에 의한 중지 완료 확인")
@@ -2381,17 +2427,55 @@ class SimulationService:
             )
             raise HTTPException(status_code=500, detail="중지 처리 타임아웃")
 
-        # Stop 완료 상태 반영
-        await self._handle_entity_status(
-            entity_type="simulation",
+        # -------------------------------
+        # 2️⃣ Redis 최신 상태 가져오기
+        # -------------------------------
+        redis_key = f"simulation:{simulation_id}:execution:{execution_id}"
+        redis_raw = await redis_client.client.get(redis_key)
+        try:
+            redis_json = json.loads(redis_raw) if redis_raw else {}
+        except json.JSONDecodeError:
+            redis_json = {}
+
+        # -------------------------------
+        # 3️⃣ 중지 시점 timestamp 추가
+        # -------------------------------
+        timestamps_data = redis_json.get("timestamps", {})
+        timestamps_data["stoppedAt"] = datetime.now(timezone.utc).isoformat()
+
+        # -------------------------------
+        # 4️⃣ partial update 데이터 구성
+        # -------------------------------
+        # DB에 partial update할 dict 준비
+        update_data = {
+            "status": SimulationExecutionStatus.STOPPED,
+            "result_summary": {
+                **redis_json,
+                "status": "STOPPED",
+                "timestamps": timestamps_data,
+                "message": "사용자 요청에 의해 중지됨"
+            }
+        }
+
+        # -------------------------------
+        # 5️⃣ DB에 partial update 수행
+        # -------------------------------
+        execution = await self.repository.create_or_update_simulation_execution(
             simulation_id=simulation_id,
+            pattern_type=redis_json.get("patternType", "sequential"),  # Redis에서 읽거나 기본값
             execution_id=execution_id,
-            entity_identifier=simulation_id,
-            status="STOPPED",
-            reason="사용자 요청에 의해 중지됨",
-            redis_client=redis_client,
-            update_db=True
+            status=update_data.get("status"),
+            result_summary=update_data.get("result_summary"),
+            message=update_data["result_summary"].get("message")
         )
+
+        # -------------------------------
+        # 6️⃣ Redis 업데이트
+        # -------------------------------
+        await redis_client.client.set(redis_key, json.dumps(update_data["result_summary"]))
+
+        print(f"✅ Execution {execution_id} STOPPED 상태 DB + Redis 동기화 완료")
+ 
      
     async def _monitor_pod_progress(
         self, pods: list, rosbag_executor, stop_event: asyncio.Event, execution_context: str, poll_interval: float = 1.0
