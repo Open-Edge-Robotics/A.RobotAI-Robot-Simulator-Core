@@ -2465,32 +2465,29 @@ class SimulationService:
 
     async def stop_simulation_async(self, simulation_id: int) -> Dict[str, Any]:
         """
-        🔑 통합 시뮬레이션 중지 메서드 (라우트에서 호출)
-        - 시뮬레이션 패턴 타입 감지 후 적절한 중지 전략 선택
-        - 순차 패턴: polling 로직 위임
-        - 병렬 패턴: polling 로직 위임
+        🔑 통합 시뮬레이션 중지 메서드 (execution_id 중심)
+        - 순차/병렬 패턴 모두 처리
+        - Redis + DB + SimulationExecution.result_summary 동기화
         """
+        redis_client = RedisSimulationClient()
         print(f"🛑 시뮬레이션 중지 요청: {simulation_id}")
 
         try:
-            # 1. 시뮬레이션 조회 및 RUNNING 상태 확인
+            # 1️⃣ 시뮬레이션 조회
             simulation = await self.find_simulation_by_id(simulation_id, "stop")
+            if not simulation:
+                raise SimulationNotFoundError(simulation.id)
             
-            # 2. 상태별 처리
-            if simulation.status == SimulationStatus.STOPPED:
-                # 이미 중지된 시뮬레이션
-                raise HTTPException(
-                    status_code=409,  # Conflict
-                    detail=f"이미 중지된 시뮬레이션입니다 (현재 상태: {simulation.status})"
-                )
-            elif simulation.status != SimulationStatus.RUNNING:
-                # 실행 중이 아닌 상태
+            # 2️⃣ 현재 실행 중인 execution 조회
+            execution = await self.repository.find_latest_simulation_execution(simulation_id)
+            if not execution or execution.status != SimulationExecutionStatus.RUNNING:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"시뮬레이션을 중지할 수 없는 상태입니다 (현재 상태: {simulation.status})"
+                    detail="실행 중인 Simulation 이 없습니다"
                 )
+            execution_id = execution.id
                 
-            # 3. 중지 진행 중인 경우 확인
+            # 3️⃣ 이미 stop 요청 진행 중인지 확인
             running_info = self.state.running_simulations.get(simulation_id)
             if running_info and running_info.get("is_stopping", False):
                 # 이미 중지 진행 중
@@ -2498,26 +2495,16 @@ class SimulationService:
                     status_code=409,
                     detail="중지 요청이 이미 진행 중입니다. 완료될 때까지 기다려주세요."
                 )
+                
+            # 4️⃣ stop_event 설정
+            stop_event = running_info.get("stop_event")
+            stop_event.set()
 
-            print(f"📊 시뮬레이션 패턴: {simulation.pattern_type}")
-
-            # 4. 패턴 타입에 따라 중지 메서드 호출
-            if simulation.pattern_type == PatternType.SEQUENTIAL:
-                print(f"🔄 순차 패턴 중지 처리 시작")
-                result = await self._stop_sequential_simulation_via_polling(simulation_id)
-
-            elif simulation.pattern_type == PatternType.PARALLEL:
-                print(f"⚡ 병렬 패턴 중지 처리 시작")
-                result = await self._stop_parallel_simulation_via_polling(simulation_id)
-
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"지원하지 않는 패턴 타입: {simulation.pattern_type}"
-                )
+            # 5️⃣ 패턴별 polling 중지
+            await self._polling_stop(simulation_id, execution_id, stop_event, redis_client)
 
             print(f"✅ 시뮬레이션 {simulation_id} 중지 완료")
-            return result
+            return {"simulation_id": simulation_id, "execution_id": execution_id, "status": "STOPPED"}
 
         except HTTPException:
             raise
@@ -2528,292 +2515,45 @@ class SimulationService:
                 status_code=500,
                 detail="시뮬레이션 중지 중 내부 오류가 발생했습니다"
             )
-    
-    async def _stop_sequential_simulation_via_polling(self, simulation_id: int) -> Dict[str, Any]:
+            
+    async def _polling_stop(self, simulation_id: int, execution_id: int, stop_event: asyncio.Event, redis_client: RedisSimulationClient):
         """
-        순차 시뮬레이션 중지
+        Polling 방식으로 stop 이벤트 확인 후 상태 반영
         """
-        print(f"🔄 순차 시뮬레이션 중지 (polling 위임): {simulation_id}")
-        namespace = f"simulation-{simulation_id}"
+        max_wait_time = 120  # 초
+        start_wait = datetime.now(timezone.utc)
 
-        try:
-            sim_info = self.state.running_simulations[simulation_id]
-            print(f"현재 실행 중인 시뮬레이션 정보: {sim_info}")
-        except KeyError as e:
-            print(f"❌ 실행 중인 시뮬레이션을 찾을 수 없음: {e}")
-            return await self._direct_sequential_stop(simulation_id)
-        except Exception as e:
-            print(f"❌ 시뮬레이션 정보 조회 중 알 수 없는 오류: {e}")
-            raise
-
-        try:
-            # 1. 실행 중인 시뮬레이션 확인
+        while (datetime.now(timezone.utc) - start_wait).total_seconds() < max_wait_time:
             if simulation_id not in self.state.running_simulations:
-                print(f"⚠️ 백그라운드 실행 중이 아님, 직접 중지 처리")
-                return await self._direct_sequential_stop(simulation_id)
-
-            if sim_info.get("is_stopping"):
-                print(f"⚠️ 이미 중지 처리 진행 중")
-                raise HTTPException(
-                    status_code=400,
-                    detail="이미 중지 처리가 진행 중입니다"
-                )
-
-            # 2. 중지 처리 플래그 설정 및 신호 전송
-            sim_info["is_stopping"] = True
-            sim_info["stop_handler"] = "api_sequential"
-
-            stop_event = sim_info["stop_event"]
-            stop_event.set()
-            print(f"✅ 시뮬레이션 {simulation_id} 중지 신호 전송 (polling이 순차 중지 처리)")
-
-            # 3. polling 로직의 중지 완료 대기
-            max_wait_time = 120
-            start_wait = datetime.now(timezone.utc)
-
-            while (datetime.now(timezone.utc) - start_wait).total_seconds() < max_wait_time:
-                if simulation_id not in self.state.running_simulations:
-                    print(f"✅ polling 로직에 의한 중지 완료 확인")
-                    break
-                await asyncio.sleep(1)
-            else:
-                print(f"⏰ 중지 처리 타임아웃 ({max_wait_time}초)")
-                # 타임아웃 시 FAILED 상태 업데이트
-                await self._update_simulation_status_and_log(simulation_id, SimulationStatus.FAILED, "중지 처리 타임아웃")
-                raise HTTPException(status_code=500, detail="중지 처리 타임아웃")
-    
-            await self._update_simulation_status_and_log(simulation_id, SimulationStatus.STOPPED, "사용자 요청에 의해 중지됨")
-
-            # 4. 최종 상태 확인 및 결과 반환
-            try:
-                final_simulation = await self.find_simulation_by_id(simulation_id, "stop result")
-                print(f"📌 최종 시뮬레이션 상태: {final_simulation.status}")
-            except Exception as e:
-                print(f"❌ 최종 상태 조회 실패: {e}")
-                raise
-
-            try:
-                steps = await self.repository.find_simulation_steps(simulation_id)
-                print(f"📌 스텝 개수 조회 성공: {len(steps)}")
-            except Exception as e:
-                print(f"❌ 스텝 조회 실패: {e}")
-                steps = []
-
-            # 결과 반환
-            return {
-                "simulationId": simulation_id,
-                "status": SimulationStatus.STOPPED,
-                "stoppedAt": datetime.now(timezone.utc)
-            }
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"❌ 중지 처리 중 알 수 없는 오류 발생: {e}")
-            try:
-                await self._update_simulation_status_and_log(simulation_id, SimulationStatus.FAILED, f"중지 처리 오류: {str(e)}")
-            except:
-                pass
-            raise
-        finally:
-            # -----------------------------
-            # 모든 Pod 삭제
-            # -----------------------------
-            try:
-                await PodService.delete_all_pods_in_namespace(namespace)
-                print(f"🧹 네임스페이스 '{namespace}'의 모든 Pod 삭제 완료")
-            except Exception as e:
-                print(f"❌ 네임스페이스 '{namespace}' Pod 삭제 중 오류: {e}")
-                
-    async def _stop_parallel_simulation_via_polling(self, simulation_id: int) -> Dict[str, Any]:
-        """
-        ⚡ 병렬 시뮬레이션 중지
-        """
-        print(f"⚡ 병렬 시뮬레이션 중지 (polling 위임): {simulation_id}")
-        namespace = f"simulation-{simulation_id}"
-
-        try:
-            sim_info = self.state.running_simulations.get(simulation_id)
-            if not sim_info:
-                print(f"⚠️ 백그라운드 실행 중이 아님, 직접 중지 처리")
-                return await self._direct_parallel_stop(simulation_id)
-
-            if sim_info.get("is_stopping"):
-                print(f"⚠️ 이미 중지 처리 진행 중")
-                raise HTTPException(status_code=400, detail="이미 중지 처리가 진행 중입니다")
-
-            # 중지 플래그 설정 및 stop_event 신호 전송
-            sim_info["is_stopping"] = True
-            sim_info["stop_handler"] = "api_parallel"
-            stop_event = sim_info["stop_event"]
-            stop_event.set()
-            print(f"✅ 시뮬레이션 {simulation_id} 중지 신호 전송 (polling이 병렬 중지 처리)")
-
-            # polling으로 중지 완료 대기
-            max_wait_time = 120
-            start_wait = datetime.now(timezone.utc)
-            while (datetime.now(timezone.utc) - start_wait).total_seconds() < max_wait_time:
-                if simulation_id not in self.state.running_simulations:
-                    print(f"✅ polling 로직에 의한 중지 완료 확인")
-                    break
-                await asyncio.sleep(1)
-            else:
-                print(f"⏰ 중지 처리 타임아웃 ({max_wait_time}초)")
-                # 타임아웃 시 FAILED 상태 업데이트
-                await self._update_simulation_status_and_log(simulation_id, SimulationStatus.FAILED, "중지 처리 타임아웃")
-                raise HTTPException(status_code=500, detail="중지 처리 타임아웃")
-
-            # STOPPED 상태 업데이트
-            await self._update_simulation_status_and_log(simulation_id, SimulationStatus.STOPPED, "polling 로직 완료")
-
-            # 결과 반환
-            return {
-                "simulationId": simulation_id,
-                "status": SimulationStatus.STOPPED,
-                "stoppedAt": datetime.now(timezone.utc)
-            }
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            traceback.print_stack()
-            print(f"❌ 중지 처리 중 알 수 없는 오류 발생: {e}")
-            try:
-                await self._update_simulation_status_and_log(simulation_id, SimulationStatus.FAILED, f"중지 처리 오류: {str(e)}")
-            except:
-                pass
-            raise
-        finally:
-            # -----------------------------
-            # 모든 Pod 삭제
-            # -----------------------------
-            try:
-                await PodService.delete_all_pods_in_namespace(namespace)
-                print(f"🧹 네임스페이스 '{namespace}'의 모든 Pod 삭제 완료")
-            except Exception as e:
-                print(f"❌ 네임스페이스 '{namespace}' Pod 삭제 중 오류: {e}")
-
-    async def _direct_sequential_stop(self, simulation_id: int) -> Dict[str, Any]:
-        """
-        직접 순차 중지 처리 (백그라운드 실행 중이 아닌 경우)
-        """
-        print(f"🔧 직접 순차 중지 처리: {simulation_id}")
-        
-        try:
-            # 스텝 역순 조회
-            simulation = await self.find_simulation_by_id(simulation_id, "direct sequential stop")
-            steps = await self.repository.find_simulation_steps(simulation_id)
-            steps_reversed = sorted(steps, key=lambda x: x.step_order, reverse=True)
-            
-            total_pods = 0
-            stopped_pods = 0
-            failed_pods = 0
-            
-            # 각 스텝별로 역순 처리
-            for step in steps_reversed:
-                pod_list = PodService.get_pods_by_filter(
-                    namespace=simulation.namespace,
-                    filter_params=StepOrderFilter(step_order=step.step_order)
-                )
-                
-                if not pod_list:
-                    continue
-                
-                total_pods += len(pod_list)
-                
-                # 스텝별 Pod 중지
-                stop_results = await self.rosbag_executor.stop_rosbag_parallel_pods(
-                    pods=pod_list,
-                    step_order=step.step_order
-                )
-                
-                # 결과 집계
-                stopped_pods += sum(1 for r in stop_results if r.status == "stopped")
-                failed_pods += sum(1 for r in stop_results if r.status in ["failed", "timeout"])
-            
-            # 상태 업데이트
-            final_status = "STOPPED" if failed_pods == 0 else "FAILED"
-            await self._update_simulation_status_and_log(
-                simulation_id, final_status, f"직접 순차 중지 완료 - 총 {total_pods}개 Pod"
+                print(f"✅ polling 로직에 의한 중지 완료 확인")
+                break
+            await asyncio.sleep(1)
+        else:
+            print(f"⏰ 중지 처리 타임아웃 ({max_wait_time}초)")
+            await self._handle_entity_status(
+                entity_type="simulation",
+                simulation_id=simulation_id,
+                execution_id=execution_id,
+                entity_identifier=simulation_id,
+                status="FAILED",
+                reason="중지 처리 타임아웃",
+                redis_client=redis_client,
+                update_db=True
             )
-            
-            return {
-                "simulationId": simulation_id,
-                "patternType": simulation.pattern_type,
-                "status": SimulationStatus.STOPPED,
-                "message": "순차 시뮬레이션 직접 중지 완료",
-                "totalPods": total_pods,
-                "stoppedPods": stopped_pods,
-                "failedPods": failed_pods,
-                "stoppedAt": datetime.now(timezone.utc)
-            }
-            
-        except Exception as e:
-            traceback.print_stack()
-            error_msg = f"직접 순차 중지 실패: {str(e)}"
-            print(f"❌ {error_msg}")
-            await self._update_simulation_status_and_log(simulation_id, "FAILED", error_msg)
-            raise
+            raise HTTPException(status_code=500, detail="중지 처리 타임아웃")
 
-    async def _direct_parallel_stop(self, simulation_id: int) -> Dict[str, Any]:
-        """
-        직접 병렬 중지 처리 (백그라운드 실행 중이 아닌 경우)
-        """
-        print(f"🔧 직접 병렬 중지 처리: {simulation_id}")
-        
-        try:
-            # 모든 그룹의 Pod 수집
-            simulation = await self.find_simulation_by_id(simulation_id, "direct parallel stop")
-            groups = await self.repository.find_simulation_groups(simulation_id)
-            all_pods = []
-            
-            for group in groups:
-                pod_list = PodService.get_pods_by_filter(
-                    namespace=simulation.namespace,
-                    filter_params=GroupIdFilter(group_id=group.id)
-                )
-                all_pods.extend(pod_list)
-            
-            if not all_pods:
-                return {
-                    "simulationId": simulation_id,
-                    "patternType": simulation.pattern_type,
-                    "status": "no_pods",
-                    "message": "중지할 Pod가 없음"
-                }
-            
-            # 모든 Pod 동시 중지
-            stop_results = await self.rosbag_executor.stop_rosbag_parallel_all_pods(
-                pods=all_pods
-            )
-            
-            # 결과 집계
-            stopped_count = sum(1 for r in stop_results if r.status == "stopped")
-            failed_count = sum(1 for r in stop_results if r.status in ["failed", "timeout"])
-            
-            # 상태 업데이트
-            final_status = "STOPPED" if failed_count == 0 else "FAILED"
-            await self._update_simulation_status_and_log(
-                simulation_id, final_status, f"직접 병렬 중지 완료 - 총 {len(all_pods)}개 Pod"
-            )
-            
-            return {
-                "simulationId": simulation_id,
-                "patternType": simulation.pattern_type,
-                "status": SimulationStatus.STOPPED,
-                "message": "병렬 시뮬레이션 직접 중지 완료",
-                "totalPods": len(all_pods),
-                "stoppedPods": stopped_count,
-                "failedPods": failed_count,
-                "stoppedAt": datetime.now(timezone.utc)
-            }
-            
-        except Exception as e:
-            error_msg = f"직접 병렬 중지 실패: {str(e)}"
-            print(f"❌ {error_msg}")
-            await self._update_simulation_status_and_log(simulation_id, "FAILED", error_msg)
-            raise
-        
+        # Stop 완료 상태 반영
+        await self._handle_entity_status(
+            entity_type="simulation",
+            simulation_id=simulation_id,
+            execution_id=execution_id,
+            entity_identifier=simulation_id,
+            status="STOPPED",
+            reason="사용자 요청에 의해 중지됨",
+            redis_client=redis_client,
+            update_db=True
+        )
+     
     async def _monitor_pod_progress(
         self, pods: list, rosbag_executor, stop_event: asyncio.Event, execution_context: str, poll_interval: float = 1.0
     ):
