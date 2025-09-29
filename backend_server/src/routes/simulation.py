@@ -1,36 +1,19 @@
 import traceback
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
-from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 from typing import Optional
 
-from repositories.instance_repository import InstanceRepository
-from repositories.template_repository import TemplateRepository
+from di.simulation import get_simulation_service
 from schemas.simulation_status import CurrentStatus, SimulationStatusResponse
-from crud.template import get_template_service
 from schemas.simulation_status import CurrentStatus, SimulationDeletionStatusData, SimulationDeletionStatusResponse, SimulationStatusResponse
 from models.enums import ViewType
 from schemas.dashboard import SimulationDashboardResponseModel
-from repositories.simulation_repository import SimulationRepository
 from schemas.simulation_detail import SimulationResponseModel
-from crud.simulation import SimulationService, TemplateService
-from database.db_conn import get_db, async_session
+from crud.simulation import SimulationService
 from schemas.simulation import *
 from utils.my_enum import API
-from state import simulation_state
 
 router = APIRouter(prefix="/simulation", tags=["Simulation"])
-
-def get_simulation_service(
-    db: AsyncSession = Depends(get_db),
-    template_service: TemplateService = Depends(get_template_service)
-) -> SimulationService:
-    """SimulationService 의존성 주입"""
-    repository = SimulationRepository(async_session)
-    template_repository = TemplateRepository(async_session)
-    instance_repository = InstanceRepository(async_session)
-    return SimulationService(db, async_session, repository, template_service, template_repository, instance_repository, simulation_state)
-
 
 @router.post(
     "", 
@@ -164,7 +147,23 @@ async def get_simulation_status(
     
     return response
 
-@router.get("", response_model=SimulationListResponse, status_code=status.HTTP_200_OK)
+@router.get(
+    "",
+    response_model=SimulationListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="시뮬레이션 목록 조회",
+    description="""
+        시뮬레이션 목록을 조회합니다.
+
+        - 다양한 필터링 지원:
+        - `pattern_type`: 특정 패턴 타입 기준 필터링 (선택)
+        - `status`: 시뮬레이션 상태값 기준 필터링 (선택)
+        - `start_date`, `end_date`: 조회 기간 기준 필터링 (선택, YYYY-MM-DD)
+        - 페이징 지원:
+        - PaginationParams 상속으로 `page`, `size` 파라미터 사용 가능
+        - 반환값: SimulationListResponse
+    """
+)
 async def get_simulations(
     filter_request: SimulationFilterRequest = Depends(),
     service: SimulationService = Depends(get_simulation_service)
@@ -192,23 +191,28 @@ async def get_simulations(
         print(f"[Exception] {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="시뮬레이션 목록 조회 중 오류가 발생했습니다")
-    
 
-@router.post("/action", response_model=SimulationControlResponseModel, status_code=status.HTTP_200_OK)
-async def control_simulation(
-        request: SimulationControlRequest, service: SimulationService = Depends(get_simulation_service)
+@router.post(
+    "/{simulation_id}/start",
+    response_model=SimulationControlResponseModel,
+    status_code=status.HTTP_200_OK,
+    summary="시뮬레이션 시작",
+    description="""
+        해당 시뮬레이션을 시작합니다.
+
+        - UI에서 '시작' 버튼 클릭 시 호출됩니다.
+        - simulation_id를 경로 파라미터로 전달해야 합니다.
+        - 호출 성공 시 시뮬레이션 실행 상태가 'RUNNING'으로 변경됩니다.
+        - 반환값: SimulationControlResponseModel
+    """
+)
+async def start_simulation(
+    simulation_id: int = Path(..., description = "실행할 시뮬레이션 ID"),
+    service: SimulationService = Depends(get_simulation_service)
 ):
-    """시뮬레이션 실행/중지 (고도화된 기능 포함)"""
-
-    if request.action == "start":
-        result = await service.start_simulation_async(request.simulation_id)
-        message = API.RUN_SIMULATION.value
-    elif request.action == "stop": # 정지
-        result = await service.stop_simulation_async(request.simulation_id)
-        message = API.STOP_SIMULATION.value
-    else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"지원하지 않는 시뮬레이션 액션: '{request.action}'. action 값은 'start' 또는 'stop'만 허용됩니다.")
+    """시뮬레이션 실행"""
+    result = await service.start_simulation_async(simulation_id)
+    message = API.RUN_SIMULATION.value
 
     return SimulationControlResponseModel(
         status_code=status.HTTP_200_OK,

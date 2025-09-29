@@ -1,5 +1,9 @@
 from fastapi import APIRouter, Depends, Path, Query, HTTPException
+from starlette import status
 
+from crud.simulation import SimulationService
+from di.simulation import get_simulation_service
+from schemas.simulation import API, SimulationControlResponseModel
 from crud.simulation_execution import SimulationExecutionService
 from di.simulation_execution import get_simulation_execution_service
 from schemas.pagination import PaginationMeta, PaginationParams
@@ -64,3 +68,31 @@ async def get_simulation_execution_detail(
     response = ExecutionDetailResponseFactory.create(execution=execution_detail, status_code=200)
 
     return response
+
+@router.post(
+    "/{execution_id}/stop",
+    response_model=SimulationControlResponseModel,
+    summary="시뮬레이션 실행 중지",
+    description="""
+        특정 시뮬레이션 실행(execution_id)을 중지합니다.
+
+        - 여러 번 반복 실행된 시뮬레이션 중 현재 실행 중인 시뮬레이션에 대해 호출됩니다.
+        - 경로 파라미터 `execution_id`를 전달해야 합니다.
+        - 호출 성공 시 해당 실행 상태가 'STOPPED'로 변경됩니다.
+        - 반환값: SimulationControlResponseModel
+    """
+)
+async def stop_simulation_execution(
+    simulation_id: int = Path(..., description = "조회할 시뮬레이션 ID"),
+    execution_id: int = Path(..., description = "조회할 시뮬레이션 실행 ID"),
+    service: "SimulationService" = Depends(get_simulation_service)
+):
+    """시뮬레이션 실행 중지"""
+    result = await service.stop_simulation_async(simulation_id, execution_id)
+    message = API.STOP_SIMULATION.value
+
+    return SimulationControlResponseModel(
+        status_code=status.HTTP_200_OK,
+        data=result,
+        message=message
+    )

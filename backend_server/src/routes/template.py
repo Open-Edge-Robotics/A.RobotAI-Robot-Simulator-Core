@@ -1,13 +1,9 @@
 from typing import Optional
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.params import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from storage.minio_client import MinioStorageClient
-from crud.template import TemplateService, get_template_service
-from database.db_conn import get_db
-from database.minio_conn import get_storage_client
+from di.template import TemplateService, get_template_service
 from schemas.template import TemplateCreateRequest, TemplateCreateResponseModel, \
     TemplateListResponseModel, TemplateDeleteResponseModel, TemplateUpdateRequest, TemplateUpdateResponseModel
 from utils.my_enum import API
@@ -15,7 +11,22 @@ from utils.my_enum import API
 router = APIRouter(prefix="/template", tags=["Template"])
 
 # 템플릿 목록 조회
-@router.get("", response_model=TemplateListResponseModel, status_code=status.HTTP_200_OK)
+@router.get(
+    "",
+    response_model=TemplateListResponseModel,
+    status_code=status.HTTP_200_OK,
+    summary="템플릿 목록 조회",
+    description="""
+    시스템에 등록된 모든 템플릿 목록을 조회합니다.
+
+    반환 정보:
+        - 템플릿 이름(name)
+        - 템플릿 타입(type)
+        - 설명(description)
+        - 첨부된 파일 정보(metadata.yaml, .db3 파일, 다운로드 가능한 링크)
+    UI나 API 클라이언트에서 템플릿 선택 시 활용 가능합니다.
+    """
+)
 async def get_templates(
     service: TemplateService = Depends(get_template_service)  
 ):
@@ -35,11 +46,11 @@ async def get_templates(
     summary="새로운 ROSBAG 템플릿 생성",
     description="""
     ROSBAG 템플릿을 생성합니다.
-    - name: 템플릿 이름 (고유값, 템플릿 식별)
-    - type: 템플릿 타입 (예: robot-arm, robot-leg)
-    - description: 템플릿 설명
-    - topics: 구독할 ROS 토픽 목록 (쉼표로 구분)
-    - metadata_file, db_file: rosbag2 재생에 필요한 파일 첨부
+        - name: 템플릿 이름 (고유값, 템플릿 식별)
+        - type: 템플릿 타입 (예: robot-arm, robot-leg)
+        - description: 템플릿 설명
+        - topics: 구독할 ROS 토픽 목록 (쉼표로 구분)
+        - metadata_file, db_file: rosbag2 재생에 필요한 파일 첨부
     """
 )
 async def create_template(
@@ -66,11 +77,11 @@ async def create_template(
     summary="기존 ROSBAG 템플릿 수정",
     description="""
     기존 ROSBAG 템플릿을 수정합니다.
-    - name: 템플릿 이름 (고유값, 템플릿 식별)
-    - type: 템플릿 타입 (예: robot-arm, robot-leg)
-    - description: 템플릿 설명
-    - topics: 구독할 ROS 토픽 목록 (쉼표로 구분)
-    - metadata_file, db_file: rosbag2 재생에 필요한 파일 첨부
+        - name: 템플릿 이름 (고유값, 템플릿 식별)
+        - type: 템플릿 타입 (예: robot-arm, robot-leg)
+        - description: 템플릿 설명
+        - topics: 구독할 ROS 토픽 목록 (쉼표로 구분)
+        - metadata_file, db_file: rosbag2 재생에 필요한 파일 첨부
     """
 )
 async def update_template(
@@ -97,7 +108,19 @@ async def update_template(
 
 
 # 템플릿 삭제
-@router.delete("/{template_id}", response_model=TemplateDeleteResponseModel, status_code=status.HTTP_200_OK)
+@router.delete(
+    "/{template_id}",
+    response_model=TemplateDeleteResponseModel,
+    status_code=status.HTTP_200_OK,
+    summary="템플릿 삭제",
+    description="""
+        특정 템플릿(template_id)을 삭제합니다.  
+
+        주의 사항:
+        - 소프트 딜리트(Soft Delete) 방식으로 처리됩니다.
+        - 반환값: 삭제 처리 결과(TemplateDeleteResponseModel)
+    """
+)
 async def delete_template(
     template_id: int, 
     service: TemplateService = Depends(get_template_service)   

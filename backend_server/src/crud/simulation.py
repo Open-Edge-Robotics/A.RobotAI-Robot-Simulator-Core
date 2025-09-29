@@ -1300,96 +1300,6 @@ class SimulationService:
             for g in groups
         ]
         return ExecutionPlanParallel(groups=dto_groups)
-                    
-    async def get_all_simulations(self):
-        statement = (
-            select(Simulation)
-            .options(selectinload(Simulation.instances))
-            .order_by(Simulation.id.desc())
-        )
-        results = await self.session.execute(statement)
-        simulations = results.scalars().all()
-
-        simulation_list = []
-
-        for simulation in simulations:
-            simulation_status = await self.get_simulation_status(simulation)
-
-            response = SimulationListResponse(
-                simulation_id=simulation.id,
-                simulation_name=simulation.name,
-                simulation_description=simulation.description,
-                simulation_namespace=simulation.namespace,
-                simulation_created_at=str(simulation.created_at),
-                simulation_status=simulation_status,
-                template_id=simulation.template_id,
-                autonomous_agent_count=simulation.autonomous_agent_count,
-                execution_time=simulation.execution_time,
-                delay_time=simulation.delay_time,
-                repeat_count=simulation.repeat_count,
-                scheduled_start_time=(
-                    str(simulation.scheduled_start_time)
-                    if simulation.scheduled_start_time
-                    else None
-                ),
-                scheduled_end_time=(
-                    str(simulation.scheduled_end_time)
-                    if simulation.scheduled_end_time
-                    else None
-                ),
-                mec_id=simulation.mec_id,
-            )
-            simulation_list.append(response)
-
-        return simulation_list
-
-    async def update_simulation_pattern(
-        self, simulation_id: int, pattern_data: SimulationPatternUpdateRequest
-    ):
-        """시뮬레이션 패턴 설정 업데이트"""
-        simulation = await self.find_simulation_by_id(
-            simulation_id, "update simulation pattern"
-        )
-
-        # 시뮬레이션이 실행 중인지 확인
-        current_status = await self.get_simulation_status(simulation)
-        if current_status == SimulationStatus.ACTIVE.value:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="실행 중인 시뮬레이션의 패턴은 수정할 수 없습니다.",
-            )
-
-        # 스케줄 시간 검증
-        if (
-            pattern_data.scheduled_start_time
-            and pattern_data.scheduled_end_time
-            and pattern_data.scheduled_start_time >= pattern_data.scheduled_end_time
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="종료 시간은 시작 시간보다 늦어야 합니다.",
-            )
-
-        # 업데이트할 필드들 준비
-        update_data = {}
-        for field, value in pattern_data.model_dump(exclude_unset=True).items():
-            update_data[field] = value
-
-        if update_data:
-            update_data["updated_at"] = datetime.now()
-
-            statement = (
-                update(Simulation)
-                .where(Simulation.id == simulation_id)
-                .values(**update_data)
-            )
-            await self.session.execute(statement)
-            await self.session.commit()
-
-        return SimulationPatternUpdateResponse(
-            simulation_id=simulation_id,
-            message="패턴 설정이 성공적으로 업데이트되었습니다",
-        ).model_dump()
 
     async def start_simulation_async(self, simulation_id: int):
         """
@@ -1415,7 +1325,7 @@ class SimulationService:
             await self._create_pods_for_simulation(simulation)
             
             # 모든 Pod Running 상태 될 때까지 대기
-            await PodService.wait_for_pods_running(simulation.namespace)
+            await PodService.wait_for_pods_running(simulation.namespace, timeout = 300)
             debug_print(f"✅ 네임스페이스 '{simulation.namespace}'의 모든 Pod가 Running 상태임 확인 완료")
 
             simulation_data = {
@@ -2151,28 +2061,6 @@ class SimulationService:
             print(f"   시도한 상태: {status}")
             print(f"   사유: {reason}")
 
-    async def stop_simulation(self, simulation_id: int):
-        instances = await self.get_simulation_instances(simulation_id)
-        for instance in instances:
-            await self.pod_service.check_pod_status(instance)
-            pod_ip = await self.pod_service.get_pod_ip(instance)
-            await RosService.send_post_request(pod_ip, "/rosbag/stop")
-
-        return SimulationControlResponse(simulation_id=simulation_id).model_dump()
-
-    async def get_simulation_instances(self, simulation_id: int):
-        simulation = await self.find_simulation_by_id(
-            simulation_id, "control simulation"
-        )
-        query = (
-            select(Instance)
-            .options(joinedload(Instance.template))
-            .where(Instance.simulation_id == simulation.id)
-        )
-        result = await self.session.execute(query)
-        instances = result.scalars().all()
-        return list(instances)
-
     async def delete_simulation(self, simulation_id: int):
         """
         시뮬레이션 삭제
@@ -2279,57 +2167,8 @@ class SimulationService:
         simulation = await self.repository.find_by_id(simulation_id)
 
         if not simulation:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"존재하지 않는 시뮬레이션 ID",
-            )
+            raise SimulationNotFoundError(simulation.id)
         return simulation
-
-    async def get_simulation_status(self, simulation):
-        instances = simulation.instances
-
-        if not instances:
-            return SimulationStatus.EMPTY.value
-
-        for instance in instances:
-            pod_ip = await self.pod_service.get_pod_ip(instance)
-            pod_status = await RosService.get_pod_status(pod_ip)
-
-            if pod_status == PodStatus.RUNNING.value:
-                return SimulationStatus.ACTIVE.value
-
-        return SimulationStatus.INACTIVE.value
-
-    async def get_simulation_detailed_status(self, simulation_id: int):
-        """시뮬레이션의 상세 상태 정보 반환"""
-        simulation = await self.find_simulation_by_id(
-            simulation_id, "get simulation status"
-        )
-        instances = await self.get_simulation_instances(simulation_id)
-
-        if not instances:
-            return {"status": "EMPTY", "message": "인스턴스가 없습니다"}
-
-        detailed_status = []
-        for instance in instances:
-            try:
-                pod_ip = await self.pod_service.get_pod_ip(instance)
-                status_response = await RosService.get_pod_status(pod_ip)
-                detailed_status.append(
-                    {
-                        "instance_id": instance.id,
-                        "pod_ip": pod_ip,
-                        "status": status_response,
-                    }
-                )
-            except Exception as e:
-                detailed_status.append({"instance_id": instance.id, "error": str(e)})
-
-        return {
-            "simulation_id": simulation_id,
-            "simulation_name": simulation.name,
-            "instances_status": detailed_status,
-        }
 
     def _validate_pagination_range(self, pagination: PaginationParams, total_count: int) -> None:
         """페이지 범위 검증"""
@@ -2463,7 +2302,7 @@ class SimulationService:
         except Exception as e:
             raise
 
-    async def stop_simulation_async(self, simulation_id: int) -> Dict[str, Any]:
+    async def stop_simulation_async(self, simulation_id: int, execution_id: int) -> Dict[str, Any]:
         """
         🔑 통합 시뮬레이션 중지 메서드 (execution_id 중심)
         - 순차/병렬 패턴 모두 처리
@@ -2474,12 +2313,12 @@ class SimulationService:
 
         try:
             # 1️⃣ 시뮬레이션 조회
-            simulation = await self.find_simulation_by_id(simulation_id, "stop")
+            simulation = await self.repository.find_by_id(simulation_id)
             if not simulation:
                 raise SimulationNotFoundError(simulation.id)
             
             # 2️⃣ 현재 실행 중인 execution 조회
-            execution = await self.repository.find_latest_simulation_execution(simulation_id)
+            execution = await self.repository.find_execution_by_id(execution_id)
             if not execution or execution.status != SimulationExecutionStatus.RUNNING:
                 raise HTTPException(
                     status_code=400,

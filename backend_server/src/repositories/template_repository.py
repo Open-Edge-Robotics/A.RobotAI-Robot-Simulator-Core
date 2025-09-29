@@ -143,11 +143,3 @@ class TemplateRepository:
                 if session is None:
                     await current_session.rollback()
                 raise
-
-        
-# Repository 생성 팩토리
-def create_template_repository(
-    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_async_sessionmaker)]
-) -> TemplateRepository:
-    """AsyncSession Factory 기반 안전한 Repository 생성"""
-    return TemplateRepository(session_factory)

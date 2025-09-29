@@ -290,10 +290,3 @@ class TemplateService:
         if template is None:
             raise HTTPException(status_code=400, detail=f"템플릿을 찾을 수 없습니다. ID: {template_id}")
         return template
-
-# FastAPI DI 제공
-def get_template_service(
-    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_async_sessionmaker)],
-    storage_client: Annotated[MinioStorageClient, Depends(get_storage_client)]
-):
-    return TemplateService(session_factory, storage_client)
