@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from typing import Optional
-from enum import Enum
 
 from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as PgEnum, JSON, BIGINT
 from sqlalchemy.orm import Mapped, mapped_column, relationship

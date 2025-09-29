@@ -892,36 +892,72 @@ class SimulationRepository:
     # ------------------------
     # 생성
     # ------------------------
-    async def create_execution(
+    async def create_or_update_simulation_execution(
         self,
         simulation_id: int,
         pattern_type: PatternType,
         status: SimulationExecutionStatus = SimulationExecutionStatus.PENDING,
         result_summary: Optional[dict] = None,
         message: Optional[str] = None,
+        execution_id: Optional[int] = None,  # update 대상 지정 가능
         session: Optional[AsyncSession] = None
     ) -> SimulationExecution:
+        """
+        Execution 생성 또는 partial 업데이트
+        - execution_id가 주어지면 해당 Execution을 업데이트
+        - execution_id 없고 동일 simulation_id + pattern_type 존재하면 업데이트
+        - 없으면 새 Execution 생성
+        - partial update 지원: 전달된 필드만 갱신
+        """
         own_session = False
         if session is None:
             own_session = True
             session = self.session_factory()
+
         try:
-            execution = SimulationExecution(
-                simulation_id=simulation_id,
-                pattern_type=pattern_type,
-                status=status,
-                result_summary=result_summary,
-                message=message,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc)
-            )
-            session.add(execution)
+            # 1️⃣ update 대상 조회
+            execution: Optional[SimulationExecution] = None
+            if execution_id is not None:
+                execution = await self.find_execution_by_id(execution_id, session=session)
+            if execution is None:
+                # 동일 simulation_id + pattern_type로 존재하는 최신 execution 조회
+                execution = await self.find_latest_simulation_execution(
+                    simulation_id, session=session
+                )
+
+            now = datetime.now(timezone.utc)
+
+            # 2️⃣ 존재하면 partial update
+            if execution:
+                if status is not None:
+                    execution.status = status
+                if result_summary is not None:
+                    execution.result_summary = result_summary
+                if message is not None:
+                    execution.message = message
+                execution.updated_at = now
+            else:
+                # 3️⃣ 없으면 새로 생성
+                execution = SimulationExecution(
+                    simulation_id=simulation_id,
+                    pattern_type=pattern_type,
+                    status=status or SimulationExecutionStatus.PENDING,
+                    result_summary=result_summary,
+                    message=message,
+                    created_at=now,
+                    updated_at=now
+                )
+                session.add(execution)
+
+            # 4️⃣ commit / flush
             if own_session:
                 await session.commit()
                 await session.refresh(execution)
             else:
                 await session.flush()
+
             return execution
+
         except Exception:
             if own_session:
                 await session.rollback()
@@ -1158,7 +1194,8 @@ class SimulationRepository:
         autonomous_agent_count: int = 0,
         current_repeat: int = 0,
         total_repeats: int = 1,
-        error: Optional[str] = None,
+        reason: Optional[str] = None,
+        started_at: Optional[datetime] = None,
         stopped_at: Optional[datetime] = None,
         failed_at: Optional[datetime] = None,
         completed_at: Optional[datetime] = None,
@@ -1175,7 +1212,10 @@ class SimulationRepository:
             now = datetime.now(timezone.utc)
             if step_exec:
                 step_exec.status = status
-                step_exec.error = error
+                if reason:
+                    step_exec.error = reason
+                if started_at and not step_exec.started_at:
+                    step_exec.started_at = started_at
                 if stopped_at:
                     step_exec.stopped_at = stopped_at
                 if failed_at:
@@ -1194,7 +1234,7 @@ class SimulationRepository:
                     execution_id=execution_id,
                     step_order=step_order,
                     status=status,
-                    error=error,
+                    error=reason,
                     stopped_at=stopped_at,
                     failed_at=failed_at,
                     completed_at=completed_at,
@@ -1227,6 +1267,7 @@ class SimulationRepository:
         current_repeat: int = 0,
         total_repeats: int = 1,
         reason: Optional[str] = None,
+        started_at: Optional[datetime] = None,
         stopped_at: Optional[datetime] = None,
         failed_at: Optional[datetime] = None,
         completed_at: Optional[datetime] = None,
@@ -1245,6 +1286,8 @@ class SimulationRepository:
                 group_exec.status = status
                 if reason:
                     group_exec.error = reason
+                if started_at:
+                    group_exec.started_at = started_at
                 if stopped_at:
                     group_exec.stopped_at = stopped_at
                 if failed_at:
