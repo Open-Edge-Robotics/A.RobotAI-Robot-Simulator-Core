@@ -1,10 +1,11 @@
 from contextlib import asynccontextmanager
 
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database.redis_simulation_client import RedisSimulationClient
 from database.db_conn import init_db, close_db
-from exception.exception_handler import *
+from exception.exception_handler import register_exception_handlers
 from routes import template, instance, simulation, simulation_pattern, simulation_execution, dashboard
 from settings import settings
 
@@ -19,12 +20,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-app.add_exception_handler(StarletteHTTPException, http_exception_handler)
-app.add_exception_handler(S3Error, s3_exception_handler)
-app.add_exception_handler(ApiException, api_exception_handler)
-app.add_exception_handler(RequestValidationError, validation_exception_handler)
-app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
-app.add_exception_handler(Exception, generic_exception_handler)
+register_exception_handlers(app)
 
 origins = [
     "http://localhost:3000",
