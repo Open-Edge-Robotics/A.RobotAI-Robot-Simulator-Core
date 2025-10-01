@@ -116,12 +116,23 @@ def create_validation_exception_handler():
         return JSONResponse(status_code=400, content=response.model_dump())
     return handler
 
+def create_http_exception_handler():
+    async def handler(request: Request, exc: StarletteHTTPException):
+        logger.error(f"HTTPException: status_code={exc.status_code}, detail={exc.detail}")
+        response = safe_create_response(
+            status_code=exc.status_code,
+            data=None,
+            message=str(exc.detail)
+        )
+        return JSONResponse(status_code=exc.status_code, content=response.model_dump())
+    return handler
+
 
 # -----------------------------
 # 핸들러 등록
 # -----------------------------
 def register_exception_handlers(app: FastAPI):
-    app.add_exception_handler(StarletteHTTPException, create_exception_handler(status_code=500))
+    app.add_exception_handler(StarletteHTTPException, create_http_exception_handler())
     app.add_exception_handler(S3Error, create_s3_handler())
     app.add_exception_handler(ApiException, create_api_exception_handler())
     app.add_exception_handler(RequestValidationError, create_validation_exception_handler())

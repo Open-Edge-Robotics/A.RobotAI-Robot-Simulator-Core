@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     REDIS_PORT: str
     REDIS_PASSWORD: str
     REDIS_DB: str
+    JWT_SECRET_KEY: str
+    JWT_ALGORITHM: str
+    ACCESS_TOKEN_EXPIRE_MINUTES: int
+    REFRESH_TOKEN_EXPIRE_DAYS: int
 
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="forbid")
 
