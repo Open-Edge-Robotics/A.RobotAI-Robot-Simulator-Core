@@ -49,8 +49,9 @@ class ExecutionStatusModel(BaseSchema):
 
         progress = None
         if execution.status == SimulationExecutionStatus.RUNNING:
-            overall_progress = execution.result_summary.get("overall_progress") if execution.result_summary else 0.0
-            progress = ProgressModel(overall_progress=overall_progress)
+            overall_progress = execution.result_summary.get("overall_progress") if execution.result_summary else None
+            # overall_progress가 None인 경우 기본값 0.0 사용
+            progress = ProgressModel(overall_progress=overall_progress if overall_progress is not None else 0.0)
 
         return cls(
             execution_id=execution.id,
