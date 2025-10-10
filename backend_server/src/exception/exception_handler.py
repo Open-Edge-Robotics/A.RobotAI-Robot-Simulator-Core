@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse
 import logging
 
+from exception.validation_exceptions import CustomRequestValidationError
 from exception.simulation_exceptions import (
     SimulationError,
     SimulationNotFoundError,
@@ -107,14 +108,47 @@ def create_api_exception_handler(default_status=500):
 
 def create_validation_exception_handler():
     async def handler(request: Request, exc: RequestValidationError):
+        # 1. 로깅
         logger.error(f"RequestValidationError: {exc.errors()}")
+
+        # 2. UI 친화적 메시지 생성
+        first_error = exc.errors()[0] if exc.errors() else {}
+        error_message = first_error.get("msg", "잘못된 요청입니다.")
+        
+        # 3. 응답 생성
         response = safe_create_response(
             status_code=400,
             data=None,
-            message={"path": request.url.path, "method": request.method, "error_message": exc.errors()}
+            message={
+                "path": request.url.path,
+                "method": request.method,
+                "error_message": error_message
+            }
         )
+        
+        # 4. JSONResponse 반환
         return JSONResponse(status_code=400, content=response.model_dump())
+    
     return handler
+
+
+def create_custom_validation_exception_handler():
+    async def handler(request: Request, exc: CustomRequestValidationError):
+        # 1. 로깅
+        logger.error(f"CustomRequestValidationError: {exc.message}, field={exc.field}")
+        
+        # 2. 응답 생성
+        response = safe_create_response(
+            status_code=400,
+            data=None,
+            message=f"{exc.field or ''}: {exc.message}".strip()
+        )
+        
+        # 4. JSONResponse 반환
+        return JSONResponse(status_code=400, content=response.model_dump())
+    
+    return handler
+
 
 def create_http_exception_handler():
     async def handler(request: Request, exc: StarletteHTTPException):
@@ -136,6 +170,7 @@ def register_exception_handlers(app: FastAPI):
     app.add_exception_handler(S3Error, create_s3_handler())
     app.add_exception_handler(ApiException, create_api_exception_handler())
     app.add_exception_handler(RequestValidationError, create_validation_exception_handler())
+    app.add_exception_handler(CustomRequestValidationError, create_custom_validation_exception_handler())
     app.add_exception_handler(SQLAlchemyError, create_exception_handler(500))
     app.add_exception_handler(Exception, create_exception_handler(500))
 

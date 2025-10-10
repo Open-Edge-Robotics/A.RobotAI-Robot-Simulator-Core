@@ -5,6 +5,11 @@ metadata:
   labels:
     agent-type: placeholder-agent-type  # 동적으로 설정
 spec:
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+
   containers:
     - name: placeholder-container-name  # 동적으로 설정
       securityContext:
@@ -16,7 +21,7 @@ spec:
           add:
           - SYS_ADMIN  # 시스템 관리 권한
           - DAC_OVERRIDE  # 파일 권한 우회
-      image: pbc9236/pod_server:v0.0.4
+      image: pbc9236/pod_server:v0.0.5
       imagePullPolicy: IfNotPresent
       env:
         - name: MINIO_URL
