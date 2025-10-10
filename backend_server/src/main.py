@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database.redis_simulation_client import RedisSimulationClient
 from database.db_conn import init_db, close_db
 from exception.exception_handler import register_exception_handlers
-from routes import template, instance, simulation, simulation_pattern, simulation_execution, dashboard
+from routes import template, instance, simulation, simulation_pattern, simulation_execution, dashboard, auth
 from settings import settings
 
 
@@ -25,7 +25,8 @@ register_exception_handlers(app)
 origins = [
     "http://localhost:3000",
     "http://192.168.160.134:3001",
-    "http://192.168.160.129:3001"
+    "http://192.168.160.129:3001",
+    "http://101.79.72.60:3001"
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -35,7 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-routers = [template.router, instance.router, simulation.router, dashboard.router, simulation_pattern.router, simulation_execution.router]
+routers = [template.router, instance.router, simulation.router, dashboard.router, simulation_pattern.router, simulation_execution.router, auth.router]
 for router in routers:
     app.include_router(router, prefix=settings.API_STR)
 

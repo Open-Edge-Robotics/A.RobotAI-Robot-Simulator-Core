@@ -1,5 +1,9 @@
 from enum import Enum
 
+class UserRole(str, Enum):
+    GENERAL = "general"
+    ADMIN = "admin"
+
 class ViewType(str, Enum):
     """API 응답 뷰 타입"""
     DETAIL = "detail"

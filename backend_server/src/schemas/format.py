@@ -1,11 +1,12 @@
-from typing import List
-
+from typing import Generic, TypeVar, Optional
+from pydantic.generics import GenericModel
 from settings import BaseSchema
 
+T = TypeVar("T")
 
-class GlobalResponseModel(BaseSchema):
+class GlobalResponseModel(BaseSchema, GenericModel, Generic[T]):
     status_code: int | str
-    data: List | dict | None
+    data: Optional[T] = None
     message: str | dict
 
     model_config = {

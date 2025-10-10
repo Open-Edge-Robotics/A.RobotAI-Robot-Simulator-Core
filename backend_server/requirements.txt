@@ -3,6 +3,8 @@ fastapi==0.115.5
 kubernetes==31.0.0
 pydantic==2.9.2
 pydantic-settings==2.6.1
+pydantic[email]==2.9.2
+PyJWT==2.8.0
 Pygments==2.18.0
 python-dotenv==1.0.1
 PyYAML==6.0.2
@@ -15,3 +17,4 @@ asyncio
 httpx
 aioredis
 python-multipart
+passlib
