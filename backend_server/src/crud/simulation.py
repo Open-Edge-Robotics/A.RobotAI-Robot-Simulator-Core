@@ -3,7 +3,7 @@ import contextlib
 from datetime import datetime, timezone
 import json
 import traceback
-from typing import Any, Dict, Tuple, List, Optional
+from typing import Any, Dict, Tuple, List, Optional, Union
 from fastapi import HTTPException, status
 from sqlalchemy import select, exists, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -59,6 +59,7 @@ from schemas.simulation import (
     StepSummary
 )
 from utils.my_enum import PodStatus, API
+from utils.redis_updater import OptimizedRedisUpdater, get_metrics_summary, reset_metrics, PerformanceReporter
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import async_sessionmaker
 import logging
@@ -76,8 +77,9 @@ class SimulationService:
         self.pod_service = PodService()
         self.template_service = template_service
         self.rosbag_executor = RosbagExecutor(self.pod_service)
-        self.collector = MetricsCollector()   
+        self.collector = MetricsCollector()
         self.redis_client = None
+        self.optimized_redis_updater = None  # 최적화된 Redis 업데이터
         
     async def connect_redis(self):
         if self.redis_client is None:
@@ -88,9 +90,158 @@ class SimulationService:
         if self.redis_client:
             await self.redis_client.client.close()
             self.redis_client = None
-    
+
+    def _get_optimized_updater(self, redis_client: RedisSimulationClient) -> OptimizedRedisUpdater:
+        """최적화된 Redis 업데이터 인스턴스 반환 (재사용)"""
+        if self.optimized_redis_updater is None or self.optimized_redis_updater.redis != redis_client.client:
+            self.optimized_redis_updater = OptimizedRedisUpdater(redis_client)
+        return self.optimized_redis_updater
+
     # ============================
-    # 실행 단위 상태 핸들러 (DB + Redis 동시 업데이트)
+    # 실행 단위 상태 핸들러 (DB + Redis 동시 업데이트) - 최적화 버전
+    # ============================
+    async def _handle_entity_status_optimized(
+        self,
+        entity_type: str,
+        entity_identifier: int,
+        simulation_id: int,
+        execution_id: int,
+        pattern_type: str,  # "sequential" | "parallel"
+        status: str,
+        reason: str = None,
+        redis_client: Optional[RedisSimulationClient] = None,
+        current_repeat: Optional[int] = None,
+        total_repeats: Optional[int] = None,
+        autonomous_agent_count: Optional[int] = None,
+        progress: Optional[float] = None,
+        update_db: bool = True
+    ):
+        """
+        최적화된 상태 업데이트 (패턴별 최적화)
+        - Sequential: step 단위 부분 업데이트
+        - Parallel: group 단위 부분 업데이트
+        """
+        now = datetime.now(timezone.utc)
+
+        # 1️⃣ DB 업데이트
+        if update_db:
+            try:
+                async with self.sessionmaker() as db_session:
+                    if entity_type == "step":
+                        await self.repository.create_or_update_step_execution(
+                            execution_id=execution_id,
+                            step_order=entity_identifier,
+                            status=status,
+                            reason=reason if status == "FAILED" or status == "STOPPED" else None,
+                            started_at=now if status == "RUNNING" else None,
+                            stopped_at=now if status == "STOPPED" else None,
+                            failed_at=now if status == "FAILED" else None,
+                            completed_at=now if status == "COMPLETED" else None,
+                            current_repeat=current_repeat,
+                            total_repeats=total_repeats,
+                            autonomous_agent_count=autonomous_agent_count,
+                            session=db_session
+                        )
+
+                    elif entity_type == "group":
+                        await self.repository.create_or_update_group_execution(
+                            execution_id=execution_id,
+                            group_id=entity_identifier,
+                            status=status,
+                            reason=reason if status == "FAILED" or status == "STOPPED" else None,
+                            started_at=now if status == "RUNNING" else None,
+                            stopped_at=now if status == "STOPPED" else None,
+                            failed_at=now if status == "FAILED" else None,
+                            completed_at=now if status == "COMPLETED" else None,
+                            current_repeat=current_repeat,
+                            total_repeats=total_repeats,
+                            autonomous_agent_count=autonomous_agent_count,
+                            session=db_session
+                        )
+
+                    elif entity_type == "simulation":
+                        if execution_id is None:
+                            await self.repository.update_simulation_status(
+                                simulation_id=simulation_id,
+                                status=status,
+                                session=db_session
+                            )
+                        else:
+                            await self.repository.update_execution_status(
+                                execution_id=execution_id,
+                                status=status,
+                                reason=reason if status == "FAILED" or status == "STOPPED" else None,
+                                stopped_at=now if status == "STOPPED" else None,
+                                failed_at=now if status == "FAILED" else None,
+                                completed_at=now if status == "COMPLETED" else None,
+                                session=db_session
+                            )
+                            await self.repository.update_simulation_status(
+                                simulation_id=simulation_id,
+                                status=status,
+                                session=db_session
+                            )
+                    else:
+                        raise ValueError(f"Unknown entity_type: {entity_type}")
+
+                    await db_session.commit()
+
+            except SQLAlchemyError as e:
+                await db_session.rollback()
+                print(f"DB 트랜잭션 실패, 롤백 수행: {e}")
+                raise
+
+        # 2️⃣ Redis 업데이트 (최적화된 방식)
+        if redis_client is None:
+            return
+
+        updater = self._get_optimized_updater(redis_client)
+
+        try:
+            if entity_type == "step" and pattern_type == "sequential":
+                await updater.update_sequential_step_status(
+                    simulation_id=simulation_id,
+                    execution_id=execution_id,
+                    step_order=entity_identifier,
+                    status=status,
+                    progress=progress,
+                    current_repeat=current_repeat,
+                    total_repeats=total_repeats,
+                    autonomous_agents=autonomous_agent_count,
+                    error=reason
+                )
+            elif entity_type == "group" and pattern_type == "parallel":
+                await updater.update_parallel_group_status(
+                    simulation_id=simulation_id,
+                    execution_id=execution_id,
+                    group_id=entity_identifier,
+                    status=status,
+                    progress=progress,
+                    current_repeat=current_repeat,
+                    total_repeats=total_repeats,
+                    autonomous_agents=autonomous_agent_count,
+                    error=reason
+                )
+            elif entity_type == "simulation":
+                if pattern_type == "sequential":
+                    await updater.update_sequential_simulation_status(
+                        simulation_id=simulation_id,
+                        execution_id=execution_id,
+                        status=status,
+                        reason=reason
+                    )
+                elif pattern_type == "parallel":
+                    await updater.update_parallel_simulation_status(
+                        simulation_id=simulation_id,
+                        execution_id=execution_id,
+                        status=status,
+                        reason=reason
+                    )
+        except Exception as e:
+            debug_print(f"⚠️ Redis 최적화 업데이트 실패: {e}")
+
+    # ============================
+    # 실행 단위 상태 핸들러 (DB + Redis 동시 업데이트) - 기존 버전 (호환성 유지)
     # ============================
     async def _handle_entity_status(
         self,
@@ -323,6 +474,10 @@ class SimulationService:
         debug_print("🚀 병렬 시뮬레이션 실행 시작", simulation_id=simulation_id)
         redis_client = RedisSimulationClient()
         await redis_client.connect()
+
+        # 🚀 성능 측정 시작
+        reset_metrics()
+        debug_print("📊 Redis 업데이트 성능 측정 시작")
 
         simulation_data: SimulationParams = {}
         group_progress_tracker = {}
@@ -616,10 +771,11 @@ class SimulationService:
             }
             
             # Pod 작업 시작 직후 Group을 RUNNING으로 전환하며 started_at 기록
-            await self._handle_entity_status(
+            await self._handle_entity_status_optimized(
                 entity_type="group",
                 simulation_id=simulation_id,
                 execution_id=execution_id,
+                pattern_type="parallel",
                 entity_identifier=group.id,
                 status="RUNNING",
                 redis_client=redis_client,
@@ -643,10 +799,11 @@ class SimulationService:
                     await asyncio.gather(*pod_tasks.keys(), return_exceptions=True)
 
                     # STOPPED 상태 업데이트
-                    await self._handle_entity_status(
+                    await self._handle_entity_status_optimized(
                         entity_type="group",
                         simulation_id=simulation_id,
                         execution_id=execution_id,
+                        pattern_type="parallel",
                         entity_identifier=group.id,
                         status="STOPPED",
                         reason="사용자 요청에 의한 중지",
@@ -1210,7 +1367,8 @@ class SimulationService:
         simulation_items = []
         for sim in simulations:
             latest_execution = await self.repository.find_latest_simulation_execution(sim.id)
-            latest_execution_status = latest_execution.status if latest_execution else None
+            # 기본값: 실행 기록이 없으면 목록에서 상태는 PENDING으로 표기
+            latest_execution_status = latest_execution.status if latest_execution else "PENDING"
             simulation_items.append(SimulationListItem.from_entity(sim, latest_execution_status))
 
         # 5. 페이지네이션 메타데이터 생성
@@ -1227,87 +1385,57 @@ class SimulationService:
         return SimulationOverview.from_dict(overview_data)
     
     async def get_simulation(self, simulation_id: int) -> SimulationData:
+        """시뮬레이션 상세 조회 - 데이터 조회만 담당"""
+        # 1. 기본 시뮬레이션 정보 조회
         sim = await self.repository.find_by_id(simulation_id)
         if not sim:
             raise SimulationNotFoundError(simulation_id)
-        
-        # 패턴별 ExecutionPlan 조회
-        if sim.pattern_type == PatternType.SEQUENTIAL:
-            execution_plan = await self.get_execution_plan_sequential(sim.id)
-        elif sim.pattern_type == PatternType.PARALLEL:  # parallel
-            execution_plan = await self.get_execution_plan_parallel(sim.id)
-            
-        # 3. 가장 최근 실행 조회
-        latest_execution = await self.repository.find_latest_simulation_execution(sim.id)
-        
-        if latest_execution:
-            # 실행 중일 경우 progress 포함
-            progress = None 
-            if latest_execution.status == SimulationExecutionStatus.RUNNING:
-                overall_progress = latest_execution.result_summary.get("overall_progress") if latest_execution.result_summary else 0.0
-                progress = ProgressModel(
-                    overall_progress=overall_progress
-                )    
-                
-            latest_execution_status = ExecutionStatusModel(
-                execution_id=latest_execution.id,
-                status=latest_execution.status,
-                timestamps=TimestampModel(
-                    created_at=latest_execution.created_at,
-                    last_updated=latest_execution.updated_at,
-                    started_at=latest_execution.started_at,
-                    completed_at=latest_execution.completed_at
-                ),
-                progress=progress
-            )
-        else:
-            latest_execution_status = None
-        
-            
-        return SimulationData(
-            simulation_id=sim.id,
-            simulation_name=sim.name,
-            simulation_description=sim.description,
-            pattern_type=sim.pattern_type,
-            mec_id=sim.mec_id,
-            namespace=sim.namespace,
-            created_at=sim.created_at,
-            execution_plan=execution_plan,
-            latest_execution_status=latest_execution_status
-        )
-        
-    async def get_execution_plan_sequential(self, simulation_id: int) -> ExecutionPlanSequential:
-        steps = await self.repository.find_steps_with_template(simulation_id)
+        # 삭제 중이거나 삭제 완료된 리소스는 존재하지 않는 것으로 처리
+        if getattr(sim, "status", None) in (SimulationStatus.DELETING, SimulationStatus.DELETED):
+            raise SimulationNotFoundError(simulation_id)
 
-        dto_steps = [
-            StepModel(
-                step_order=s.step_order,
-                template_id=s.template.template_id,
-                template_type=s.template.type,  # join으로 가져온 Template.name
-                autonomous_agent_count=s.autonomous_agent_count,
-                repeat_count=s.repeat_count,
-                execution_time=s.execution_time,
-                delay_after_completion=s.delay_after_completion
+        # 2. 실행 계획 조회
+        execution_plan = await self._get_execution_plan(sim)
+
+        # 3. 최신 실행 정보 조회
+        latest_execution = await self.repository.find_latest_simulation_execution(sim.id)
+        # 최신 실행 정보가 없을 경우 안전한 기본값 제공
+        if not latest_execution:
+            # 간단한 객체를 만들어 ExecutionStatusModel.from_entity가 None이 아닌 값을 받도록 함
+            # 필요한 속성: id, status, created_at, updated_at, started_at, completed_at, result_summary
+            from types import SimpleNamespace
+            now = datetime.now(timezone.utc)
+            latest_execution = SimpleNamespace(
+                id=0,
+                status=SimulationStatus.PENDING,
+                created_at=now,
+                updated_at=now,
+                started_at=None,
+                completed_at=None,
+                result_summary=None
             )
-            for s in steps
-        ]
-        return ExecutionPlanSequential(steps=dto_steps)
+
+        # 4. DTO에게 변환 책임 위임
+        return SimulationData.from_entity(sim, execution_plan, latest_execution)
+        
+    async def _get_execution_plan(self, sim) -> Union[ExecutionPlanSequential, ExecutionPlanParallel]:
+        """실행 계획 조회 - 패턴별 분기"""
+        if sim.pattern_type == PatternType.SEQUENTIAL:
+            steps = await self.repository.find_steps_with_template(sim.id)
+            return ExecutionPlanSequential.from_entities(steps)
+        else:  # PARALLEL
+            groups = await self.repository.find_groups_with_template(sim.id)
+            return ExecutionPlanParallel.from_entities(groups)
+
+    async def get_execution_plan_sequential(self, simulation_id: int) -> ExecutionPlanSequential:
+        """순차 실행 계획 조회 (하위 호환성 유지)"""
+        steps = await self.repository.find_steps_with_template(simulation_id)
+        return ExecutionPlanSequential.from_entities(steps)
 
     async def get_execution_plan_parallel(self, simulation_id: int) -> ExecutionPlanParallel:
+        """병렬 실행 계획 조회 (하위 호환성 유지)"""
         groups = await self.repository.find_groups_with_template(simulation_id)
-
-        dto_groups = [
-            GroupModel(
-                group_id=g.id,
-                template_id=g.template.template_id,
-                template_type=g.template.type,  # join으로 가져온 Template.name
-                autonomous_agent_count=g.autonomous_agent_count,
-                repeat_count=g.repeat_count,
-                execution_time=g.execution_time
-            )
-            for g in groups
-        ]
-        return ExecutionPlanParallel(groups=dto_groups)
+        return ExecutionPlanParallel.from_entities(groups)
 
     async def start_simulation_async(self, simulation_id: int):
         """
@@ -2203,27 +2331,6 @@ class SimulationService:
         max_page = (total_count + page_size - 1) // page_size
         if pagination.page > max_page:
             raise ValueError(f"페이지 번호가 범위를 벗어났습니다. 최대 페이지: {max_page}")
-
-    def _convert_to_list_items(self, simulations: List[Simulation]) -> List[SimulationListItem]:
-        """Simulation 엔티티 리스트를 SimulationListItem 리스트로 변환"""
-        if not simulations:
-            return []
-        return [self._convert_to_list_item(simulation) for simulation in simulations]
-
-    def _convert_to_list_item(self, sim: Simulation) -> SimulationListItem:
-        """Simulation 엔티티를 SimulationListItem으로 변환 (상태별 데이터 처리)"""
-        
-        sim_dict = {
-            "simulationId": sim.id,
-            "simulationName": sim.name,
-            "patternType": sim.pattern_type,
-            "status": sim.status,
-            "mecId": sim.mec_id,
-            "createdAt": sim.created_at,
-            "updatedAt": sim.updated_at
-        }
-        
-        return SimulationListItem(**sim_dict)
 
     async def get_dashboard_data(self, simulation_id: int) -> DashboardData:
         # 1️⃣ SimulationData 생성

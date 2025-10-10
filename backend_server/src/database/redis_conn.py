@@ -1,5 +1,6 @@
 import os
 import aioredis
+import asyncio
 
 class RedisConnection:
     """Redis 싱글톤 연결 객체"""
@@ -27,3 +28,21 @@ class RedisConnection:
         """Redis 연결 초기화"""
         if self.client is None:
             self.client = aioredis.from_url(self.redis_url, encoding="utf-8", decode_responses=True)
+    
+    async def close(self):
+        """Close the Redis connection if open."""
+        if self.client is None:
+            return
+        # aioredis.Redis.close() may be sync or async depending on version
+        try:
+            result = self.client.close()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            # best-effort close
+            try:
+                self.client.close()
+            except Exception:
+                pass
+        finally:
+            self.client = None

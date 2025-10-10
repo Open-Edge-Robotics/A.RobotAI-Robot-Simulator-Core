@@ -18,3 +18,4 @@ httpx
 aioredis
 python-multipart
 passlib
+pytest
