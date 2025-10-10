@@ -11,8 +11,34 @@ class TimestampModel(BaseSchema):
     last_updated: datetime
 
 class ProgressModel(BaseSchema):
-    overall_progress: Optional[float] = 0.0
-    ready_to_start: Optional[bool] = False
+    overall_progress: float = Field(
+        0.0,
+        alias="overallProgress",
+        description="시뮬레이션 전체 진행률 (0.0 ~ 1.0)"
+    )
+    
+class ExecutionStatusModel(BaseSchema):
+    execution_id: int = Field(
+        ...,
+        alias="executionId",
+        description="실행 식별자"
+    )
+    status: str = Field(
+        ...,
+        alias="status",
+        description="실행 상태 (예: RUNNING, COMPLETED, FAILED)"
+    )
+    timestamps: TimestampModel = Field(
+        ...,
+        alias="timestamps",
+        description="실행의 생성 및 갱신 시각 정보"
+    )
+    progress: Optional[ProgressModel] = Field(
+        None,
+        alias="progress",
+        description="진행률 정보 (실행 중일 때만 존재)"
+    )
+
 
 # INITIATING 상태용
 class CurrentStatusInitiating(BaseModel):
@@ -50,26 +76,52 @@ class ExecutionPlanParallel(BaseSchema):
     groups: List[GroupModel]
 
 # 최종 Simulation Response
-class SimulationData(BaseModel):
-    simulation_id: int = Field(..., alias="simulationId")
-    simulation_name: str = Field(..., alias="simulationName")
-    simulation_description: str = Field(..., alias="simulationDescription")
-    pattern_type: str = Field(..., alias="patternType")
-    mec_id: str = Field(..., alias="mecId")
-    namespace: str
-    created_at: datetime = Field(..., alias="createdAt")
+class SimulationData(BaseSchema):
+    simulation_id: int = Field(
+        ...,
+        alias="simulationId",
+        description="시뮬레이션 식별자"
+    )
+    simulation_name: str = Field(
+        ...,
+        alias="simulationName",
+        description="시뮬레이션 이름"
+    )
+    simulation_description: str = Field(
+        ...,
+        alias="simulationDescription",
+        description="시뮬레이션 설명"
+    )
+    pattern_type: str = Field(
+        ...,
+        alias="patternType",
+        description="시뮬레이션 패턴 타입 ('sequential' 또는 'parallel')"
+    )
+    mec_id: str = Field(
+        ...,
+        alias="mecId",
+        description="MEC 식별자"
+    )
+    namespace: str = Field(
+        ...,
+        alias="namespace",
+        description="시뮬레이션이 실행되는 네임스페이스"
+    )
+    created_at: datetime = Field(
+        ...,
+        alias="createdAt",
+        description="시뮬레이션 생성 시각"
+    )
     execution_plan: Union[ExecutionPlanSequential, ExecutionPlanParallel] = Field(
-        ..., alias="executionPlan"
-    )  # Sequential/Parallel
-    current_status: Union[CurrentStatusInitiating, CurrentStatusPENDING] = Field(
-        ..., alias="currentStatus"
-    )  # INITIATING / PENDING
-
-    class Config:
-        allow_population_by_field_name = True  # Python 이름(snake_case)으로도 채울 수 있음
-        alias_generator = None                 # 자동 alias 변환 없음
-        populate_by_name = True                # dict(by_alias=True)로 직렬화 가능
-  # INITIATING / PENDING
+        ...,
+        alias="executionPlan",
+        description="패턴에 따른 실행 계획 정보"
+    )
+    latest_execution_status: Optional[ExecutionStatusModel] = Field(
+        None,
+        alias="latestExecutionStatus",
+        description="가장 최근 실행의 상태 정보"
+    )
 
 class SimulationResponseModel(GlobalResponseModel):    
     model_config = {

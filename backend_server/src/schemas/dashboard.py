@@ -1,63 +1,45 @@
 from pydantic import BaseModel, Field
 from typing import Dict
 
+from settings import BaseSchema
 from schemas.format import GlobalResponseModel
 
 # -----------------------------
 # 리소스 사용률 모델
 # -----------------------------
-class ResourceUsage(BaseModel):
+class ResourceUsage(BaseSchema):
     usage_percent: float = Field(..., alias="usagePercent")
     status: str  # "normal", "warning", "critical"
-    
-    class Config:
-        populate_by_name = True
 
-class ResourceUsageData(BaseModel):
+class ResourceUsageData(BaseSchema):
     cpu: ResourceUsage
     memory: ResourceUsage
     disk: ResourceUsage
-    
-    class Config:
-        populate_by_name = True
 
 # -----------------------------
 # Pod 상태 모델
 # -----------------------------
-class StatusBreakdown(BaseModel):
+class StatusBreakdown(BaseSchema):
     count: int
     percentage: float
-    
-    class Config:
-        populate_by_name = True
 
-class PodStatusData(BaseModel):
+class PodStatusData(BaseSchema):
     total_count: int = Field(..., alias="totalCount")
     overall_health_percent: float = Field(..., alias="overallHealthPercent")
     status_breakdown: Dict[str, StatusBreakdown] = Field(..., alias="statusBreakdown")
 
-    class Config:
-        populate_by_name = True
-
 # -----------------------------
 # Dashboard 메인 데이터
 # -----------------------------
-class DashboardData(BaseModel):
+class DashboardData(BaseSchema):
     simulation_id: int = Field(..., alias="simulationId")
     simulation_name: str = Field(..., alias="simulationName")
-    status: str
-    simulation_status: str = Field(..., alias="simulationStatus")
+    latest_execution_status: str = Field(..., alias="latestExecutionStatus")
     pattern_type: str = Field(..., alias="patternType")
     total_execution_time: int = Field(..., alias="totalExecutionTime")
     autonomous_agent_count: int = Field(..., alias="autonomousAgentCount")
     resource_usage: ResourceUsageData = Field(..., alias="resourceUsage")
     pod_status: PodStatusData = Field(..., alias="podStatus")
-
-    class Config:
-        allow_population_by_field_name = True  # Python 이름으로도 population 가능
-        alias_generator = None
-        # json 출력 시 alias 사용
-        populate_by_name = True
 
 class SimulationDashboardResponseModel(GlobalResponseModel):
     """대시보드 API 응답 모델"""

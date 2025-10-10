@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import List, Optional, Union, Dict, Any
-from pydantic import BaseModel, Field, field_validator, validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator, validator
 
+from exception.validation_exceptions import CustomRequestValidationError
 from models.enums import PatternType, SimulationStatus
 from .pagination import PaginationMeta, PaginationParams
 from .format import GlobalResponseModel
@@ -64,9 +65,15 @@ class SimulationCreateRequest(BaseModel):
         values = info.data
         pattern_type = values.get('pattern_type') or values.get('patternType')
         if pattern_type == 'sequential' and not isinstance(v, SequentialPattern):
-            raise ValueError('pattern_type이 sequential일 때 pattern은 SequentialPattern이어야 합니다.')
+            raise CustomRequestValidationError(
+                message="patternType이 'sequential'일 때는 pattern에 순차 실행 단계(steps)를 입력해야 합니다.",
+                field="pattern"
+            )
         if pattern_type == 'parallel' and not isinstance(v, ParallelPattern):
-            raise ValueError('pattern_type이 parallel일 때 pattern은 ParallelPattern이어야 합니다.')
+            raise CustomRequestValidationError(
+                message="patternType이 'parallel'일 때는 pattern에 병렬 실행 그룹(groups)을 입력해야 합니다.",
+                field="pattern"
+            )
         return v
 
 
@@ -125,6 +132,18 @@ class SimulationFilterRequest(PaginationParams):
     end_date: Optional[date] = Field(
         None, description="조회 종료일 (YYYY-MM-DD, 선택)"
     )
+    
+    @model_validator(mode="after")  # 모든 필드가 아직 변환되기 전에 접근 가능
+    @classmethod
+    def check_date_range(cls, model):
+        if model.start_date and model.end_date and model.start_date > model.end_date:
+            raise CustomRequestValidationError(
+                message="조회 시작일은 종료일보다 이전이어야 합니다.",
+                field="startDate"
+            )
+        return model
+    
+    
 
 class SimulationListResponse(BaseSchema):
     simulation_id: int
@@ -180,9 +199,24 @@ class SimulationListItem(BaseModel):
     mec_id: Optional[str] = Field(None, alias="mecId")
     created_at: datetime = Field(alias="createdAt", description="생성 시간 (항상 존재)")
     updated_at: datetime = Field(alias="updatedAt", description="마지막 업데이트 시간 (항상 존재)")
+    latest_execution_status: Optional[str] = Field(None, alias="latestExecutionStatus", description="가장 최근 실행 상태")
 
     class Config:
         populate_by_name = True
+
+    @classmethod
+    def from_entity(cls, simulation, latest_execution_status: Optional[str] = None) -> "SimulationListItem":
+        """Simulation 엔티티로부터 SimulationListItem DTO 생성"""
+        return cls(
+            simulationId=simulation.id,
+            simulationName=simulation.name,
+            patternType=simulation.pattern_type,
+            status=simulation.status,
+            mecId=simulation.mec_id,
+            createdAt=simulation.created_at,
+            updatedAt=simulation.updated_at,
+            latestExecutionStatus=latest_execution_status
+        )
         
 class SimulationOverview(BaseModel):
     """시뮬레이션 전체 개요 응답 DTO"""
@@ -343,7 +377,7 @@ class SimulationPatternUpdateRequest(BaseSchema):
     scheduled_end_time: Optional[datetime] = Field(None, description="종료 시간")
     mec_id: Optional[str] = Field(None, description="MEC 식별자")
 
-    @validator('scheduled_end_time')
+    @model_validator(mode='after')
     def validate_end_time(cls, v, values):
         if v and 'scheduled_start_time' in values and values['scheduled_start_time']:
             if v <= values['scheduled_start_time']:

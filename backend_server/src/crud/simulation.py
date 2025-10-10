@@ -24,7 +24,7 @@ from utils.simulation_utils import extract_simulation_dashboard_data
 from state import SimulationState
 from utils.debug_print import debug_print
 from utils.rosbag_executor import RosbagExecutor
-from schemas.simulation_detail import CurrentStatusInitiating, CurrentStatusPENDING, ExecutionPlanParallel, ExecutionPlanSequential, GroupModel, ProgressModel, SimulationData, StepModel, TimestampModel
+from schemas.simulation_detail import CurrentStatusInitiating, CurrentStatusPENDING, ExecutionPlanParallel, ExecutionPlanSequential, ExecutionStatusModel, GroupModel, ProgressModel, SimulationData, StepModel, TimestampModel
 from schemas.pod import GroupIdFilter, StepOrderFilter
 from repositories.simulation_repository import SimulationRepository
 from schemas.pagination import PaginationMeta, PaginationParams
@@ -64,17 +64,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 import logging
 
 logger = logging.getLogger(__name__)
-
-# ----------------------------
-# 데코레이터: 안전한 핸들러
-# ----------------------------
-def safe_handler(func):
-    async def wrapper(self, *args, **kwargs):
-        try:
-            return await func(self, *args, **kwargs)
-        except Exception as e:
-            self.logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
-    return wrapper
 
 class SimulationService:
     def __init__(self, session: AsyncSession, sessionmaker: async_sessionmaker, repository: SimulationRepository, template_service: TemplateService , template_repository: TemplateRepository, instance_repository: InstanceRepository, state: SimulationState):
@@ -1216,28 +1205,31 @@ class SimulationService:
             start_date=start_date,
             end_date=end_date
         )
-        
-        # 4. 비즈니스 로직: 응답 데이터 변환
-        simulation_items = self._convert_to_list_items(simulations)
-        
+
+        # 4. 각 시뮬레이션의 최신 실행 상태 조회 및 DTO 변환
+        simulation_items = []
+        for sim in simulations:
+            latest_execution = await self.repository.find_latest_simulation_execution(sim.id)
+            latest_execution_status = latest_execution.status if latest_execution else None
+            simulation_items.append(SimulationListItem.from_entity(sim, latest_execution_status))
+
         # 5. 페이지네이션 메타데이터 생성
         pagination_meta = PaginationMeta.create(
             page=pagination.page,
             size=len(simulation_items) if simulation_items else 0,
             total_items=total_count
         )
-        
+
         return simulation_items, pagination_meta
     
     async def get_simulation_overview(self) -> SimulationOverview:
         overview_data = await self.repository.get_overview()
-        print(overview_data)
         return SimulationOverview.from_dict(overview_data)
     
     async def get_simulation(self, simulation_id: int) -> SimulationData:
         sim = await self.repository.find_by_id(simulation_id)
         if not sim:
-            raise HTTPException(status_code=404, detail=f"Simulation {simulation_id} not found")
+            raise SimulationNotFoundError(simulation_id)
         
         # 패턴별 ExecutionPlan 조회
         if sim.pattern_type == PatternType.SEQUENTIAL:
@@ -1245,36 +1237,32 @@ class SimulationService:
         elif sim.pattern_type == PatternType.PARALLEL:  # parallel
             execution_plan = await self.get_execution_plan_parallel(sim.id)
             
-        # 상태별 CurrentStatus DTO 생성
-        if sim.status == SimulationStatus.INITIATING:
-            current_status = CurrentStatusInitiating(
-                status=sim.status,
+        # 3. 가장 최근 실행 조회
+        latest_execution = await self.repository.find_latest_simulation_execution(sim.id)
+        
+        if latest_execution:
+            # 실행 중일 경우 progress 포함
+            progress = None 
+            if latest_execution.status == SimulationExecutionStatus.RUNNING:
+                overall_progress = latest_execution.result_summary.get("overall_progress") if latest_execution.result_summary else 0.0
+                progress = ProgressModel(
+                    overall_progress=overall_progress
+                )    
+                
+            latest_execution_status = ExecutionStatusModel(
+                execution_id=latest_execution.id,
+                status=latest_execution.status,
                 timestamps=TimestampModel(
-                    created_at=sim.created_at,
-                    last_updated=sim.updated_at
-                )
-            )
-        elif sim.status == SimulationStatus.PENDING:
-            current_status = CurrentStatusPENDING(
-                status=sim.status,
-                progress=ProgressModel(
-                    overall_progress=0.0,
-                    ready_to_start=True
+                    created_at=latest_execution.created_at,
+                    last_updated=latest_execution.updated_at,
+                    started_at=latest_execution.started_at,
+                    completed_at=latest_execution.completed_at
                 ),
-                timestamps=TimestampModel(
-                    created_at=sim.created_at,
-                    last_updated=sim.updated_at
-                )
+                progress=progress
             )
         else:
-            # 예상하지 못한 상태에 대한 기본 처리
-            current_status = CurrentStatusInitiating(
-                status=sim.status,
-                timestamps=TimestampModel(
-                    created_at=sim.created_at,
-                    last_updated=sim.updated_at
-                )
-            )
+            latest_execution_status = None
+        
             
         return SimulationData(
             simulation_id=sim.id,
@@ -1285,7 +1273,7 @@ class SimulationService:
             namespace=sim.namespace,
             created_at=sim.created_at,
             execution_plan=execution_plan,
-            current_status=current_status
+            latest_execution_status=latest_execution_status
         )
         
     async def get_execution_plan_sequential(self, simulation_id: int) -> ExecutionPlanSequential:
@@ -2238,75 +2226,30 @@ class SimulationService:
         return SimulationListItem(**sim_dict)
 
     async def get_dashboard_data(self, simulation_id: int) -> DashboardData:
-        # 1️⃣ 시뮬레이션 조회
-        sim = await self.repository.find_by_id(simulation_id)
-        if not sim:
-            raise HTTPException(status_code=404, detail=f"Simulation {simulation_id} not found")
-
-        # 2️⃣ 패턴별 ExecutionPlan 조회
-        if sim.pattern_type == PatternType.SEQUENTIAL:
-            execution_plan = await self.get_execution_plan_sequential(sim.id)
-        elif sim.pattern_type == PatternType.PARALLEL:
-            execution_plan = await self.get_execution_plan_parallel(sim.id)
-        else:
-            execution_plan = None  # 필요 시 기본 처리
-
-        # 3️⃣ 상태 DTO 구성
-        if sim.status == SimulationStatus.INITIATING:
-            current_status = CurrentStatusInitiating(
-                status=sim.status,
-                timestamps=TimestampModel(
-                    created_at=sim.created_at,
-                    last_updated=sim.updated_at
-                )
-            )
-        elif sim.status == SimulationStatus.PENDING:
-            current_status = CurrentStatusPENDING(
-                status=sim.status,
-                progress=ProgressModel(
-                    overall_progress=0.0,
-                    ready_to_start=True
-                ),
-                timestamps=TimestampModel(
-                    created_at=sim.created_at,
-                    last_updated=sim.updated_at
-                )
-            )
-        else:
-            # 예외 상태 기본 처리
-            current_status = CurrentStatusInitiating(
-                status=sim.status,
-                timestamps=TimestampModel(
-                    created_at=sim.created_at,
-                    last_updated=sim.updated_at
-                )
-            )
-
-        # 4️⃣ SimulationData 생성
-        simulation_data = SimulationData(
-            simulation_id=sim.id,
-            simulation_name=sim.name,
-            simulation_description=sim.description,
-            pattern_type=sim.pattern_type,
-            mec_id=sim.mec_id,
-            namespace=sim.namespace,
-            created_at=sim.created_at,
-            execution_plan=execution_plan,
-            current_status=current_status
-        )
+        # 1️⃣ SimulationData 생성
+        simulation_data = await self.get_simulation(simulation_id)
 
         try:
-            # 5️⃣ 기본 데이터 추출
+            # 2️⃣ 기본 데이터 추출
             base_data: Dict[str, Any] = extract_simulation_dashboard_data(simulation_data)
-            
-            # 6️⃣ 메트릭 수집
-            metrics_data = await self.collector.collect_dashboard_metrics(simulation_data)
-            
-            # 7️⃣ DashboardData 구성
+
+            # 3️⃣ 최신 실행 상태 확인
+            latest_execution = simulation_data.latest_execution_status
+            if latest_execution and latest_execution.status == SimulationExecutionStatus.RUNNING:
+                # 4️⃣ 리소스/Pod 상태 수집
+                metrics_data = await self.collector.collect_dashboard_metrics(simulation_data)
+                resource_usage = metrics_data.get("resource_usage", self.collector._get_default_resource_usage())
+                pod_status = metrics_data.get("pod_status", self.collector._get_default_pod_status())
+            else:
+                # 5️⃣ 실행 중이 아니면 기본값
+                resource_usage = self.collector._get_default_resource_usage()
+                pod_status = self.collector._get_default_pod_status()
+
+            # 6️⃣ DashboardData 구성
             dashboard_data = DashboardData(
                 **base_data,
-                resource_usage=metrics_data["resource_usage"],
-                pod_status=metrics_data["pod_status"]
+                resource_usage=resource_usage.model_dump(),
+                pod_status=pod_status.model_dump()
             )
             return dashboard_data
 

@@ -94,14 +94,14 @@ async def get_simulation(
         dashboard_data = await service.get_dashboard_data(simulation_id)
         return SimulationDashboardResponseModel(
             statusCode="200",
-            data=dashboard_data.model_dump(by_alias=True),
+            data=dashboard_data.model_dump(),
             message="시뮬레이션 대시보드 정보 조회 성공"
         )
     else:
         detail_data = await service.get_simulation(simulation_id)
         return SimulationResponseModel(
             statusCode="200",
-            data=detail_data.model_dump(by_alias=True),
+            data=detail_data.model_dump(),
             message=f"{simulation_id}번 시뮬레이션 상세정보 조회 성공"
         )
 
@@ -168,30 +168,27 @@ async def get_simulations(
     filter_request: SimulationFilterRequest = Depends(),
     service: SimulationService = Depends(get_simulation_service)
 ):
-    """시뮬레이션 목록 조회 (페이지네이션)"""
-    try:
-        # Service에서 비즈니스 로직 처리
-        simulation_items, pagination_meta = await service.get_simulations_with_pagination(
-            pagination=filter_request,
-            pattern_type=filter_request.pattern_type,
-            status=filter_request.status
-        )
-        overview_data = await service.get_simulation_overview()
+    """
+    시뮬레이션 목록 조회
+    - 필터링: 패턴 타입, 상태, 날짜 범위
+    - 페이징: 페이지 번호, 페이지 크기
+    """
+    simulation_items, pagination_meta = await service.get_simulations_with_pagination(
+        pagination=filter_request,
+        pattern_type=filter_request.pattern_type,
+        status=filter_request.status,
+        start_date=filter_request.start_date,
+        end_date=filter_request.end_date
+    )
+    overview_data = await service.get_simulation_overview()
+    
+    return SimulationListResponseFactory.create(
+        simulations=simulation_items,
+        overview_data=overview_data,
+        pagination_meta=pagination_meta,
+        message="시뮬레이션 목록 조회 성공"
+    )
         
-        return SimulationListResponseFactory.create(
-            simulations=simulation_items,
-            overview_data=overview_data,
-            pagination_meta=pagination_meta
-        )
-    except ValueError as e:
-        print(f"[ValueError] {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        print(f"[Exception] {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="시뮬레이션 목록 조회 중 오류가 발생했습니다")
-
 @router.post(
     "/{simulation_id}/start",
     response_model=SimulationControlResponseModel,
