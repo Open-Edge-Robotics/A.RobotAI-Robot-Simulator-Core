@@ -1,4 +1,5 @@
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date, datetime
 from typing import List, Optional, Union, Dict, Any
 from pydantic import BaseModel, Field, field_validator, validator
 
@@ -110,12 +111,19 @@ class SimulationFilterRequest(PaginationParams):
     시뮬레이션 필터 요청 DTO
     - 패턴 타입과 상태값 기준 필터링 가능
     - PaginationParams를 상속받아 페이징 지원
+    - start_date, end_date로 기간 필터링 가능
     """
     pattern_type: Optional[PatternType] = Field(
         None, description="필터링할 시뮬레이션 패턴 타입 (선택)"
     )
     status: Optional[SimulationStatus] = Field(
         None, description="필터링할 시뮬레이션 상태값 (선택)"
+    )
+    start_date: Optional[date] = Field(
+        None, description="조회 시작일 (YYYY-MM-DD, 선택)"
+    )
+    end_date: Optional[date] = Field(
+        None, description="조회 종료일 (YYYY-MM-DD, 선택)"
     )
 
 class SimulationListResponse(BaseSchema):
@@ -431,3 +439,73 @@ class SimulationDeleteResponseModel(GlobalResponseModel):
     }
 
     pass
+
+# -----------------------------
+# Redis 전용 Step 상태 구조
+# -----------------------------
+class RedisStepStatus(BaseSchema):
+    step_order: int
+    status: str = "PENDING"
+    progress: float = 0.0
+    autonomous_agents: int = 0
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    failed_at: Optional[str] = None
+    current_repeat: int = 0
+    total_repeats: int = 1
+    error: Optional[str] = None
+
+# -----------------------------
+# DB 분리용 StepSummary 구조
+# -----------------------------
+class StepSummary(BaseSchema):
+    id: int
+    step_order: int
+    status: str = "PENDING"
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    failed_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    autonomous_agent_count: int = 0
+    current_repeat: int = 0
+    total_repeats: int = 1
+    delay_after_completion: int = 0
+    execution_time: int = 0
+    error: Optional[str] = None
+    
+# -----------------------------
+# Redis 전용 Group 상태 구조
+# -----------------------------
+class RedisGroupStatus(BaseSchema):
+    group_id: int
+    status: str = "PENDING"
+    progress: float = 0.0
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    failed_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    current_repeat: int = 0
+    total_repeats: int = 1
+    autonomous_agents: int = 0
+    error: Optional[str] = None
+    
+# -----------------------------
+# DB 분리용 GroupSummary 구조
+# -----------------------------
+class GroupSummary(BaseModel):
+    id: int  # 실제 DB group PK
+    status: str = "PENDING"
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    failed_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    autonomous_agent_count: int = 0
+    current_repeat: int = 0
+    total_repeats: int = 1
+    execution_time: int = 0
+    error: Optional[str] = None
+
+class SimulationParams(BaseModel):
+    id: int
+    namespace: str
+    created_at: str 

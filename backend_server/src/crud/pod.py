@@ -15,8 +15,10 @@ from utils.debug_print import debug_print
 from schemas.pod import GroupIdFilter, StepOrderFilter
 from models.enums import PatternType
 from models.instance import Instance
-from models.simulation import Simulation, SimulationGroup
+from models.simulation import Simulation
+from models.simulation_groups import SimulationGroup
 from models.simulation_steps import SimulationStep
+from models.template import Template
 from utils.my_enum import PodStatus
 
 pod_client = None
@@ -39,17 +41,18 @@ except Exception as e:
         pod_client = None
 
 class PodService:
-    
     @staticmethod
     async def create_pod_v2(
         instance: Union['Instance', Dict[str, Any]],
         simulation: Union['Simulation', Dict[str, Any]],
         step: Union['SimulationStep', Dict[str, Any]] = None,
         group: Union['SimulationGroup', Dict[str, Any]] = None,
+        template: Union['Template', Dict[str, Any]] = None,
     ):
         """
         Pod 생성 및 메타데이터/환경변수 구성
         - dict 또는 SQLAlchemy 객체 모두 지원
+        - Pod 이름은 항상 instance.name 기준
         """
 
         # -----------------------------
@@ -57,6 +60,9 @@ class PodService:
         # -----------------------------
         try:
             instance_id = instance['id'] if isinstance(instance, dict) else getattr(instance, 'id')
+            instance_name = instance['name'] if isinstance(instance, dict) else getattr(instance, 'name', None)
+            if not instance_name:
+                raise ValueError("Missing required instance name for Pod creation")
         except KeyError as e:
             logger.error(f"❌ [Pod Creation] 필수 instance 데이터 누락: {e}")
             raise ValueError(f"Missing required instance data: {e}")
@@ -72,35 +78,28 @@ class PodService:
         # 3. Step 정보 추출
         # -----------------------------
         step_order = None
-        template_type = "Unknown"
         if step:
             if isinstance(step, dict):
                 step_order = step.get('step_order')
-                template_type = step.get('template', {}).get('type', 'Unknown')
             else:
                 step_order = getattr(step, 'step_order', None)
-                template_type = getattr(getattr(step, 'template', None), 'type', 'Unknown')
 
         # -----------------------------
         # 4. Group 정보 추출
         # -----------------------------
         group_id = group.get('id') if isinstance(group, dict) else getattr(group, 'id', None)
-
+                
         # -----------------------------
-        # 5. Pod 이름 구성
+        # 5. Pod 이름 구성 (항상 instance.name)
         # -----------------------------
-        if pattern_type == PatternType.SEQUENTIAL:
-            pod_name = f"sim-{simulation_id}-step-{step_order or 0}-instance-{instance_id}"
-        else:
-            pod_name = f"sim-{simulation_id}-group-{group_id}-instance-{instance_id}"
+        pod_name = instance_name
 
         # -----------------------------
         # 6. 로그 기록
         # -----------------------------
         print(f"🚀 [Pod Creation] 시작 - pod_name={pod_name}")
-        print(f"📊 instance_id={instance_id}, simulation_id={simulation_id}, pattern_type={pattern_type}, "
-            f"step_order={step_order}, group_id={group_id}, template_type={template_type}, "
-            f"namespace={pod_namespace}")
+        print(f"📊 instance_id={instance_id}, instance_name={instance_name}, simulation_id={simulation_id}, "
+              f"pattern_type={pattern_type}, step_order={step_order}, group_id={group_id}, namespace={pod_namespace}")
 
         try:
             # -----------------------------
@@ -122,7 +121,8 @@ class PodService:
                 simulation=simulation,
                 step=step,
                 instance=instance,
-                group=group
+                group=group,
+                template=template
             )
 
             # -----------------------------
@@ -302,17 +302,20 @@ class PodService:
         pod_spec: dict,
         pod_name: str,
         simulation: Union['Simulation', Dict[str, Any]],
-        step: Union['SimulationStep', Dict[str, Any]],
-        group: Union['SimulationGroup', Dict[str, Any]],
-        instance: Union['Instance', Dict[str, Any]],
+        step: Union['SimulationStep', Dict[str, Any]] = None,
+        group: Union['SimulationGroup', Dict[str, Any]] = None,
+        instance: Union['Instance', Dict[str, Any]] = None,
+        template: Union['Template', Dict[str, Any]] = None,
     ) -> dict:
         """
         Pod 메타데이터 및 컨테이너 환경변수 구성
-        - step, instance, group 정보 활용
-        - 반복/실행시간 등 StepContext에서 가져오기
-        - simulation 정보에서 namespace, pattern_type, mec_id 등 가져오기
-        - 정적 값: debug_mode, log_level, communication_port, data_format 등
+        - simulation, step, group, instance, template 정보 활용
+        - step 또는 group 중 하나만 전달되어야 함
+        - step: repeat_count, delay_after_completion, max_execution_time
+        - group: repeat_count, delay_after_completion
         """
+        if (step is None and group is None) or (step is not None and group is not None):
+            raise ValueError("Pod metadata 구성 시 step 또는 group 중 하나만 제공되어야 합니다.")
 
         configured_pod = copy.deepcopy(pod_spec)
 
@@ -326,75 +329,83 @@ class PodService:
         mec_id = simulation.get('mec_id') if isinstance(simulation, dict) else getattr(simulation, 'mec_id', None)
 
         # -----------------------------
-        # 2. Step 정보 추출
+        # 2. Step 또는 Group 정보 추출
         # -----------------------------
-        step_order = step.get('step_order') if isinstance(step, dict) else getattr(step, 'step_order', None) if step else None
-        template = step.get('template') if isinstance(step, dict) else getattr(step, 'template', None) if step else None
-        repeat_count = step.get('repeat_count', 1) if isinstance(step, dict) else getattr(step, 'repeat_count', 1) if step else 1
-        max_execution_time = f"{step.get('execution_time', 3600)}s" if isinstance(step, dict) else f"{getattr(step, 'execution_time', 3600)}s" if step else "3600s"
-        delay_after_completion = step.get('delay_after_completion', 0) if isinstance(step, dict) else getattr(step, 'delay_after_completion', 0) if step else 0
+        if step:
+            step_order = step.get('step_order') if isinstance(step, dict) else getattr(step, 'step_order', None)
+            repeat_count = step.get('repeat_count', 1) if isinstance(step, dict) else getattr(step, 'repeat_count', 1)
+            max_execution_time = f"{step.get('execution_time', 3600)}s" if isinstance(step, dict) else f"{getattr(step, 'execution_time', 3600)}s"
+            delay_after_completion = step.get('delay_after_completion', 0) if isinstance(step, dict) else getattr(step, 'delay_after_completion', 0)
+            group_id = None
+        else:
+            # group
+            step_order = 0
+            repeat_count = group.get('repeat_count', 1) if isinstance(group, dict) else getattr(group, 'repeat_count', 1)
+            max_execution_time = "3600s"
+            delay_after_completion = group.get('delay_after_completion', 0) if isinstance(group, dict) else getattr(group, 'delay_after_completion', 0)
+            group_id = group.get('id') if isinstance(group, dict) else getattr(group, 'id', None)
 
         # -----------------------------
-        # 3. Group 정보 추출
-        # -----------------------------
-        group_id = group.get('id') if isinstance(group, dict) else getattr(group, 'id', None) if group else None
-
-        # -----------------------------
-        # 4. Instance 정보 추출
+        # 3. Instance 정보 추출
         # -----------------------------
         instance_id = instance.get('id', 'unknown') if isinstance(instance, dict) else getattr(instance, 'id', 'unknown') if instance else 'unknown'
+
+        # -----------------------------
+        # 4. Template 정보 추출
+        # -----------------------------
+        template_type = template.get('type') if isinstance(template, dict) else getattr(template, 'type', None) if template else None
+        bag_file_path = template.get('bag_file_path') if isinstance(template, dict) else getattr(template, 'bag_file_path', None) if template else None
+        template_id = template.get('template_id') if isinstance(template, dict) else getattr(template, 'template_id', "unknown") if template else "unknown"
 
         # -----------------------------
         # 5. 생성 시간
         # -----------------------------
         creation_time = datetime.now(timezone.utc).isoformat() + "Z"
 
-        # --------------------------------------------------
-        # 2. Labels
-        # --------------------------------------------------
+        # -----------------------------
+        # Labels & Annotations
+        # -----------------------------
         pod_labels = {
             "app": "simulation-pod",
             "simulation-id": str(simulation_id),
             "instance-id": str(instance_id),
             "pattern-type": pattern_type,
-            "step-order": str(step_order) if step_order is not None else "0",
+            "step-order": str(step_order),
             "group-id": str(group_id) if group_id else "default",
-            "template-id": str(getattr(template, "template_id", "unknown")) if template else "unknown",
+            "template-id": str(template_id),
         }
 
-        # --------------------------------------------------
-        # 3. Annotations
-        # --------------------------------------------------
         pod_annotations = {
             "simulation-platform/created-at": creation_time,
             "simulation-platform/simulation-id": str(simulation_id),
             "simulation-platform/instance-id": str(instance_id),
             "simulation-platform/pattern-type": pattern_type,
-            "simulation-platform/step-order": str(step_order) if step_order else "0",
+            "simulation-platform/step-order": str(step_order),
             "simulation-platform/group-id": str(group_id) if group_id else "default",
             "simulation-platform/repeat-count": str(repeat_count),
             "simulation-platform/max-execution-time": max_execution_time,
             "simulation-platform/delay-after-completion": str(delay_after_completion),
             "simulation-platform/simulation-name": simulation_name,
             "simulation-platform/mec-id": mec_id or "none",
-            # 정적 정보
+            "simulation-platform/template-type": template_type or "unknown",
+            "simulation-platform/bag-file-path": bag_file_path or "none",
             "simulation-platform/log-level": "INFO",
             "simulation-platform/debug-mode": "false",
             "simulation-platform/communication-port": "11311",
             "simulation-platform/data-format": "ros-bag",
         }
 
-        # --------------------------------------------------
-        # 4. 메타데이터 적용
-        # --------------------------------------------------
+        # -----------------------------
+        # Pod 메타데이터 적용
+        # -----------------------------
         configured_pod["metadata"]["name"] = pod_name
         configured_pod["metadata"]["labels"] = pod_labels
         configured_pod["metadata"]["annotations"] = pod_annotations
         configured_pod["metadata"]["namespace"] = namespace
 
-        # --------------------------------------------------
-        # 5. 컨테이너 환경변수 (핵심 정보만)
-        # --------------------------------------------------
+        # -----------------------------
+        # 컨테이너 환경변수 설정
+        # -----------------------------
         if configured_pod.get("spec", {}).get("containers"):
             container = configured_pod["spec"]["containers"][0]
             container["name"] = pod_name
@@ -403,12 +414,15 @@ class PodService:
                 {"name": "SIMULATION_ID", "value": str(simulation_id)},
                 {"name": "INSTANCE_ID", "value": str(instance_id)},
                 {"name": "PATTERN_TYPE", "value": pattern_type},
-                {"name": "STEP_ORDER", "value": str(step_order) if step_order else "0"},
+                {"name": "STEP_ORDER", "value": str(step_order)},
                 {"name": "GROUP_ID", "value": str(group_id) if group_id else "default"},
                 {"name": "DEBUG_MODE", "value": "false"},
                 {"name": "LOG_LEVEL", "value": "INFO"},
                 {"name": "COMMUNICATION_PORT", "value": "11311"},
                 {"name": "DATA_FORMAT", "value": "ros-bag"},
+                {"name": "TEMPLATE_TYPE", "value": template_type or "unknown"},
+                {"name": "BAG_FILE_PATH", "value": bag_file_path or "none"},
+                {"name": "REPEAT_COUNT", "value": str(repeat_count)}
             ])
 
         return configured_pod
@@ -656,6 +670,35 @@ class PodService:
             # 상태 확인 실패는 치명적이지 않으므로 무시
             
     @staticmethod
+    async def create_pod_if_not_exists(instance, simulation, step=None, group=None, template=None):
+        """Pod 존재 여부 확인 후 없으면 생성"""
+        pod_name = instance.name
+        existing_pod = await PodService.get_pod_by_name(pod_name, simulation.namespace)
+        if existing_pod:
+            debug_print(f"⚠️ Pod 이미 존재 - {pod_name}, 생성 생략")
+            return existing_pod
+        
+        debug_print(f"🚀 Pod 생성 - {pod_name}")
+        return await PodService.create_pod_v2(
+            instance=instance,
+            simulation=simulation,
+            step=step,
+            group=group,
+            template=template
+        )
+            
+    @staticmethod
+    async def get_pod_by_name(pod_name: str, namespace: str) -> client.V1Pod | None:
+        """Pod 이름으로 조회, 존재하면 V1Pod 반환, 없으면 None"""
+        try:
+            pod = pod_client.read_namespaced_pod(name=pod_name, namespace=namespace)
+            return pod
+        except ApiException as e:
+            if e.status == 404:
+                return None
+            raise e        
+            
+    @staticmethod
     async def get_pod_status(pod_name, namespace):
         pod = pod_client.read_namespaced_pod(namespace=namespace, name=pod_name)
         return pod.status.phase
@@ -686,6 +729,34 @@ class PodService:
             label = next(iter(pod.metadata.labels.items()))
             return str(label[1])
         return ""
+    
+    @staticmethod
+    async def delete_all_pods_in_namespace(namespace: str):
+        """
+        특정 네임스페이스에 속한 모든 Pod 삭제
+        Standalone Pod 기준으로, Deployment/ReplicaSet 관리 Pod는 재생성될 수 있음
+        """
+        try:
+            pod_list = pod_client.list_namespaced_pod(namespace=namespace)
+        except ApiException as e:
+            if e.status == 404:
+                debug_print(f"[delete_all_pods_in_namespace] Namespace '{namespace}' 존재하지 않음")
+                return
+            raise
+
+        if not pod_list.items:
+            debug_print(f"[delete_all_pods_in_namespace] Namespace '{namespace}'에 삭제할 Pod 없음")
+            return
+
+        debug_print(f"[delete_all_pods_in_namespace] {len(pod_list.items)} pods 삭제 시작")
+        for pod in pod_list.items:
+            try:
+                await PodService.delete_pod(pod.metadata.name, namespace)
+                debug_print(f"Pod '{pod.metadata.name}' 삭제 요청 완료")
+            except Exception as e:
+                debug_print(f"Pod '{pod.metadata.name}' 삭제 실패: {e}")
+                raise
+    
 
     @staticmethod
     async def delete_pod(pod_name, namespace):
@@ -740,8 +811,28 @@ class PodService:
         raise TimeoutError(
             f"[wait_for_pods_deletion] Pods not deleted within {timeout} seconds for filter={filter_params}"
         )
+        
+    @staticmethod
+    async def wait_for_pods_running(namespace: str, timeout: int = 60, interval: float = 1.0) -> bool:
+        """
+        지정된 네임스페이스에 있는 모든 Pod가 Running 상태가 될 때까지 대기
+        """
+        waited = 0
+        while waited < timeout:
+            pod_list = pod_client.list_namespaced_pod(namespace)  # 네임스페이스 내 모든 Pod 조회
+            pods = pod_list.items  # 실제 Pod 객체 리스트
+            if pods and all(pod.status.phase == "Running" for pod in pods):
+                debug_print(f"[wait_for_pods_running] 네임스페이스 '{namespace}'의 모든 Pod가 Running 상태입니다.")
+                return True
 
+            debug_print(
+                f"[wait_for_pods_running] 네임스페이스 '{namespace}'에 아직 Running이 아닌 Pod {len(pods) if pods else 0}개 존재. "
+                f"{waited}/{timeout}초 대기 중..."
+            )
+            await asyncio.sleep(interval)
+            waited += interval
 
+        raise TimeoutError(f"[wait_for_pods_running] 네임스페이스 '{namespace}'의 모든 Pod가 {timeout}초 내에 Running 상태가 되지 않았습니다.")
 
     @staticmethod
     async def create_namespace(simulation_id: int):
@@ -902,49 +993,11 @@ class PodService:
             {"group_id": group_id}
         )
         
-    
-    async def adjust_pod_count(
-        self,
-        namespace: str,
-        pattern_type: str,        # "sequential" 또는 "parallel"
-        desired_count: int,
-        step_order: int | None = None,
-        group_id: int | None = None,
-    ):
+    @staticmethod
+    def get_annotation_from_pod(pod: V1Pod, key: str) -> str | None:
         """
-        Pod 수를 desired_count에 맞춰 조정.
-        - pattern_type: "sequential" 또는 "parallel"
-        - step_order 또는 group_id 중 하나는 반드시 전달
+        Pod의 annotations에서 지정한 key 값을 가져옵니다.
         """
-        # 유효성 체크
-        if pattern_type == PatternType.SEQUENTIAL and step_order is None:
-            raise ValueError("step_order가 필요합니다 (pattern_type='sequential')")
-        if pattern_type == PatternType.PARALLEL and group_id is None:
-            raise ValueError("group_id가 필요합니다 (pattern_type='parallel')")
-
-        # 1. 현재 Pod 목록 조회
-        if pattern_type == "sequential":
-            pods = PodService.get_pods_by_step_order(namespace, step_order)
-        else:  # "parallel"
-            pods = PodService.get_pods_by_group_id(namespace, group_id)
-
-        current_count = len(pods)
-
-        # 2. 현재 수와 목표 수가 동일하면 종료
-        if current_count == desired_count:
-            return
-
-        # 3. Pod 수가 부족하면 생성
-        elif current_count < desired_count:
-            to_create = desired_count - current_count
-            for _ in range(to_create):
-                pod_spec = self._generate_pod_spec(pattern_type, step_order, group_id, namespace)
-                await self._create_pod_in_cluster(pod_spec, namespace)
-                await self._verify_pod_creation(pod_spec["metadata"]["name"], namespace)
-
-        # 4. Pod 수가 초과하면 삭제 (가장 최근 생성된 Pod부터)
-        else:
-            to_delete = current_count - desired_count
-            pods_sorted = sorted(pods, key=lambda p: p.metadata.creation_timestamp, reverse=True)
-            for pod in pods_sorted[:to_delete]:
-                await self.delete_pod(pod.metadata.name, namespace)
+        if not pod.metadata or not pod.metadata.annotations:
+            return None
+        return pod.metadata.annotations.get(key)

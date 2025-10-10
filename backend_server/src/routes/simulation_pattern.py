@@ -10,40 +10,13 @@ from schemas.simulation_pattern import (
     PatternDeleteRequestDTO,
     PatternResponseDTO,
 )
-from crud.simulation_pattern import SimulationPatternService, get_simulation_pattern_service
+from crud.simulation_pattern import SimulationPatternService
+from di.simulation_pattern import get_simulation_pattern_service
 
 router = APIRouter(
     prefix="/simulation/{simulation_id}/pattern",
     tags=["Simulation Pattern"],
 )
-
-# -----------------------------
-# 공통 예외 처리 헬퍼 (HTTP 상태 코드 반영)
-# -----------------------------
-async def handle_exceptions(func, *args, **kwargs):
-    try:
-        # 정상 처리
-        result: PatternResponseDTO = await func(*args, **kwargs)
-        # 성공 시, result.statusCode를 HTTP 상태 코드로 활용
-        return JSONResponse(
-            status_code=result.status_code,
-            content=result.model_dump()
-        )
-
-    except SimulationError as e:
-        # SimulationError 발생 시 400
-        resp = PatternResponseDTO(statusCode=400, data=None, message=str(e))
-        return JSONResponse(status_code=400, content=resp.model_dump())
-
-    except TemplateError as e:
-        # TemplateError 발생 시 400
-        resp = PatternResponseDTO(statusCode=400, data=None, message=str(e))
-        return JSONResponse(status_code=400, content=resp.model_dump())
-
-    except Exception as e:
-        # 기타 예외 500
-        resp = PatternResponseDTO(statusCode=500, data=None, message=str(e))
-        return JSONResponse(status_code=500, content=resp.model_dump())
 
 # -----------------------------
 # 패턴 생성
@@ -75,7 +48,7 @@ async def create_pattern(
     )],
     service: Annotated[SimulationPatternService, Depends(get_simulation_pattern_service)]
 ) -> PatternResponseDTO:
-    return await handle_exceptions(service.create_pattern, simulation_id, body)
+    return await service.create_pattern(simulation_id, body)
 
 
 # -----------------------------
@@ -102,7 +75,7 @@ async def delete_pattern(
     )],
     service: Annotated[SimulationPatternService, Depends(get_simulation_pattern_service)]
 ) -> PatternResponseDTO:
-    return await handle_exceptions(service.delete_pattern, simulation_id, body)
+    return await service.delete_pattern(simulation_id, body)
 
 
 # -----------------------------
@@ -135,4 +108,4 @@ async def update_pattern(
     )],
     service: Annotated[SimulationPatternService, Depends(get_simulation_pattern_service)]
 ) -> PatternResponseDTO:
-    return await handle_exceptions(service.update_pattern, simulation_id, body)
+    return await service.update_pattern(simulation_id, body)

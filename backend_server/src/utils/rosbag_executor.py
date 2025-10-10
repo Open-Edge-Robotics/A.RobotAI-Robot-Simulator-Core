@@ -199,7 +199,7 @@ class RosbagExecutor:
         try:
             debug_print(f"[{execution_context}] Pod {pod_name}에서 rosbag 시작 요청")
 
-            bag_file_path = self._extract_bag_file_path_from_pod(pod)
+            bag_file_path = PodService.get_annotation_from_pod(pod, "simulation-platform/bag-file-path")
             if not bag_file_path:
                 raise ValueError(f"Pod {pod_name}에 BAG_FILE_PATH 환경변수가 없음")
 
@@ -262,9 +262,8 @@ class RosbagExecutor:
     async def execute_single_pod(
         self,
         pod: V1Pod,
-        simulation,
-        group: Optional[SimulationGroup] = None,
-        step: Optional[SimulationStep] = None
+        step_order: Optional[int] = None,
+        group_id: Optional[int] = None
     ) -> PodExecutionResult:
         """
         단일 Pod에서 rosbag 실행
@@ -275,21 +274,20 @@ class RosbagExecutor:
         pod_name = pod.metadata.name
         start_time = datetime.now(timezone.utc)
 
-        # prefix 설정
         prefix = ""
-        if group:
-            prefix += f"[Group {group.id}] "
-        if step:
-            prefix += f"[Step {step.step_order}] "
+        if group_id is not None:
+            prefix += f"[Group {group_id}] "
+        if step_order is not None:
+            prefix += f"[Step {step_order}] "
         prefix += f"[Pod {pod_name}]"
 
         debug_print(f"{prefix} ▶ Pod 실행 시작")
 
         try:
-            # 1️⃣ Pod 실행 요청
+            # Pod 실행
             await self._start_rosbag_on_single_pod(pod, execution_context=prefix)
 
-            # 2️⃣ Pod 완료까지 폴링
+            # 완료까지 폴링
             poll_interval = 1
             max_wait = 3600
             elapsed = 0
@@ -322,7 +320,6 @@ class RosbagExecutor:
             )
 
         except asyncio.CancelledError:
-            # Cancel 감지 시 즉시 stop 호출
             debug_print(f"{prefix} 🛑 CancelledError 감지, 즉시 중지 시작")
             stop_result = await self._stop_single_pod_rosbag_with_result(pod, execution_context=prefix)
             debug_print(f"{prefix} 🛑 Cancel 처리 완료, 상태={stop_result.status}")
@@ -343,17 +340,18 @@ class RosbagExecutor:
     async def _check_pod_rosbag_status(self, pod: V1Pod) -> dict:
         """단일 Pod rosbag 상태 체크"""
         pod_name = pod.metadata.name
-        
+
+        pod_ip = getattr(pod.status, "pod_ip", None)
+        if not pod_ip:
+            raise Exception(f"Pod {pod_name} 상태 체크 실패: Pod IP가 존재하지 않음 (아직 Running 상태가 아님)")
+
         try:
-            pod_ip = pod.status.pod_ip or "unknown"
-            
             status_response = await asyncio.wait_for(
                 RosService.get_pod_status(pod_ip),
                 timeout=10.0
             )
-            
             return status_response
-            
+
         except asyncio.TimeoutError:
             raise Exception(f"Pod {pod_name} 상태 체크 타임아웃")
         except Exception as e:

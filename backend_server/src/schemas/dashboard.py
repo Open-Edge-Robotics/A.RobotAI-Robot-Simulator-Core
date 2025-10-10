@@ -84,7 +84,7 @@ class SimulationDashboardResponseModel(GlobalResponseModel):
                         "overallHealthPercent": 75.0,
                         "statusBreakdown": {
                             "success": {"count": 18, "percentage": 75.00},
-                            "waiting": {"count": 4, "percentage": 16.67},
+                            "pending": {"count": 4, "percentage": 16.67},
                             "failed": {"count": 2, "percentage": 8.33}
                         }
                     }

@@ -210,10 +210,24 @@ class TemplateService:
                     )
 
             # 기존 파일 삭제 및 업로드
-            if upload_files:
+            if metadata_file:
+                # 기존 yaml/yml 파일만 삭제
                 existing_files = self.storage_client.list_files(existing_template.bag_file_path)
                 for file_name in existing_files:
-                    self.storage_client.delete_file(f"{existing_template.bag_file_path}/{file_name}")
+                    if file_name.endswith((".yaml", ".yml")):
+                        self.storage_client.delete_file(f"{existing_template.bag_file_path}/{file_name}")
+                # 새 파일 업로드
+                self.storage_client.upload_file(metadata_path, f"{existing_template.bag_file_path}/{metadata_file.filename}")
+
+            if db_file:
+                # 기존 db3 파일만 삭제
+                existing_files = self.storage_client.list_files(existing_template.bag_file_path)
+                for file_name in existing_files:
+                    if file_name.endswith(".db3"):
+                        self.storage_client.delete_file(f"{existing_template.bag_file_path}/{file_name}")
+                # 새 파일 업로드
+                self.storage_client.upload_file(db_path, f"{existing_template.bag_file_path}/{db_file.filename}")
+
 
 
             if metadata_file:
@@ -276,10 +290,3 @@ class TemplateService:
         if template is None:
             raise HTTPException(status_code=400, detail=f"템플릿을 찾을 수 없습니다. ID: {template_id}")
         return template
-
-# FastAPI DI 제공
-def get_template_service(
-    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_async_sessionmaker)],
-    storage_client: Annotated[MinioStorageClient, Depends(get_storage_client)]
-):
-    return TemplateService(session_factory, storage_client)

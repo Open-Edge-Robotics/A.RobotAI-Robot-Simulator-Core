@@ -9,7 +9,7 @@ from starlette import status
 from .pod import PodService
 from .rosbag import RosService
 from .simulation import SimulationService
-from .template import get_template_service
+from di.template import get_template_service
 from models.instance import Instance
 from schemas.instance import *
 from utils.my_enum import API, PodStatus, InstanceStatus

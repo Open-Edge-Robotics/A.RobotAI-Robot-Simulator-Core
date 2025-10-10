@@ -93,7 +93,7 @@ class SimulationStatusResponse(GlobalResponseModel):
 # ------------------------------
 class SimulationDeletionStatusData(BaseSchema):
     simulation_id: int = Field(..., alias="simulationId")
-    status: str  # PENDING, RUNNING, SUCCESS, FAILED
+    status: str  # PENDING, RUNNING, COMPLETED, FAILED
     progress: int  # 0~100
     steps: Dict[str, str]  # namespace, redis, db 단계별 상태
     started_at: Optional[datetime] = Field(None, alias="startedAt")
@@ -112,7 +112,7 @@ class SimulationDeletionStatusResponse(GlobalResponseModel):
                     "status": "RUNNING",
                     "progress": 33,
                     "steps": {
-                        "namespace": "SUCCESS",
+                        "namespace": "COMPLETED",
                         "redis": "PENDING",
                         "db": "PENDING"
                     },

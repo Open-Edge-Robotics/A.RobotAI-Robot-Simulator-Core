@@ -878,17 +878,3 @@ class SimulationPatternService:
             # 정리 실패는 로그만 남기고 원본 예외 유지
         else:
             print("✅ 모든 리소스 정리 완료")
-    
-# FastAPI 의존성 주입 함수
-async def get_simulation_pattern_service(
-    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_async_sessionmaker)]
-) -> SimulationPatternService:
-    simulation_repository = SimulationRepository(session_factory)
-    instance_repository = InstanceRepository(session_factory)
-    template_repository = TemplateRepository(session_factory)
-    return SimulationPatternService(
-        sessionmaker=session_factory,
-        simulation_repository=simulation_repository,
-        instance_repository=instance_repository,
-        template_repository=template_repository
-    )

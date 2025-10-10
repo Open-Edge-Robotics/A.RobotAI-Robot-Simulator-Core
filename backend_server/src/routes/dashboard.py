@@ -37,7 +37,7 @@ async def get_dashboard_service(
     """대시보드 서비스 의존성 주입"""
     simulation_repo = create_simulation_repository(async_session)
     mec_repo = create_mec_repository(db_session)
-    instance_repo = create_instance_repository(db_session)
+    instance_repo = create_instance_repository(async_session)
     
     return create_dashboard_service(
         simulation_repo=simulation_repo,

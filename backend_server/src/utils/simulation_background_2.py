@@ -90,13 +90,12 @@ async def process_single_step_without_pod(
     step_created_instances = 0
     
     # 템플릿 조회
-    async with sessionmaker() as db:
-        storage_client = get_storage_client()
-        template_service = TemplateService(db, storage_client)
-        template = await template_service.find_template_by_id(step.template_id, api)
-        if template is None:
-            raise TemplateNotFoundError(template.id)
-        print(f"템플릿 조회 완료: ID={template.template_id}, 타입='{template.type}'")
+    storage_client = get_storage_client()
+    template_service = TemplateService(session_factory=sessionmaker, storage_client=storage_client)
+    template = await template_service.find_template_by_id(step.template_id)
+    if template is None:
+        raise TemplateNotFoundError(template.id)
+    print(f"템플릿 조회 완료: ID={template.template_id}, 타입='{template.type}'")
     
     # SimulationStep DB 저장
     simulation_step = None
@@ -282,8 +281,11 @@ async def process_single_group_without_pod(
     # 템플릿 조회
     async with sessionmaker() as db:
         storage_client = get_storage_client()
-        template_service = TemplateService(db, storage_client)
-        template = await template_service.find_template_by_id(group.template_id, api)
+        template_service = TemplateService(
+            session_factory=sessionmaker, 
+            storage_client=storage_client
+        )
+        template = await template_service.find_template_by_id(group.template_id)
         if template is None:
             raise TemplateNotFoundError(template.id)
         print(f"[그룹 {group_index}] 템플릿 조회 완료: ID={template.template_id}, 타입='{template.type}'")
