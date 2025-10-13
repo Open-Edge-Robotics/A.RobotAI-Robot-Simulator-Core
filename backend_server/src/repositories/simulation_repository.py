@@ -1,9 +1,9 @@
 import contextlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import traceback
 from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Optional, Tuple
 from fastapi import Depends
-from sqlalchemy import case, select, func, desc, update
+from sqlalchemy import Select, case, select, func, desc, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 import logging
@@ -78,10 +78,9 @@ class SimulationRepository:
                     query = query.where(Simulation.pattern_type == pattern_type)
                 if status:
                     query = query.where(Simulation.status == status)
-                if start_date:
-                    query = query.where(Simulation.created_at >= start_date)
-                if end_date:
-                    query = query.where(Simulation.created_at <= end_date)
+
+                query = self.apply_date_filter(query, start_date, end_date, Simulation.created_at)
+
                 status_priority = case(
                     (Simulation.status == "RUNNING", 1),
                     (Simulation.status == "INITIATING", 2),
@@ -110,6 +109,19 @@ class SimulationRepository:
         except Exception as e:
             logger.error(f"페이지네이션된 시뮬레이션 목록 조회 중 오류: {str(e)}")
             raise
+
+    def apply_date_filter(
+        self,
+        query: Select,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        model_field = Simulation.created_at
+    ) -> Select:
+        if start_date:
+            query = query.where(model_field >= start_date)
+        if end_date:
+            query = query.where(model_field < end_date + timedelta(days=1))
+        return query
 
     async def find_summary_list(self) -> List[Tuple[int, str]]:
         """시뮬레이션 ID와 이름만 조회 (드롭다운용)"""
