@@ -911,6 +911,7 @@ class SimulationRepository:
         status: SimulationExecutionStatus = SimulationExecutionStatus.PENDING,
         result_summary: Optional[dict] = None,
         message: Optional[str] = None,
+        execution_plan: Optional[dict] = None,
         execution_id: Optional[int] = None,  # update 대상 지정 가능
         session: Optional[AsyncSession] = None
     ) -> SimulationExecution:
@@ -947,6 +948,8 @@ class SimulationRepository:
                     execution.result_summary = result_summary
                 if message is not None:
                     execution.message = message
+                if execution_plan is not None:
+                    execution.execution_plan = execution_plan
                 execution.updated_at = now
             else:
                 # 3️⃣ 없으면 새로 생성
@@ -955,6 +958,7 @@ class SimulationRepository:
                     pattern_type=pattern_type,
                     status=status or SimulationExecutionStatus.PENDING,
                     result_summary=result_summary,
+                    execution_plan=execution_plan,
                     message=message,
                     created_at=now,
                     updated_at=now

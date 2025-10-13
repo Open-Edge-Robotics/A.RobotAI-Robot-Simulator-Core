@@ -507,6 +507,11 @@ class SimulationService:
             "total_failed_pods": 0
         }
 
+        # guard vars that may be referenced in except/finally
+        pending_tasks = {}
+        execution_id = None
+        db_group_list = []
+
         try:
             # ----------------------------
             # 1️⃣ DB 조회 + SimulationExecution 생성
@@ -522,18 +527,32 @@ class SimulationService:
                 simulation_data["id"] = simulation.id
                 simulation_data["namespace"] = simulation.namespace
                 simulation_data["created_at"] = simulation.created_at
+                # 그룹 조회 (needed to build execution_plan)
+                groups = await self.repository.find_simulation_groups(simulation.id, db_session)
 
                 # RUNNING 상태인 SimulationExecution 생성
+                # Build execution_plan for parallel pattern from fetched groups
+                execution_plan = {
+                    "groups": [
+                        {
+                            "groupId": g.id,
+                            "templateId": g.template.template_id if getattr(g, 'template', None) else None,
+                            "templateType": g.template.type if getattr(g, 'template', None) else None,
+                            "autonomousAgentCount": g.autonomous_agent_count,
+                            "repeatCount": g.repeat_count,
+                            "executionTime": g.execution_time
+                        } for g in groups
+                    ]
+                }
+
                 execution = SimulationExecution(
                     simulation_id=simulation.id,
-                    pattern_type=simulation.pattern_type
+                    pattern_type=simulation.pattern_type,
+                    execution_plan=execution_plan
                 )
                 execution.start_execution()
                 db_session.add(execution)
                 await db_session.flush()  # execution.id 확보
-
-                # 그룹 조회 및 GroupExecution 초기화
-                groups = await self.repository.find_simulation_groups(simulation_id, db_session)
                 total_execution_summary["total_groups"] = len(groups)
                 
                 redis_group_list: list[RedisGroupStatus] = []
@@ -613,6 +632,9 @@ class SimulationService:
                 "message": f"병렬 시뮬레이션 시작 - 총 {len(redis_group_list)}개 그룹",
                 "groupDetails": [g.model_dump() for g in redis_group_list]
             }
+            # include execution_plan in Redis for quick inspection
+            if execution.execution_plan:
+                initial_status["executionPlan"] = execution.execution_plan
             
             await redis_client.client.set(primary_redis_key, json.dumps(initial_status))
             await redis_client.client.set(execution_redis_key, json.dumps(initial_status))
@@ -1677,9 +1699,25 @@ class SimulationService:
                     ))
                 
                 # status 가 RUNNING 인 SimulationExecution 생성
+                # Build execution_plan for sequential pattern
+                execution_plan = {
+                    "steps": [
+                        {
+                            "stepOrder": s.step_order,
+                            "templateId": s.template.template_id if getattr(s, 'template', None) else None,
+                            "templateType": s.template.type if getattr(s, 'template', None) else None,
+                            "autonomousAgentCount": s.autonomous_agent_count,
+                            "repeatCount": s.repeat_count,
+                            "executionTime": s.execution_time,
+                            "delayAfterCompletion": s.delay_after_completion or 0
+                        } for s in steps
+                    ]
+                }
+
                 execution = SimulationExecution(
                     simulation_id=simulation.id,
-                    pattern_type=simulation.pattern_type
+                    pattern_type=simulation.pattern_type,
+                    execution_plan=execution_plan
                 )
                 execution.start_execution()
                 db_session.add(execution)
@@ -1747,6 +1785,9 @@ class SimulationService:
                 "message": f"시뮬레이션 시작 - 총 {len(step_summaries)}개 스텝",
                 "stepDetails": [s.model_dump() for s in redis_step_statuses]
             }
+            # include execution_plan in Redis for quick inspection
+            if execution.execution_plan:
+                initial_status["executionPlan"] = execution.execution_plan
 
             # Redis 초기화
             await redis_client.client.set(primary_redis_key, json.dumps(initial_status))
@@ -2211,7 +2252,11 @@ class SimulationService:
             async with self.sessionmaker() as db_session:
                 execution = await self.repository.find_execution_by_id(execution_id, db_session)
                 if execution:
-                    execution.result_summary = json.loads(redis_data)
+                    redis_json = json.loads(redis_data)
+                    execution.result_summary = redis_json
+                    # Persist execution_plan from Redis if present
+                    if "executionPlan" in redis_json:
+                        execution.execution_plan = redis_json.get("executionPlan")
                     await db_session.commit()
                     debug_print(f"✅ SimulationExecution.result 업데이트 완료: execution_id={execution_id}")
         except Exception as e:
@@ -2427,7 +2472,8 @@ class SimulationService:
             # 1️⃣ 시뮬레이션 조회
             simulation = await self.repository.find_by_id(simulation_id)
             if not simulation:
-                raise SimulationNotFoundError(simulation.id)
+                # avoid referencing simulation.id when simulation is None
+                raise SimulationNotFoundError(simulation_id)
             
             # 2️⃣ 현재 실행 중인 execution 조회
             execution = await self.repository.find_execution_by_id(execution_id)
@@ -2438,6 +2484,14 @@ class SimulationService:
                 )
             execution_id = execution.id
                 
+            # Ensure Redis client is connected before calling polling logic
+            try:
+                await redis_client.connect()
+            except Exception:
+                # If Redis connect fails, we'll still attempt to proceed with stop logic
+                # but downstream calls should handle missing redis gracefully.
+                pass
+
             # 3️⃣ 이미 stop 요청 진행 중인지 확인
             running_info = self.state.running_simulations.get(simulation_id)
             if running_info and running_info.get("is_stopping", False):
@@ -2446,10 +2500,25 @@ class SimulationService:
                     status_code=409,
                     detail="중지 요청이 이미 진행 중입니다. 완료될 때까지 기다려주세요."
                 )
-                
-            # 4️⃣ stop_event 설정
-            stop_event = running_info.get("stop_event")
-            stop_event.set()
+
+            # 4️⃣ stop_event 설정 (running_info가 없을 수 있으므로 안전하게 처리)
+            if not running_info:
+                # 시뮬레이션 실행 상태가 메모리 상태에 없을 수 있음(예: 프로세스 재시작 등)
+                # 이 경우에는 임시 stop_event를 만들어 즉시 set 하고 polling/동기화 로직을 진행
+                stop_event = asyncio.Event()
+                stop_event.set()
+            else:
+                stop_event = running_info.get("stop_event")
+                if stop_event is None:
+                    stop_event = asyncio.Event()
+                # mark as stopping so concurrent requests are rejected
+                running_info["is_stopping"] = True
+                # set the event to request stop
+                try:
+                    stop_event.set()
+                except Exception:
+                    # ignore if event cannot be set for some reason
+                    pass
 
             # 5️⃣ 패턴별 polling 중지
             await self._polling_stop(simulation_id, execution_id, stop_event, redis_client)
@@ -2466,6 +2535,13 @@ class SimulationService:
                 status_code=500,
                 detail="시뮬레이션 중지 중 내부 오류가 발생했습니다"
             )
+        finally:
+            # 안전하게 Redis 연결 종료
+            try:
+                if getattr(redis_client, "client", None):
+                    await redis_client.client.close()
+            except Exception:
+                pass
      
     async def _polling_stop(
         self,
