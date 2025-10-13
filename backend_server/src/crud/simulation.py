@@ -2362,7 +2362,16 @@ class SimulationService:
 
             # 3️⃣ 최신 실행 상태 확인
             latest_execution = simulation_data.latest_execution_status
-            if latest_execution and latest_execution.status == SimulationExecutionStatus.RUNNING:
+            # latest_execution.status can be either an Enum member or a plain string depending on
+            # how the DTO was constructed; normalize to the string value before comparison.
+            is_running = False
+            if latest_execution:
+                status_attr = getattr(latest_execution, 'status', None)
+                # If it's an Enum, use .value, otherwise use the value directly
+                status_value = status_attr.value if hasattr(status_attr, 'value') else status_attr
+                is_running = (status_value == SimulationExecutionStatus.RUNNING.value)
+
+            if is_running:
                 # 4️⃣ 리소스/Pod 상태 수집
                 metrics_data = await self.collector.collect_dashboard_metrics(simulation_data)
                 resource_usage = metrics_data.get("resource_usage", self.collector._get_default_resource_usage())

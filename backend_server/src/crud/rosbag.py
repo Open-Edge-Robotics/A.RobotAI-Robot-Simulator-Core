@@ -130,8 +130,8 @@ class RosService:
                         # 실행 실패: {"isPlaying": false, "stopReason": "failed"} → "failed"
                         return "failed"
                     elif stop_reason is None:
-                        # 아직 시작 전: {"isPlaying": false, "stopReason": null} → "ready"
-                        return "ready"
+                        # 아직 시작 전: {"isPlaying": false, "stopReason": null} → "pending"
+                        return "pending"
                     else:
                         # 알 수 없는 stopReason → "failed"
                         logger.warning(f"Unknown stopReason: {stop_reason}")
