@@ -835,24 +835,60 @@ class PodService:
         raise TimeoutError(f"[wait_for_pods_running] 네임스페이스 '{namespace}'의 모든 Pod가 {timeout}초 내에 Running 상태가 되지 않았습니다.")
 
     @staticmethod
+    async def ensure_namespace_exists(simulation_id: int) -> str:
+        """
+        네임스페이스 존재 확인 및 자동 생성
+        - 네임스페이스가 이미 존재하면 그대로 사용
+        - 없으면 새로 생성
+
+        Returns:
+            str: 네임스페이스 이름
+        """
+        name = f"simulation-{simulation_id}"
+
+        try:
+            # 네임스페이스 존재 확인
+            pod_client.read_namespace(name=name)
+            logger.info(f"네임스페이스 '{name}' 이미 존재함")
+            return name
+
+        except ApiException as e:
+            if e.status == 404:
+                # 네임스페이스가 없으면 생성
+                logger.info(f"네임스페이스 '{name}' 없음. 생성 시작...")
+                return await PodService.create_namespace(simulation_id)
+            else:
+                # 404가 아닌 다른 오류
+                logger.error(f"네임스페이스 '{name}' 조회 실패: {e}")
+                raise Exception(f"네임스페이스 확인 중 오류: {str(e)}")
+
+    @staticmethod
     async def create_namespace(simulation_id: int):
         name = f"simulation-{simulation_id}"
         try:
             metadata = client.V1ObjectMeta(name=name)
             namespace = client.V1Namespace(metadata=metadata)
-            
+
             # 생성 시도
             result = pod_client.create_namespace(namespace)
-            
+
             # 생성 확인
             if result:
                 logger.info(f"네임스페이스 '{name}' 생성 성공")
                 return name
             else:
                 raise Exception("네임스페이스 생성 결과가 None")
-                
+
+        except ApiException as e:
+            if e.status == 409:
+                # 이미 존재하는 경우 (동시 생성 시도 시)
+                logger.info(f"네임스페이스 '{name}' 이미 존재함 (409 Conflict)")
+                return name
+            else:
+                logger.error(f"네임스페이스 '{name}' 생성 실패: {e}")
+                raise Exception(f"네임스페이스 생성 실패: {str(e)}")
         except Exception as e:
-            logger.info(f"네임스페이스 '{name}' 생성 실패: {e}")
+            logger.error(f"네임스페이스 '{name}' 생성 실패: {e}")
             raise Exception(f"네임스페이스 생성 실패: {str(e)}")
 
     @staticmethod

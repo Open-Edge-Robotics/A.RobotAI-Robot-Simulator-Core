@@ -176,9 +176,17 @@ class SimulationService:
                                 completed_at=now if status == "COMPLETED" else None,
                                 session=db_session
                             )
+                            # Simulation 테이블 상태 업데이트
+                            # - RUNNING: 실행 중 상태 유지
+                            # - COMPLETED/FAILED/STOPPED: PENDING으로 변경 (재실행 가능하도록)
+                            if status in ["COMPLETED", "FAILED", "STOPPED"]:
+                                simulation_status = SimulationStatus.PENDING
+                            else:
+                                simulation_status = status
+
                             await self.repository.update_simulation_status(
                                 simulation_id=simulation_id,
-                                status=status,
+                                status=simulation_status,
                                 session=db_session
                             )
                     else:
@@ -322,10 +330,17 @@ class SimulationService:
                                 completed_at=now if status == "COMPLETED" else None,
                                 session=db_session
                             )
-                            # Simulation 테이블도 상태 반영
+                            # Simulation 테이블 상태 업데이트
+                            # - RUNNING: 실행 중 상태 유지
+                            # - COMPLETED/FAILED/STOPPED: PENDING으로 변경 (재실행 가능하도록)
+                            if status in ["COMPLETED", "FAILED", "STOPPED"]:
+                                simulation_status = SimulationStatus.PENDING
+                            else:
+                                simulation_status = status
+
                             await self.repository.update_simulation_status(
                                 simulation_id=simulation_id,
-                                status=status,
+                                status=simulation_status,
                                 session=db_session
                             )
                     else:
@@ -1443,11 +1458,11 @@ class SimulationService:
         시뮬레이션 시작 요청을 받고, 패턴 타입에 따라 분기 처리 후 메타데이터만 즉시 리턴
         """
         debug_print("🚀 시뮬레이션 시작 메서드 진입", simulation_id=simulation_id)
-            
+
         try:
             debug_print("📋 시뮬레이션 조회 시작", simulation_id=simulation_id)
             simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
-            
+
             # 이미 실행 중이면 409 Conflict
             latest_exec  = await self.repository.find_latest_simulation_execution(simulation_id)
 
@@ -1456,7 +1471,12 @@ class SimulationService:
                     status_code=409,
                     detail=f"이미 실행 중인 시뮬레이션 실행이 존재합니다 (Execution ID: {latest_exec.id})"
                 )
-                
+
+            # 네임스페이스 확인 및 자동 생성
+            debug_print(f"📦 네임스페이스 확인 시작: simulation-{simulation_id}")
+            namespace = await PodService.ensure_namespace_exists(simulation_id)
+            debug_print(f"✅ 네임스페이스 확인 완료: {namespace}")
+
             # 리소스(Pod) 생성
             await self._create_pods_for_simulation(simulation)
             
