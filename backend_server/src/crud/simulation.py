@@ -2404,21 +2404,19 @@ class SimulationService:
         try:
             # 2️⃣ 기본 데이터 추출
             base_data: Dict[str, Any] = extract_simulation_dashboard_data(simulation_data)
-
             # 3️⃣ 최신 실행 상태 확인
             latest_execution = simulation_data.latest_execution_status
-            # latest_execution.status can be either an Enum member or a plain string depending on
-            # how the DTO was constructed; normalize to the string value before comparison.
+
             is_running = False
             if latest_execution:
-                status_attr = getattr(latest_execution, 'status', None)
-                # If it's an Enum, use .value, otherwise use the value directly
-                status_value = status_attr.value if hasattr(status_attr, 'value') else status_attr
-                is_running = (status_value == SimulationExecutionStatus.RUNNING.value)
+                status_attr = getattr(latest_execution, "status", None)
+                status_value = status_attr.value if hasattr(status_attr, "value") else status_attr
+                is_running = (status_value == "RUNNING")
 
             if is_running:
                 # 4️⃣ 리소스/Pod 상태 수집
                 metrics_data = await self.collector.collect_dashboard_metrics(simulation_data)
+
                 resource_usage = metrics_data.get("resource_usage", self.collector._get_default_resource_usage())
                 pod_status = metrics_data.get("pod_status", self.collector._get_default_pod_status())
             else:
@@ -2435,13 +2433,15 @@ class SimulationService:
             return dashboard_data
 
         except Exception as e:
-            # 8️⃣ fallback 처리
+            print(f"[ERROR] ❌ Exception in get_dashboard_data: {type(e).__name__} | {e}")
             collector = self.collector
-            return DashboardData(
+            fallback_data = DashboardData(
                 **extract_simulation_dashboard_data(simulation_data),
                 resource_usage=collector._get_default_resource_usage(),
                 pod_status=collector._get_default_pod_status()
             )
+            return fallback_data
+
     
 
     async def get_simulation_summary_list(self) -> List[SimulationSummaryItem]:
@@ -2472,7 +2472,6 @@ class SimulationService:
             # 1️⃣ 시뮬레이션 조회
             simulation = await self.repository.find_by_id(simulation_id)
             if not simulation:
-                # avoid referencing simulation.id when simulation is None
                 raise SimulationNotFoundError(simulation_id)
             
             # 2️⃣ 현재 실행 중인 execution 조회
@@ -2484,12 +2483,9 @@ class SimulationService:
                 )
             execution_id = execution.id
                 
-            # Ensure Redis client is connected before calling polling logic
             try:
                 await redis_client.connect()
             except Exception:
-                # If Redis connect fails, we'll still attempt to proceed with stop logic
-                # but downstream calls should handle missing redis gracefully.
                 pass
 
             # 3️⃣ 이미 stop 요청 진행 중인지 확인
@@ -2511,13 +2507,10 @@ class SimulationService:
                 stop_event = running_info.get("stop_event")
                 if stop_event is None:
                     stop_event = asyncio.Event()
-                # mark as stopping so concurrent requests are rejected
                 running_info["is_stopping"] = True
-                # set the event to request stop
                 try:
                     stop_event.set()
                 except Exception:
-                    # ignore if event cannot be set for some reason
                     pass
 
             # 5️⃣ 패턴별 polling 중지
@@ -2622,6 +2615,12 @@ class SimulationService:
             status=update_data.get("status"),
             result_summary=update_data.get("result_summary"),
             message=update_data["result_summary"].get("message")
+        )
+        
+        # Simulation 테이블 상태를 PENDING으로 변경
+        await self.repository.update_simulation_status(
+            simulation_id=simulation_id,
+            status=SimulationStatus.PENDING
         )
 
         # -------------------------------

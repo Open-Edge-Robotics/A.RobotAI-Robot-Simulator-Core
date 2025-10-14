@@ -93,15 +93,15 @@ class RosService:
     async def get_pod_rosbag_playing_status(pod_ip: str) -> str:
         """
         Dashboard용 Pod 상태 조회
-        - 반환값: "ready", "running", "completed", "stopped", "failed"
-        - "ready": rosbag 재생 준비 완료 (명령 대기 중)
+        - 반환값: "pending", "running", "completed", "stopped", "failed"
+        - "pending": rosbag 재생 준비 완료 (명령 대기 중)
         - "running": rosbag play 중
         - "completed": rosbag play 정상 완료
         - "stopped": rosbag play 사용자 중지
         - "failed": 조회 실패 또는 rosbag 실행 실패
         """
         if not pod_ip:
-            return "ready"  # Pod 준비 전
+            return "pending"  # Pod 준비 전
 
         pod_api_url = f"http://{pod_ip}:8002/rosbag/status"
 
@@ -110,10 +110,11 @@ class RosService:
                 response = await client.get(pod_api_url)
                 response.raise_for_status()
                 data = response.json()
+                print(f"응답 데이터: {data}")
 
-                is_playing = data.get("isPlaying", False)
-                stop_reason = data.get("stopReason")
-                print(f"{is_playing}, {stop_reason}")
+                is_playing = data.get("is_playing", False)
+                stop_reason = data.get("stop_reason")
+                print(f"{pod_ip} 재생 상태 확인: {is_playing}, {stop_reason}")
 
                 if is_playing:
                     # 재생 중: {"isPlaying": true, "stopReason": null} → "running"

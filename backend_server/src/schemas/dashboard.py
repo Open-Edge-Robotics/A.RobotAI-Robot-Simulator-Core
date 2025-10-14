@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import Dict
+from pydantic import Field
+from typing import Dict, Optional
 
 from settings import BaseSchema
 from schemas.format import GlobalResponseModel
@@ -10,6 +10,8 @@ from schemas.format import GlobalResponseModel
 class ResourceUsage(BaseSchema):
     usage_percent: float = Field(..., alias="usagePercent")
     status: str  # "normal", "warning", "critical"
+    
+    message: Optional[str] = None  # 사용자에게 보여줄 메시지
 
 class ResourceUsageData(BaseSchema):
     cpu: ResourceUsage
