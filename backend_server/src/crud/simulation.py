@@ -1201,7 +1201,7 @@ class SimulationService:
                         description=simulation_create_data.simulation_description,
                         pattern_type=simulation_create_data.pattern_type,
                         mec_id=simulation_create_data.mec_id,
-                        status=SimulationStatus.INITIATING,
+                        status=SimulationStatus.PENDING,
                         total_expected_pods=total_expected_pods,
                         total_pods=0,
                         namespace=None,
