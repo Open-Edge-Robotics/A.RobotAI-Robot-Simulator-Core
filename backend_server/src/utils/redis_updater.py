@@ -552,6 +552,35 @@ class OptimizedRedisUpdater:
         if reason:
             current_status["message"] = reason
 
+        # 그룹별 상태 병합
+        try:
+            groups_hash = f"{execution_key}:groups"
+            try:
+                all_fields = await self.redis.hgetall(groups_hash)
+            except AttributeError:
+                all_fields = None
+
+            if all_fields:
+                merged_group_details = []
+                for k, v in all_fields.items():
+                    if isinstance(k, bytes):
+                        k_text = k.decode('utf-8')
+                    else:
+                        k_text = k
+                    if k_text == 'meta':
+                        continue
+                    try:
+                        val_text = v.decode('utf-8') if isinstance(v, bytes) else v
+                        go = json.loads(val_text)
+                        merged_group_details.append(go)
+                    except Exception:
+                        continue
+
+                if merged_group_details:
+                    current_status['groupDetails'] = merged_group_details
+        except Exception:
+            pass
+
         # Redis에 저장
         updated_data = json.dumps(current_status)
         bytes_written = len(updated_data.encode('utf-8'))

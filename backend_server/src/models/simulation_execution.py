@@ -1,11 +1,14 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as PgEnum, JSON, BIGINT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.enums import PatternType, SimulationExecutionStatus
 from database.db_conn import Base
+
+if TYPE_CHECKING:
+    from models.simulation import Simulation
 
 class SimulationExecution(Base):
     __tablename__ = 'simulation_executions'
@@ -47,6 +50,12 @@ class SimulationExecution(Base):
         JSON, 
         nullable=True,
         comment="Step/Group/Instance별 최종 상태 및 성과 지표"
+    )
+    # 실행 계획 (실행 시작 시점의 계획을 JSON으로 저장)
+    execution_plan: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Execution 시작 시점의 실행 계획 (steps/groups 등)"
     )
     message: Mapped[Optional[str]] = mapped_column(
         String(500), 

@@ -176,9 +176,17 @@ class SimulationService:
                                 completed_at=now if status == "COMPLETED" else None,
                                 session=db_session
                             )
+                            # Simulation 테이블 상태 업데이트
+                            # - RUNNING: 실행 중 상태 유지
+                            # - COMPLETED/FAILED/STOPPED: PENDING으로 변경 (재실행 가능하도록)
+                            if status in ["COMPLETED", "FAILED", "STOPPED"]:
+                                simulation_status = SimulationStatus.PENDING
+                            else:
+                                simulation_status = status
+
                             await self.repository.update_simulation_status(
                                 simulation_id=simulation_id,
-                                status=status,
+                                status=simulation_status,
                                 session=db_session
                             )
                     else:
@@ -322,10 +330,17 @@ class SimulationService:
                                 completed_at=now if status == "COMPLETED" else None,
                                 session=db_session
                             )
-                            # Simulation 테이블도 상태 반영
+                            # Simulation 테이블 상태 업데이트
+                            # - RUNNING: 실행 중 상태 유지
+                            # - COMPLETED/FAILED/STOPPED: PENDING으로 변경 (재실행 가능하도록)
+                            if status in ["COMPLETED", "FAILED", "STOPPED"]:
+                                simulation_status = SimulationStatus.PENDING
+                            else:
+                                simulation_status = status
+
                             await self.repository.update_simulation_status(
                                 simulation_id=simulation_id,
-                                status=status,
+                                status=simulation_status,
                                 session=db_session
                             )
                     else:
@@ -492,6 +507,11 @@ class SimulationService:
             "total_failed_pods": 0
         }
 
+        # guard vars that may be referenced in except/finally
+        pending_tasks = {}
+        execution_id = None
+        db_group_list = []
+
         try:
             # ----------------------------
             # 1️⃣ DB 조회 + SimulationExecution 생성
@@ -507,18 +527,32 @@ class SimulationService:
                 simulation_data["id"] = simulation.id
                 simulation_data["namespace"] = simulation.namespace
                 simulation_data["created_at"] = simulation.created_at
+                # 그룹 조회 (needed to build execution_plan)
+                groups = await self.repository.find_simulation_groups(simulation.id, db_session)
 
                 # RUNNING 상태인 SimulationExecution 생성
+                # Build execution_plan for parallel pattern from fetched groups
+                execution_plan = {
+                    "groups": [
+                        {
+                            "groupId": g.id,
+                            "templateId": g.template.template_id if getattr(g, 'template', None) else None,
+                            "templateType": g.template.type if getattr(g, 'template', None) else None,
+                            "autonomousAgentCount": g.autonomous_agent_count,
+                            "repeatCount": g.repeat_count,
+                            "executionTime": g.execution_time
+                        } for g in groups
+                    ]
+                }
+
                 execution = SimulationExecution(
                     simulation_id=simulation.id,
-                    pattern_type=simulation.pattern_type
+                    pattern_type=simulation.pattern_type,
+                    execution_plan=execution_plan
                 )
                 execution.start_execution()
                 db_session.add(execution)
                 await db_session.flush()  # execution.id 확보
-
-                # 그룹 조회 및 GroupExecution 초기화
-                groups = await self.repository.find_simulation_groups(simulation_id, db_session)
                 total_execution_summary["total_groups"] = len(groups)
                 
                 redis_group_list: list[RedisGroupStatus] = []
@@ -598,6 +632,9 @@ class SimulationService:
                 "message": f"병렬 시뮬레이션 시작 - 총 {len(redis_group_list)}개 그룹",
                 "groupDetails": [g.model_dump() for g in redis_group_list]
             }
+            # include execution_plan in Redis for quick inspection
+            if execution.execution_plan:
+                initial_status["executionPlan"] = execution.execution_plan
             
             await redis_client.client.set(primary_redis_key, json.dumps(initial_status))
             await redis_client.client.set(execution_redis_key, json.dumps(initial_status))
@@ -1164,7 +1201,7 @@ class SimulationService:
                         description=simulation_create_data.simulation_description,
                         pattern_type=simulation_create_data.pattern_type,
                         mec_id=simulation_create_data.mec_id,
-                        status=SimulationStatus.INITIATING,
+                        status=SimulationStatus.PENDING,
                         total_expected_pods=total_expected_pods,
                         total_pods=0,
                         namespace=None,
@@ -1443,11 +1480,11 @@ class SimulationService:
         시뮬레이션 시작 요청을 받고, 패턴 타입에 따라 분기 처리 후 메타데이터만 즉시 리턴
         """
         debug_print("🚀 시뮬레이션 시작 메서드 진입", simulation_id=simulation_id)
-            
+
         try:
             debug_print("📋 시뮬레이션 조회 시작", simulation_id=simulation_id)
             simulation = await self.find_simulation_by_id(simulation_id, "start simulation")
-            
+
             # 이미 실행 중이면 409 Conflict
             latest_exec  = await self.repository.find_latest_simulation_execution(simulation_id)
 
@@ -1456,7 +1493,12 @@ class SimulationService:
                     status_code=409,
                     detail=f"이미 실행 중인 시뮬레이션 실행이 존재합니다 (Execution ID: {latest_exec.id})"
                 )
-                
+
+            # 네임스페이스 확인 및 자동 생성
+            debug_print(f"📦 네임스페이스 확인 시작: simulation-{simulation_id}")
+            namespace = await PodService.ensure_namespace_exists(simulation_id)
+            debug_print(f"✅ 네임스페이스 확인 완료: {namespace}")
+
             # 리소스(Pod) 생성
             await self._create_pods_for_simulation(simulation)
             
@@ -1657,9 +1699,25 @@ class SimulationService:
                     ))
                 
                 # status 가 RUNNING 인 SimulationExecution 생성
+                # Build execution_plan for sequential pattern
+                execution_plan = {
+                    "steps": [
+                        {
+                            "stepOrder": s.step_order,
+                            "templateId": s.template.template_id if getattr(s, 'template', None) else None,
+                            "templateType": s.template.type if getattr(s, 'template', None) else None,
+                            "autonomousAgentCount": s.autonomous_agent_count,
+                            "repeatCount": s.repeat_count,
+                            "executionTime": s.execution_time,
+                            "delayAfterCompletion": s.delay_after_completion or 0
+                        } for s in steps
+                    ]
+                }
+
                 execution = SimulationExecution(
                     simulation_id=simulation.id,
-                    pattern_type=simulation.pattern_type
+                    pattern_type=simulation.pattern_type,
+                    execution_plan=execution_plan
                 )
                 execution.start_execution()
                 db_session.add(execution)
@@ -1727,6 +1785,9 @@ class SimulationService:
                 "message": f"시뮬레이션 시작 - 총 {len(step_summaries)}개 스텝",
                 "stepDetails": [s.model_dump() for s in redis_step_statuses]
             }
+            # include execution_plan in Redis for quick inspection
+            if execution.execution_plan:
+                initial_status["executionPlan"] = execution.execution_plan
 
             # Redis 초기화
             await redis_client.client.set(primary_redis_key, json.dumps(initial_status))
@@ -2191,7 +2252,11 @@ class SimulationService:
             async with self.sessionmaker() as db_session:
                 execution = await self.repository.find_execution_by_id(execution_id, db_session)
                 if execution:
-                    execution.result_summary = json.loads(redis_data)
+                    redis_json = json.loads(redis_data)
+                    execution.result_summary = redis_json
+                    # Persist execution_plan from Redis if present
+                    if "executionPlan" in redis_json:
+                        execution.execution_plan = redis_json.get("executionPlan")
                     await db_session.commit()
                     debug_print(f"✅ SimulationExecution.result 업데이트 완료: execution_id={execution_id}")
         except Exception as e:
@@ -2339,12 +2404,19 @@ class SimulationService:
         try:
             # 2️⃣ 기본 데이터 추출
             base_data: Dict[str, Any] = extract_simulation_dashboard_data(simulation_data)
-
             # 3️⃣ 최신 실행 상태 확인
             latest_execution = simulation_data.latest_execution_status
-            if latest_execution and latest_execution.status == SimulationExecutionStatus.RUNNING:
+
+            is_running = False
+            if latest_execution:
+                status_attr = getattr(latest_execution, "status", None)
+                status_value = status_attr.value if hasattr(status_attr, "value") else status_attr
+                is_running = (status_value == "RUNNING")
+
+            if is_running:
                 # 4️⃣ 리소스/Pod 상태 수집
                 metrics_data = await self.collector.collect_dashboard_metrics(simulation_data)
+
                 resource_usage = metrics_data.get("resource_usage", self.collector._get_default_resource_usage())
                 pod_status = metrics_data.get("pod_status", self.collector._get_default_pod_status())
             else:
@@ -2361,13 +2433,15 @@ class SimulationService:
             return dashboard_data
 
         except Exception as e:
-            # 8️⃣ fallback 처리
+            print(f"[ERROR] ❌ Exception in get_dashboard_data: {type(e).__name__} | {e}")
             collector = self.collector
-            return DashboardData(
+            fallback_data = DashboardData(
                 **extract_simulation_dashboard_data(simulation_data),
                 resource_usage=collector._get_default_resource_usage(),
                 pod_status=collector._get_default_pod_status()
             )
+            return fallback_data
+
     
 
     async def get_simulation_summary_list(self) -> List[SimulationSummaryItem]:
@@ -2398,7 +2472,7 @@ class SimulationService:
             # 1️⃣ 시뮬레이션 조회
             simulation = await self.repository.find_by_id(simulation_id)
             if not simulation:
-                raise SimulationNotFoundError(simulation.id)
+                raise SimulationNotFoundError(simulation_id)
             
             # 2️⃣ 현재 실행 중인 execution 조회
             execution = await self.repository.find_execution_by_id(execution_id)
@@ -2409,6 +2483,11 @@ class SimulationService:
                 )
             execution_id = execution.id
                 
+            try:
+                await redis_client.connect()
+            except Exception:
+                pass
+
             # 3️⃣ 이미 stop 요청 진행 중인지 확인
             running_info = self.state.running_simulations.get(simulation_id)
             if running_info and running_info.get("is_stopping", False):
@@ -2417,10 +2496,22 @@ class SimulationService:
                     status_code=409,
                     detail="중지 요청이 이미 진행 중입니다. 완료될 때까지 기다려주세요."
                 )
-                
-            # 4️⃣ stop_event 설정
-            stop_event = running_info.get("stop_event")
-            stop_event.set()
+
+            # 4️⃣ stop_event 설정 (running_info가 없을 수 있으므로 안전하게 처리)
+            if not running_info:
+                # 시뮬레이션 실행 상태가 메모리 상태에 없을 수 있음(예: 프로세스 재시작 등)
+                # 이 경우에는 임시 stop_event를 만들어 즉시 set 하고 polling/동기화 로직을 진행
+                stop_event = asyncio.Event()
+                stop_event.set()
+            else:
+                stop_event = running_info.get("stop_event")
+                if stop_event is None:
+                    stop_event = asyncio.Event()
+                running_info["is_stopping"] = True
+                try:
+                    stop_event.set()
+                except Exception:
+                    pass
 
             # 5️⃣ 패턴별 polling 중지
             await self._polling_stop(simulation_id, execution_id, stop_event, redis_client)
@@ -2437,6 +2528,13 @@ class SimulationService:
                 status_code=500,
                 detail="시뮬레이션 중지 중 내부 오류가 발생했습니다"
             )
+        finally:
+            # 안전하게 Redis 연결 종료
+            try:
+                if getattr(redis_client, "client", None):
+                    await redis_client.client.close()
+            except Exception:
+                pass
      
     async def _polling_stop(
         self,
@@ -2517,6 +2615,12 @@ class SimulationService:
             status=update_data.get("status"),
             result_summary=update_data.get("result_summary"),
             message=update_data["result_summary"].get("message")
+        )
+        
+        # Simulation 테이블 상태를 PENDING으로 변경
+        await self.repository.update_simulation_status(
+            simulation_id=simulation_id,
+            status=SimulationStatus.PENDING
         )
 
         # -------------------------------

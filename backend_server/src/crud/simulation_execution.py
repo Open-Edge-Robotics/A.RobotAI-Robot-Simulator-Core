@@ -1,11 +1,13 @@
+from datetime import datetime
 import json
 from typing import List, Optional, Tuple
 from models.enums import PatternType
-from models.simulation_execution import SimulationExecution
+from models.simulation_execution import SimulationExecution, timezone
 from database.redis_simulation_client import RedisSimulationClient
 from schemas.pagination import PaginationParams
 from schemas.simulation_status import CurrentStatus, SequentialProgress, ParallelProgress, CurrentTimestamps
 from schemas.simulation_execution import ExecutionItem
+from schemas.simulation_detail import ExecutionPlanSequential, ExecutionPlanParallel
 from repositories.simulation_execution_repository import SimulationExecutionRepository
 
 class SimulationExecutionService:
@@ -58,6 +60,22 @@ class SimulationExecutionService:
 
         status = result_json.get("status", "UNKNOWN")
         message = result_json.get("message")
+        # execution_plan may be stored in Redis result or DB execution.execution_plan
+        raw_plan = result_json.get("executionPlan") or (exe.execution_plan if exe else None)
+
+        # Convert raw_plan into validated DTOs when possible
+        execution_plan = None
+        try:
+            if raw_plan:
+                # Detect sequential vs parallel by exe.pattern_type
+                if exe.pattern_type == PatternType.SEQUENTIAL or str(exe.pattern_type).lower() == "sequential":
+                    # Expect raw_plan to have 'steps' list
+                    execution_plan = ExecutionPlanSequential.from_entities(raw_plan.get("steps", [])) if isinstance(raw_plan, dict) else None
+                else:
+                    execution_plan = ExecutionPlanParallel.from_entities(raw_plan.get("groups", [])) if isinstance(raw_plan, dict) else None
+        except Exception:
+            # If conversion fails, keep raw_plan as fallback
+            execution_plan = raw_plan
         progress_data = result_json.get("progress")
         timestamps_data = result_json.get("timestamps", {})
         step_details = result_json.get("stepDetails")
@@ -135,75 +153,86 @@ class SimulationExecutionService:
             execution_id=exe.id,
             simulation_id=exe.simulation_id,
             pattern_type=pattern_type,
+            execution_plan=execution_plan,
             current_status=current_status
         )
 
-    
     async def list_executions(
         self,
         simulation_id: int,
         pagination: PaginationParams
     ) -> Tuple[List[ExecutionItem], int]:
         """ExecutionList 조회 + PaginationMeta 생성용 total_count 반환"""
-        # 총 개수
+
+        # 1️⃣ 총 개수 조회
         total_count = await self.repository.count_by_simulation_id(simulation_id)
 
-        # 조회
+        # 2️⃣ 페이징 조회
         execution_models = await self.repository.find_all_with_pagination(simulation_id, pagination)
 
         executions: List[ExecutionItem] = []
 
+        # 3️⃣ 각 Execution 처리
         for exe in execution_models:
+            status = exe.status.value
+            message = exe.message
             result_json = exe.result_summary or {}
-            print("DEBUG: result_summary =", result_json)
-
-            status = result_json.get("status", "UNKNOWN")
-            message = result_json.get("message")
             progress_data = result_json.get("progress")
-            timestamps_data = result_json.get("timestamps", {})
-            
-            
-            # 실행 중인 경우 Redis에서 최신 progress/timestamps 가져오기
-            if status == "RUNNING":
-                redis_key = f"simulation:{simulation_id}:execution:{exe.id}"
-                redis_data_raw = await self.redis_client.client.get(redis_key)
-                if redis_data_raw:
-                    try:
-                        redis_data = json.loads(redis_data_raw)
-                        progress_data = redis_data.get("progress", progress_data)
-                        timestamps_data = redis_data.get("timestamps", timestamps_data)
-                    except json.JSONDecodeError:
-                        # Redis 데이터가 깨졌거나 비정상일 경우 DB 데이터 사용
-                        pass
 
-            # Progress 선택
-            progress = None
-            pattern_type = exe.pattern_type
-            if progress_data:
-                if pattern_type == "sequential":
-                    progress = SequentialProgress(
-                        overall_progress=progress_data.get("overallProgress", 0),
-                        current_step=progress_data.get("currentStep"),
-                        completed_steps=progress_data.get("completedSteps"),
-                        total_steps=progress_data.get("totalSteps")
-                    )
-                elif pattern_type == "parallel":
-                    progress = ParallelProgress(
-                        overall_progress=progress_data.get("overallProgress", 0),
-                        completed_groups=progress_data.get("completedGroups"),
-                        running_groups=progress_data.get("runningGroups"),
-                        total_groups=progress_data.get("totalGroups")
-                    )
+            # If the execution is RUNNING, always prefer Redis for live progress
+            if status == "RUNNING" and self.redis_client and getattr(self.redis_client, 'client', None):
+                try:
+                    redis_key = f"simulation:{simulation_id}:execution:{exe.id}"
+                    redis_raw = await self.redis_client.client.get(redis_key)
+                    if redis_raw:
+                        try:
+                            redis_json = json.loads(redis_raw)
+                            # override progress and message from Redis if present
+                            progress_data = redis_json.get("progress") or progress_data
+                            message = redis_json.get("message", message)
+                            # Also allow step/group details to be taken from Redis when building CurrentStatus
+                            result_json = redis_json
+                        except json.JSONDecodeError:
+                            pass
+                except Exception:
+                    # Redis issues should not break listing; fallback to DB values
+                    pass
 
-            timestamps = CurrentTimestamps(
-                created_at=timestamps_data.get("createdAt"),
-                last_updated=timestamps_data.get("lastUpdated"),
-                started_at=timestamps_data.get("startedAt"),
-                completed_at=timestamps_data.get("completedAt"),
-                failed_at=timestamps_data.get("failedAt"),
-                stopped_at=timestamps_data.get("stoppedAt"),
-            )
+            # If no progress in result_summary, build a sensible default from execution_plan
+            if not progress_data:
+                plan = exe.execution_plan or {}
+                try:
+                    # PatternType may be Enum or str; handle both
+                    is_seq = exe.pattern_type == PatternType.SEQUENTIAL or str(exe.pattern_type).lower() == "sequential"
+                    is_par = exe.pattern_type == PatternType.PARALLEL or str(exe.pattern_type).lower() == "parallel"
+                except Exception:
+                    is_seq = str(exe.pattern_type).lower() == "sequential"
+                    is_par = str(exe.pattern_type).lower() == "parallel"
 
+                if is_seq:
+                    total_steps = len(plan.get("steps", [])) if isinstance(plan, dict) else 0
+                    progress_data = {
+                        "overallProgress": 0.0,
+                        "currentStep": 0,
+                        "completedSteps": 0,
+                        "totalSteps": total_steps,
+                    }
+                elif is_par:
+                    total_groups = len(plan.get("groups", [])) if isinstance(plan, dict) else 0
+                    progress_data = {
+                        "overallProgress": 0.0,
+                        "completedGroups": 0,
+                        "runningGroups": total_groups,
+                        "totalGroups": total_groups,
+                    }
+
+            # 3-1️⃣ Timestamps 가져오기 (DB + Redis 통합)
+            timestamps = await self._get_timestamps(exe, simulation_id, status)
+
+            # 3-2️⃣ Progress 객체 생성
+            progress = self._get_progress(progress_data, exe.pattern_type)
+
+            # 3-3️⃣ CurrentStatus 생성
             current_status = CurrentStatus(
                 status=status,
                 progress=progress,
@@ -211,14 +240,70 @@ class SimulationExecutionService:
                 message=message
             )
 
+            # 3-4️⃣ ExecutionItem 추가
             executions.append(
                 ExecutionItem(
                     execution_id=exe.id,
                     simulation_id=exe.simulation_id,
-                    pattern_type=pattern_type,
+                    pattern_type=exe.pattern_type,
                     current_status=current_status
                 )
             )
 
         return executions, total_count
 
+
+    # ================= Helper Functions =================
+
+    async def _get_timestamps(self, exe, simulation_id: int, status: str) -> CurrentTimestamps:
+        """DB + Redis 통합 timestamps 가져오기"""
+        timestamps = CurrentTimestamps(
+            created_at=exe.created_at,
+            last_updated=exe.updated_at or datetime.now(timezone.utc),
+            started_at=exe.started_at,
+            completed_at=exe.completed_at,
+            failed_at=exe.failed_at,
+            stopped_at=exe.stopped_at,
+        )
+
+        if status == "RUNNING":
+            redis_key = f"simulation:{simulation_id}:execution:{exe.id}"
+            redis_data_raw = await self.redis_client.client.get(redis_key)
+            if redis_data_raw:
+                try:
+                    redis_data = json.loads(redis_data_raw)
+                    redis_ts = redis_data.get("timestamps", {})
+                    timestamps = CurrentTimestamps(
+                        created_at=exe.created_at,
+                        last_updated=redis_ts.get("lastUpdated") or exe.updated_at or datetime.now(timezone.utc),
+                        started_at=redis_ts.get("startedAt") or exe.started_at,
+                        completed_at=redis_ts.get("completedAt") or exe.completed_at,
+                        failed_at=redis_ts.get("failedAt") or exe.failed_at,
+                        stopped_at=redis_ts.get("stoppedAt") or exe.stopped_at,
+                    )
+                except json.JSONDecodeError:
+                    pass
+
+        return timestamps
+
+
+    def _get_progress(self, progress_data: dict, pattern_type: str):
+        """Progress 객체 생성"""
+        if not progress_data:
+            return None
+
+        if pattern_type == "sequential":
+            return SequentialProgress(
+                overall_progress=progress_data.get("overallProgress", 0) * 100,
+                current_step=progress_data.get("currentStep"),
+                completed_steps=progress_data.get("completedSteps"),
+                total_steps=progress_data.get("totalSteps")
+            )
+        elif pattern_type == "parallel":
+            return ParallelProgress(
+                overall_progress=progress_data.get("overallProgress", 0) * 100,
+                completed_groups=progress_data.get("completedGroups"),
+                running_groups=progress_data.get("runningGroups"),
+                total_groups=progress_data.get("totalGroups")
+            )
+        return None

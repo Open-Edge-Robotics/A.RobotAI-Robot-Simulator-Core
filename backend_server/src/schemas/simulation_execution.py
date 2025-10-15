@@ -1,4 +1,6 @@
-from typing import List
+from typing import Any, List, Optional, Union
+from utils.json_utils import remove_none_recursive
+from schemas.simulation_detail import ExecutionPlanSequential, ExecutionPlanParallel
 from pydantic import Field
 
 from schemas.pagination import PaginationMeta
@@ -12,6 +14,10 @@ class ExecutionItem(BaseSchema):
     execution_id: int = Field(..., alias="executionId", description="실행 ID")
     simulation_id: int = Field(..., alias="simulationId", description="시뮬레이션 ID")
     pattern_type: str = Field(..., alias="patternType", description="패턴 타입 (sequential / parallel)")
+    # For detail responses this will be a validated ExecutionPlanSequential or ExecutionPlanParallel.
+    execution_plan: Optional[Union[ExecutionPlanSequential, ExecutionPlanParallel, dict]] = Field(
+        None, alias="executionPlan", description="Execution 시작 시점의 실행 계획"
+    )
     current_status: CurrentStatus = Field(..., alias="currentStatus", description="현재 실행 상태 정보")
 
 # ------------------------------
@@ -83,20 +89,25 @@ class ExecutionListResponseFactory:
         pagination: PaginationMeta,
         message: str = "실행 히스토리 조회 성공",
         status_code: int = 200
-    ) -> ExecutionListResponse:
-        """
-        Execution 목록 응답 생성
-        Returns:
-            dict: camelCase로 변환된 JSON 응답
-        """
-        return ExecutionListResponse(
+    ) -> dict[str, Any]:
+        # 모델 -> dict
+        data_dict = ExecutionListData(
+            executions=executions,
+            pagination=pagination
+        ).model_dump()  # BaseSchema에서 exclude_none=True 자동 적용됨
+
+        # dict 내부 중첩 None 제거
+        cleaned_data = remove_none_recursive(data_dict)
+
+        # 최종 응답 모델 -> dict
+        response_dict = ExecutionListResponse(
             status_code=status_code,
             message=message,
-            data=ExecutionListData(
-                executions=executions,
-                pagination=pagination
-            )
+            data=cleaned_data
         ).model_dump()
+
+        # 최종 dict 내부도 재귀적으로 None 제거
+        return remove_none_recursive(response_dict)
 
 # ------------------------------
 # ExecutionDetailData DTO
@@ -173,12 +184,22 @@ class ExecutionDetailResponseFactory:
         execution: ExecutionItem,
         message: str = "실행 상세 조회 성공",
         status_code: int = 200
-    ) -> ExecutionDetailResponse:
+    ) -> dict[str, Any]:
         """
         Execution 상세 응답 생성
         """
-        return ExecutionDetailResponse(
+        # ExecutionDetailData -> dict
+        data_dict = ExecutionDetailData(execution=execution).model_dump()
+
+        # 중첩 None 제거
+        cleaned_data = remove_none_recursive(data_dict)
+
+        # 최종 응답 생성
+        response_dict = ExecutionDetailResponse(
             status_code=status_code,
             message=message,
-            data=ExecutionDetailData(execution=execution)
+            data=cleaned_data
         ).model_dump()
+
+        # 최종 dict 내부도 재귀적 None 제거
+        return remove_none_recursive(response_dict)

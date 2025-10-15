@@ -37,86 +37,131 @@ class MetricsCollector:
         """대시보드용 메트릭 전체 수집"""
         try:
             logger.info(f"메트릭 수집 시작: namespace={simulation.namespace}")
-            
+            print(f"[DEBUG] ▶ Collecting dashboard metrics | namespace={simulation.namespace}")
+
             # 병렬로 메트릭 수집 (성능 최적화)
             resource_task = self._collect_resource_usage(simulation.namespace)
             pod_task = self._collect_pod_status(simulation.namespace)
-            
+            print(f"[DEBUG] 🧩 Resource & Pod tasks created")
+
             resource_usage, pod_status = await asyncio.gather(
                 resource_task,
                 pod_task,
                 return_exceptions=True
             )
-            
+            print(f"[DEBUG] ✅ asyncio.gather completed")
+
             # 예외 처리
             if isinstance(resource_usage, Exception):
                 logger.error(f"리소스 메트릭 수집 실패: {resource_usage}")
+                print(f"[ERROR] ❌ Resource usage collection failed: {resource_usage}")
                 resource_usage = self._get_default_resource_usage()
-            
+
             if isinstance(pod_status, Exception):
                 logger.error(f"Pod 메트릭 수집 실패: {pod_status}")
+                print(f"[ERROR] ❌ Pod status collection failed: {pod_status}")
                 pod_status = self._get_default_pod_status()
-            
+
             logger.info(f"메트릭 수집 완료: namespace={simulation.namespace}")
+            print(f"[DEBUG] ✅ Metrics collection finished | resource_usage={resource_usage} | pod_status={pod_status}")
+
             return {
                 "resource_usage": resource_usage,
                 "pod_status": pod_status
             }
-            
+
         except Exception as e:
             logger.error(f"전체 메트릭 수집 실패: {e}")
+            print(f"[ERROR] ❌ Total metrics collection failed: {type(e).__name__} | {e}")
             return {
                 "resource_usage": self._get_default_resource_usage(),
                 "pod_status": self._get_default_pod_status()
             }
+
     
     async def _collect_resource_usage(self, namespace: str) -> ResourceUsageData:
         """Kubernetes 메트릭 API에서 리소스 사용률 수집"""
         try:
-            # Pod 메트릭 조회
-            pod_metrics = self.custom_api.list_namespaced_custom_object(
-                group="metrics.k8s.io",
-                version="v1beta1",
-                namespace=namespace,
-                plural="pods"
-            )
+            # 1️⃣ Pod 상태 먼저 확인
+            pods = self.v1.list_namespaced_pod(namespace)
+            
+            running_pods = [p for p in pods.items if p.status.phase == "Running"]
+            total_pods = len(pods.items)
+            
+            if total_pods == 0:
+                logger.warning(f"네임스페이스 {namespace}에 Pod가 없음")
+                return self._get_preparing_resource_usage("no_pods")
+            
+            if len(running_pods) == 0:
+                logger.info(f"모든 Pod가 아직 Running 상태가 아님 (총 {total_pods}개)")
+                return self._get_preparing_resource_usage("pods_starting")
+            
+            # 2️⃣ 메트릭 조회
+            try:
+                pod_metrics = self.custom_api.list_namespaced_custom_object(
+                    group="metrics.k8s.io",
+                    version="v1beta1",
+                    namespace=namespace,
+                    plural="pods"
+                )
+            except client.ApiException as e:
+                if e.status == 404:
+                    logger.error("Metrics Server를 찾을 수 없음")
+                    return self._get_default_resource_usage("no_metrics_server")
+                elif e.status == 403:
+                    logger.error("메트릭 조회 권한 없음")
+                    return self._get_default_resource_usage("permission_denied")
+                else:
+                    logger.error(f"Kubernetes API 오류: {e}")
+                    return self._get_default_resource_usage("api_error")
+            
+            # 3️⃣ 메트릭이 아직 수집되지 않은 경우
+            if not pod_metrics.get('items'):
+                logger.warning(f"Running Pod는 있지만 메트릭이 아직 수집되지 않음")
+                return self._get_preparing_resource_usage("metrics_collecting")
             
             logger.debug(f"Pod 메트릭 수집 완료: {len(pod_metrics.get('items', []))}개 Pod")
             
-            # CPU, 메모리 사용률 계산
+            # 4️⃣ CPU, 메모리 사용률 계산
             cpu_usage = self._calculate_cpu_usage(pod_metrics)
             memory_usage = self._calculate_memory_usage(pod_metrics)
-            
-            # 디스크 사용률 (PVC 기반으로 계산)
             disk_usage = await self._calculate_disk_usage(namespace)
+            
+            # 5️⃣ 상태 및 메시지 생성 (모두 normal)
+            cpu_status, cpu_message = self._get_resource_status_with_message(cpu_usage)
+            memory_status, memory_message = self._get_resource_status_with_message(memory_usage)
+            disk_status, disk_message = self._get_resource_status_with_message(disk_usage)
             
             logger.debug(f"리소스 사용률 - CPU: {cpu_usage:.1f}%, Memory: {memory_usage:.1f}%, Disk: {disk_usage:.1f}%")
             
             return ResourceUsageData(
                 cpu=ResourceUsage(
                     usage_percent=round(cpu_usage, 1),
-                    status=self._get_resource_status(cpu_usage)
+                    status=cpu_status,
+                    message=cpu_message
                 ),
                 memory=ResourceUsage(
                     usage_percent=round(memory_usage, 1),
-                    status=self._get_resource_status(memory_usage)
+                    status=memory_status,
+                    message=memory_message
                 ),
                 disk=ResourceUsage(
                     usage_percent=round(disk_usage, 1),
-                    status=self._get_resource_status(disk_usage)
+                    status=disk_status,
+                    message=disk_message
                 )
             )
             
         except Exception as e:
-            logger.error(f"리소스 메트릭 수집 오류: {e}")
-            raise
+            logger.error(f"리소스 메트릭 수집 오류: {e}", exc_info=True)
+            return self._get_default_resource_usage("error")
     
     async def _collect_pod_status(self, namespace: str) -> PodStatusData:
         """Pod 상태 정보 수집 (rosbag 상태 및 시뮬레이션 상태 반영)"""
         try:
             # Pod 목록 조회
             pods = self.v1.list_namespaced_pod(namespace)
-            logger.debug(f"Pod 목록 조회 완료: {len(pods.items)}개 Pod")
+            print(f"Pod 목록 조회 완료: {len(pods.items)}개 Pod")
             
             status_counts = {"pending": 0, "running": 0, "stopped": 0, "completed": 0, "failed": 0}
             total_count = len(pods.items)
@@ -128,13 +173,13 @@ class MetricsCollector:
                 
                 status = await RosService.get_pod_rosbag_playing_status(pod_ip)
                 status_counts[status] += 1
-                logger.debug(f"Pod {pod.metadata.name}: {status}")
+                print(f"Pod {pod.metadata.name}: {status}")
             
             # overall_health 계산
             running_related = status_counts["running"] + status_counts["completed"] + status_counts["failed"]
             overall_health = (status_counts["completed"] / running_related * 100) if running_related > 0 else 0.0
             
-            logger.info(f"Pod 상태 집계 - Completed: {status_counts['completed']}, Pending: {status_counts['pending']}, Running: {status_counts['running']}, Stopped: {status_counts['stopped']}, Failed: {status_counts['failed']}")
+            print(f"Pod 상태 집계 - Completed: {status_counts['completed']}, Pending: {status_counts['pending']}, Running: {status_counts['running']}, Stopped: {status_counts['stopped']}, Failed: {status_counts['failed']}")
             
             return PodStatusData(
                 total_count=total_count,
@@ -326,15 +371,53 @@ class MetricsCollector:
             return "warning"
         else:
             return "normal"
-    
-    def _get_default_resource_usage(self) -> ResourceUsageData:
-        """메트릭 수집 실패 시 기본값"""
-        logger.warning("기본 리소스 사용률 데이터 사용")
+        
+    def _get_preparing_resource_usage(self, reason: str) -> ResourceUsageData:
+        """메트릭 준비 중 상태"""
+        message_map = {
+            "no_pods": "시뮬레이션 Pod를 생성하고 있습니다...",
+            "pods_starting": "Pod가 시작 중입니다. 잠시만 기다려주세요...",
+            "metrics_collecting": "메트릭을 수집하고 있습니다. 잠시만 기다려주세요..."
+        }
+        
+        message = message_map.get(reason, "메트릭을 준비하고 있습니다...")
+        logger.info(f"리소스 메트릭 준비 중: {reason}")
+        
         return ResourceUsageData(
-            cpu=ResourceUsage(usage_percent=0.0, status="unknown"),
-            memory=ResourceUsage(usage_percent=0.0, status="unknown"),
-            disk=ResourceUsage(usage_percent=0.0, status="unknown")
+            cpu=ResourceUsage(usage_percent=0.0, status="collecting", message=message),
+            memory=ResourceUsage(usage_percent=0.0, status="collecting", message=message),
+            disk=ResourceUsage(usage_percent=0.0, status="collecting", message=message)
         )
+    
+    def _get_default_resource_usage(self, reason: str = "error") -> ResourceUsageData:
+        """메트릭 수집 실패 시 기본값 - 에러 상태"""
+        message_map = {
+            "error": "리소스 메트릭을 가져올 수 없습니다. 잠시 후 다시 시도해주세요.",
+            "timeout": "메트릭 조회 시간이 초과되었습니다.",
+            "no_metrics_server": "Metrics Server가 설치되지 않았습니다. 관리자에게 문의하세요.",
+            "permission_denied": "메트릭 조회 권한이 없습니다.",
+            "api_error": "Kubernetes API 통신 중 오류가 발생했습니다."
+        }
+        
+        message = message_map.get(reason, "메트릭 정보를 가져올 수 없습니다.")
+        logger.warning(f"기본 리소스 사용률 데이터 사용: {reason}")
+        
+        return ResourceUsageData(
+            cpu=ResourceUsage(usage_percent=-1.0, status="error", message=message),
+            memory=ResourceUsage(usage_percent=-1.0, status="error", message=message),
+            disk=ResourceUsage(usage_percent=-1.0, status="error", message=message)
+        )
+    
+    def _get_resource_status_with_message(self, usage_percent: float) -> tuple[str, str]:
+        """사용률에 따른 상태 및 메시지 결정 - normal만 반환"""
+        if usage_percent >= 90:
+            message = f"리소스 사용률이 매우 높습니다 ({usage_percent:.1f}%). 즉시 확인이 필요합니다."
+        elif usage_percent >= 70:
+            message = f"리소스 사용률이 높습니다 ({usage_percent:.1f}%). 모니터링을 권장합니다."
+        else:
+            message = f"정상 작동 중입니다 ({usage_percent:.1f}%)."
+        
+        return ("normal", message)
     
     def _get_default_pod_status(self) -> PodStatusData:
         """Pod 상태 수집 실패 시 기본값"""

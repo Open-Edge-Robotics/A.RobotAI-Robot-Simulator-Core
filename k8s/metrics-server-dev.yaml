@@ -108,6 +108,7 @@ spec:
         args:
           - --cert-dir=/tmp
           - --secure-port=4443
+          - --metric-resolution=15s
           - --kubelet-insecure-tls   # 개발 환경 전용
           - --kubelet-preferred-address-types=InternalIP,Hostname,InternalDNS,ExternalDNS,ExternalIP
           - --kubelet-use-node-status-port
