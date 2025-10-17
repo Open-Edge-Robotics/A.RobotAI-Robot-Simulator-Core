@@ -1,8 +1,6 @@
 # Backend Server
 자율행동체 시뮬레이터 서버
 
-- **Project Template**: [taking](https://github.com/taking/java-spring-base-structure)
-
 <br>
 
 ## 소개
@@ -36,21 +34,21 @@ requests
 ### 환경 변수
 ```
 # DB Url
-DATABASE_URL=postgresql+asyncpg://agent_user:qwe1212qwe@db:5432/agent_db
+DATABASE_URL=DATABASE_URL
 
 # Minio
-MINIO_URL=minio-service.robot.svc.cluster.local:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=qwe1212qwe1212
-MINIO_BUCKET_NAME=rosbag-data
+MINIO_URL=MINIO_URL
+MINIO_ACCESS_KEY=MINIO_ACCESS_KEY
+MINIO_SECRET_KEY=MINIO_SECRET_KEY
+MINIO_BUCKET_NAME=MINIO_BUCKET_NAME
 
 # Api
 API_STR=/api
 
 # Postgresql
-POSTGRES_USER=agent_user
-POSTGRES_PASSWORD=qwe1212qwe
-POSTGRES_DB=robot_db
+POSTGRES_USER=POSTGRES_USER
+POSTGRES_PASSWORD=POSTGRES_PASSWORD
+POSTGRES_DB=POSTGRES_DB
 PGDATA=/var/lib/postgresql/pgdata
 ```
 
@@ -76,18 +74,13 @@ source <가상환경 이름>/bin/activate
 pip install -r requirements.txt
 ```
 
-4번 부터는 [실행 가이드 - 로컬](#실행-가이드---로컬) 혹은 [실행 가이드 - 원격](#실행-가이드---원격)을 선택하여 진행해주세요.
+3번 부터는 [실행 가이드 - 로컬](#실행-가이드---로컬) 혹은 [실행 가이드 - 원격](#실행-가이드---원격)을 선택하여 진행해주세요.
 
 
 ## 실행 가이드 - 로컬
 **현재 로컬에서는 쿠버네티스와 관련된 API를 제외하고 테스트할 수 있습니다.**
 
-### 3. K8S 주석처리
-
-로컬 실행 시에는 `src/crud/pod.py`의 10번째 줄 `config.load_kube_config('/root/.kube/config')`을 주석 처리해주세요.
-
-
-### 4. 서버 실행
+### 3. 서버 실행
 
 명령줄(cmd)에서 루트 디렉토리로 이동한 후 서버를 실행합니다.
 
@@ -99,7 +92,7 @@ runserver.py 대신 uvicorn 명령어를 직접 사용할 수도 있습니다.
 `uvicorn backend_server.src.main:app --reload`
 
 
-## 실행 가이드 - 원격
+## 실행 가이드 - 도커 이미지 기반
 **해당 프로젝트는 기본적으로 `Openstack 192.168.160.135 인스턴스`에 세팅된 Kubernetes 환경에서 실행할 수 있습니다.   
 가이드는 '192.168.160.135' 환경 기준으로 설명합니다.**
 
@@ -124,15 +117,7 @@ docker push <username>/robot:<tag>
 ```
 
 
-### 5. ssh 접속
-
-```bash
-ssh root@192.168.160.135
-```
-> PW: qwe1212!Q
-
-
-### 6. 원격 배포
+### 5. 이미지 배포(같은 VM일 경우 해당사항 없음)
 
 Docker Hub로부터 이미지를 pull 합니다.
 ```bash

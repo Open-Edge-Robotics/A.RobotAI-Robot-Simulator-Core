@@ -17,22 +17,17 @@ kubectl apply -f <file-name>.yaml
 | 파일명                    | 종류                                      |
 |------------------------|-----------------------------------------|
 | `postgrs-pv.yaml`      | PersistentVolume, PersistentVolumeClaim |
-| `postgres-deploy.yaml` | Deployment, Service                     |
-| `postgres-secret.yaml` | Secret (내부 공유)                          |
-
+| `postgres-deploy.yaml` | Secret, Deployment, Service             |
 
 ## MinIO
 
 | 파일명                 | 종류                                      |
 |---------------------|-----------------------------------------|
 | `minio-pv.yaml`     | PersistentVolume, PersistentVolumeClaim |
-| `minio-deploy.yaml` | Deployment, Service                     |
-| `minio-secret.yaml` | Secret (내부 공유)                          |
-
+| `minio-deploy.yaml` | Secret, Deployment, Service             |
 
 ## Backend Server
 
-| 파일명                  | 종류                  |
-|----------------------|---------------------|
-| `server-deploy.yaml` | Deployment, Service |
-| `server-secret.yaml` | Secret (내부 공유)      |
+| 파일명                  | 종류                                      |
+|----------------------|-----------------------------------------|
+| `server-deploy.yaml` | Secret, Deployment, Service             |

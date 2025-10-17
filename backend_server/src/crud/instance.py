@@ -9,17 +9,17 @@ from starlette import status
 from .pod import PodService
 from .rosbag import RosService
 from .simulation import SimulationService
-from .template import TemplateService
-from backend_server.src.models.instance import Instance
-from backend_server.src.schemas.instance import *
-from backend_server.src.utils.my_enum import API, PodStatus, InstanceStatus
+from di.template import get_template_service
+from models.instance import Instance
+from schemas.instance import *
+from utils.my_enum import API, PodStatus, InstanceStatus
 
 
 class InstanceService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.simulation_service = SimulationService(session)
-        self.templates_service = TemplateService(session)
+        self.templates_service = get_template_service()
         self.pod_service = PodService()
         self.ros_service = RosService()
 
@@ -160,7 +160,7 @@ class InstanceService:
     async def get_instance_running_status(self, instance):
         if await self.pod_service.is_pod_ready(instance):
             pod_ip = await self.pod_service.get_pod_ip(instance)
-            return await self.ros_service.send_get_request(pod_ip)
+            return await self.ros_service.get_pod_status(pod_ip)
 
         return PodStatus.STOPPED.value
 
