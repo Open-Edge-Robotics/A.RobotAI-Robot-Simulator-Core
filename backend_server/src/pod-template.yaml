@@ -5,11 +5,6 @@ metadata:
   labels:
     agent-type: placeholder-agent-type  # 동적으로 설정
 spec:
-  tolerations:
-    - key: "node-role.kubernetes.io/control-plane"
-      operator: "Exists"
-      effect: "NoSchedule"
-
   containers:
     - name: placeholder-container-name  # 동적으로 설정
       securityContext:
