@@ -3,8 +3,8 @@ from typing import List
 from pydantic import Field
 
 from .format import GlobalResponseModel
-from backend_server.src.settings import BaseSchema
-from backend_server.src.utils.my_enum import API
+from settings import BaseSchema
+from utils.my_enum import API
 
 
 ###### 생성 #######

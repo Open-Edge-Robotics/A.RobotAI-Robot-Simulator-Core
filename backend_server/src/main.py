@@ -1,11 +1,13 @@
 from contextlib import asynccontextmanager
 
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .database.db_conn import init_db, close_db
-from .exception.exception_handler import *
-from .routes import template, instance, simulation
-from .settings import settings
+from database.redis_simulation_client import RedisSimulationClient
+from database.db_conn import init_db, close_db
+from exception.exception_handler import register_exception_handlers
+from routes import template, instance, simulation, simulation_pattern, simulation_execution, dashboard, auth
+from settings import settings
 
 
 @asynccontextmanager
@@ -18,17 +20,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-app.add_exception_handler(StarletteHTTPException, http_exception_handler)
-app.add_exception_handler(S3Error, s3_exception_handler)
-app.add_exception_handler(ApiException, api_exception_handler)
-app.add_exception_handler(RequestValidationError, validation_exception_handler)
-app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
-app.add_exception_handler(Exception, generic_exception_handler)
+register_exception_handlers(app)
 
 origins = [
     "http://localhost:3000",
     "http://192.168.160.134:3001",
-    "http://192.168.160.129:3001"
+    "http://192.168.160.129:3001",
+    "http://101.79.72.60:3001"
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -38,7 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-routers = [template.router, instance.router, simulation.router]
+routers = [template.router, instance.router, simulation.router, dashboard.router, simulation_pattern.router, simulation_execution.router, auth.router]
 for router in routers:
     app.include_router(router, prefix=settings.API_STR)
 
@@ -46,3 +44,15 @@ for router in routers:
 @app.get("/")
 async def root():
     return {"message": "Hello World"}
+
+@app.get("/health/redis")
+async def health_check():
+    try:
+        redis_client = RedisSimulationClient()
+        is_healthy = await redis_client.health_check()
+        if is_healthy:
+            return {"redis": "ok", "status": "healthy"}
+        else:
+            return {"redis": "fail", "status": "unhealthy"}
+    except Exception as e:
+        return {"redis": "fail", "error": str(e), "status": "unhealthy"}

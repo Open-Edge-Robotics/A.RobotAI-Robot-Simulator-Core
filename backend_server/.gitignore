@@ -8,7 +8,7 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-.env/
+/src/.env/
 build/
 develop-eggs/
 dist/
@@ -168,4 +168,6 @@ test/
 
 # Ops
 /docker-compose.yaml
+
+/src/pod-template.yaml/
 

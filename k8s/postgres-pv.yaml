@@ -5,13 +5,14 @@ metadata:
   labels:
     type: local
 spec:
-  storageClassName: agent-storage
   capacity:
     storage: 5Gi
   accessModes:
     - ReadWriteOnce
   hostPath:
-    path: "/mnt/data"
+    path: "/mnt/data/postgres"
+  persistentVolumeReclaimPolicy: Retain
+
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -21,7 +22,6 @@ metadata:
   labels:
     type: local
 spec:
-  storageClassName: agent-storage
   accessModes:
     - ReadWriteOnce
   resources:
