@@ -1,0 +1,5 @@
+# 로봇(리눅스)에서 실행되는 파일은 항상 LF 줄바꿈으로 저장
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.example   text eol=lf
+Dockerfile  text eol=lf

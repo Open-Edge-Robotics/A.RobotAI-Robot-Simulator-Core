@@ -1,0 +1,24 @@
+services:
+  recorder:
+    build: ../..
+    network_mode: host
+    ipc: host
+    restart: unless-stopped
+    stop_signal: SIGINT
+    stop_grace_period: 30s
+    mem_limit: 2g
+    env_file: robot.env
+    volumes:
+      - /data/rosbag:/data
+      - ./recorder.sh:/recorder.sh:ro
+    entrypoint: ["/bin/bash", "/recorder.sh"]
+
+  uploader:
+    image: rclone/rclone:1.75.2
+    network_mode: host
+    restart: unless-stopped
+    env_file: robot.env
+    volumes:
+      - /data/rosbag:/data
+      - ./uploader.sh:/uploader.sh:ro
+    entrypoint: ["/bin/sh", "/uploader.sh"]
