@@ -1,6 +1,6 @@
 # 실제 계정 정보가 들어가는 설정 파일 (예시 파일만 올림)
 robot.env
-robot.env.*
+robot.env.example
 !robot.env.example
 
 # 이미지·패키지 파일

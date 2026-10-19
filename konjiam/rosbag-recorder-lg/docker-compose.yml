@@ -1,0 +1,14 @@
+# 로컬 테스트용 (선택). 로봇 sandbox에서는 사용하지 않으며,
+# README의 docker run 옵션과 같은 설정을 compose로 옮겨 둔 것입니다.
+services:
+  rosbag-recorder:
+    build: rosbag-recorder-lg
+    network_mode: host
+    ipc: host
+    restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: 2g
+    env_file: robot.env
+    # 로봇 디스크에 보존하려면 아래 줄의 주석을 해제 (볼륨 사용 가능한 경우)
+    # volumes:
+    #   - /data/rosbag:/data
