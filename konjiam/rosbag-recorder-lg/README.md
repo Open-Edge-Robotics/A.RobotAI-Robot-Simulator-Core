@@ -1,4 +1,4 @@
-# rosbag 자동 기록·NAS 업로드 (LG전자, v1.3)
+# rosbag 자동 기록·NAS 업로드 (LG전자, v1.3.1)
 
 로봇의 ROS2 토픽을 rosbag으로 자동 기록하고, 기록이 끝난 파일을 NAS로 자동 업로드합니다.
 **기록과 업로드가 하나의 이미지**에 들어 있어, `docker build` → `docker run`만으로 동작합니다.
@@ -11,12 +11,12 @@
 ## 1. 소스 위치
 
 - 저장소: `https://github.com/Open-Edge-Robotics/A.RobotAI-Robot-Simulator-Core`
-- 빌드 경로(build context): **`rosbag-recorder-lg/`** (이 README가 있는 폴더)
-- Dockerfile: `rosbag-recorder-lg/Dockerfile`
+- 빌드 경로(build context): **`konjiam/rosbag-recorder-lg/`** (이 README가 있는 폴더)
+- Dockerfile: `konjiam/rosbag-recorder-lg/Dockerfile`
 
 ```bash
 git clone https://github.com/Open-Edge-Robotics/A.RobotAI-Robot-Simulator-Core.git
-cd A.RobotAI-Robot-Simulator-Core/rosbag-recorder-lg
+cd A.RobotAI-Robot-Simulator-Core/konjiam/rosbag-recorder-lg
 ```
 
 ---
@@ -76,7 +76,7 @@ docker run -d --name rosbag-recorder \
 
 | 변수 | 기본값 | 설명 |
 | --- | --- | --- |
-| `RECORD_TOPICS` | `/scan /scan_unified /tf /cmd_vel` | 기록할 토픽 (띄어쓰기 구분) |
+| `RECORD_TOPICS` | `/scan /scan_unified /tf /tf_static /cmd_vel` | 기록할 토픽 (띄어쓰기 구분). 로봇에 없는 토픽은 오류 없이 건너뜀 |
 | `ROTATE_SEC` | `300` | bag 하나의 길이(초) |
 | `OVERLAP_SEC` | `5` | bag 전환 시 겹침 시간(초) |
 | `RMW_IMPLEMENTATION` | `rmw_cyclonedds_cpp` | ROS 미들웨어 (로봇과 동일 권장) |
@@ -94,9 +94,10 @@ docker run --rm -i rclone/rclone:1.75.2 obscure -
 
 ### 주의
 
+- `RECORD_TOPICS`에 로봇에 없는 토픽이 있어도 오류는 나지 않으며, 해당 토픽만 기록되지 않습니다.
 - `--env-file`은 **따옴표를 값에 그대로 포함**합니다. `RECORD_TOPICS="/scan /tf"`처럼 쓰면 따옴표까지 토픽 이름이 되어 기록되지 않으므로 따옴표 없이 씁니다.
 - 필수 항목이 비어 있거나 `<...>`가 남아 있으면, 기록·업로드를 하지 않고 로그에 `[설정 오류]`를 남긴 채 대기합니다.
-- 비밀번호 변환값은 원래 비밀번호로 되돌릴 수 있어 암호화가 아닙니다. `robot.env`는 권한을 제한(`chmod 600`)하고, **공개 저장소에 올리지 마세요**(`../../.gitignore`에 등록되어 있음).
+- 비밀번호 변환값은 원래 비밀번호로 되돌릴 수 있어 암호화가 아닙니다. `robot.env`는 권한을 제한(`chmod 600`)하고, **공개 저장소에 올리지 마세요**(`.gitignore`에 등록되어 있음).
 
 ---
 
@@ -175,6 +176,7 @@ rosbag-recorder-lg/
 
 | 버전 | 변경 내용 |
 | --- | --- |
+| 1.3.1 | 기본 기록 토픽에 `/tf_static` 추가 (bag 재생 시 정적 좌표 변환용, 로봇에 없으면 건너뜀) |
 | 1.3 | 기록·업로드를 **하나의 이미지**로 통합. 스크립트를 이미지에 포함하고 시작 명령을 Dockerfile에 지정하여 compose 없이 `docker build` → `docker run`으로 동작. 기본 설정값을 이미지에 포함, 필수 환경 변수만 입력. 폴더 구조 단순화(opt/ 제거) |
 | 1.2 | git 배포 방식 전환 (compose 기반) |
 | 1.1 | recorder 설정 검사 추가 |

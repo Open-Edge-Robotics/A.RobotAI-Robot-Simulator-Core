@@ -2,7 +2,7 @@
 # README의 docker run 옵션과 같은 설정을 compose로 옮겨 둔 것입니다.
 services:
   rosbag-recorder:
-    build: rosbag-recorder-lg
+    build: .
     network_mode: host
     ipc: host
     restart: unless-stopped

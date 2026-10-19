@@ -1,5 +1,5 @@
 # ============================================================
-#  rosbag 자동 기록·NAS 업로드 (LG전자, v1.3)
+#  rosbag 자동 기록·NAS 업로드 (LG전자, v1.3.1)
 #  기록(recorder)과 NAS 업로드(uploader)를 하나의 이미지로 실행
 # ============================================================
 
@@ -23,7 +23,7 @@ RUN chmod +x /opt/rosbag-recorder/*.sh
 # 기본 설정값 (실행 시 환경 변수로 덮어쓸 수 있음)
 ENV ROBOT_ORG=lg \
     RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
-    RECORD_TOPICS="/scan /scan_unified /tf /cmd_vel" \
+    RECORD_TOPICS="/scan /scan_unified /tf /tf_static /cmd_vel" \
     ROTATE_SEC=300 \
     OVERLAP_SEC=5 \
     TZ=KST-9 \
