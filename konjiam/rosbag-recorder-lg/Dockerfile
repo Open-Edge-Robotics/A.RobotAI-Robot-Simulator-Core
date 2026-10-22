@@ -23,7 +23,7 @@ RUN chmod +x /opt/rosbag-recorder/*.sh
 # 기본 설정값 (실행 시 환경 변수로 덮어쓸 수 있음)
 ENV ROBOT_ORG=lg \
     RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
-    RECORD_TOPICS="/scan /scan_unified /tf /tf_static /cmd_vel" \
+    RECORD_TOPICS="/scan /scan_unified /tf /tf_static" \
     ROTATE_SEC=300 \
     OVERLAP_SEC=5 \
     TZ=KST-9 \
